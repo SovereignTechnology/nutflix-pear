@@ -10,9 +10,9 @@
  *   … screenshots -- --themes light               # default: light,dark
  *
  * Uses playwright-core against a LOCAL Chromium (ADR 0005 dependency approval): no browser
- * download, no `--no-sandbox`. The binary is NUTFLIX_CHROMIUM when set, else the ungoogled-chromium
- * path below, else the newest already-installed `~/.cache/ms-playwright/chromium-*` build. It is
- * always a plain `launch()` with Playwright's own throwaway profile — never a real browser profile.
+ * download, no `--no-sandbox`. The binary is NUTFLIX_CHROMIUM when set, else the newest
+ * already-installed `~/.cache/ms-playwright/chromium-*` build. It is always a plain `launch()`
+ * with Playwright's own throwaway profile — never a real browser profile.
  *
  * Pruning is per FILE: a PNG is deleted only when no story in the current index produces it, so
  * a `--filter` / `--themes` run never deletes PNGs it did not regenerate. Lazy images get a
@@ -47,16 +47,15 @@ function outDirFor(title: string): string {
   const leaf = (rest[rest.length - 1] ?? group ?? 'misc').toLowerCase();
   return join(SCREENS_ROOT, group?.toLowerCase() === 'screens' ? leaf : 'components');
 }
-const DEFAULT_CHROMIUM = '/home/gateway/Applications/ungoogled-chromium/current/chrome';
 /** Upper bound on waiting for fonts + images per story; a hung lazy image cannot stall the run. */
 const IMAGE_WAIT_MS = 10_000;
 /** Themes a PNG may carry; used to recognise our own files when pruning. */
 const KNOWN_THEMES: readonly string[] = ['light', 'dark'];
 
 /**
- * NUTFLIX_CHROMIUM wins. Otherwise the ungoogled-chromium path, then the newest Playwright
- * build already on disk (`~/.cache/ms-playwright/chromium-<revision>/chrome-linux64/chrome`,
- * highest revision first). Nothing is downloaded.
+ * NUTFLIX_CHROMIUM wins. Otherwise the newest Playwright build already on disk
+ * (`~/.cache/ms-playwright/chromium-<revision>/chrome-linux64/chrome`, highest revision first).
+ * Nothing is downloaded.
  */
 function findChromium(): string {
   const fromEnv = process.env['NUTFLIX_CHROMIUM'];
@@ -64,7 +63,6 @@ function findChromium(): string {
     if (!existsSync(fromEnv)) throw new Error(`NUTFLIX_CHROMIUM=${fromEnv} does not exist`);
     return fromEnv;
   }
-  if (existsSync(DEFAULT_CHROMIUM)) return DEFAULT_CHROMIUM;
   const cache = join(homedir(), '.cache', 'ms-playwright');
   const builds = existsSync(cache)
     ? readdirSync(cache)
@@ -77,10 +75,10 @@ function findChromium(): string {
   const newest = builds[0];
   if (newest === undefined) {
     throw new Error(
-      `no chromium: ${DEFAULT_CHROMIUM} is missing and ${cache} has no chromium-*/chrome-linux64/chrome; set NUTFLIX_CHROMIUM`,
+      `no chromium: ${cache} has no chromium-*/chrome-linux64/chrome; set NUTFLIX_CHROMIUM`,
     );
   }
-  log(`using ${newest.bin} (${DEFAULT_CHROMIUM} not found)`);
+  log(`using ${newest.bin}`);
   return newest.bin;
 }
 

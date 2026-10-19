@@ -1,0 +1,74 @@
+# README screenshots (docs/images). Captures Storybook stories (mock data, light and dark) with
+# packages/ui/scripts/screenshots.ts and uploads the PNGs as an artifact; nothing is committed
+# from here. Started by hand, or on a PR that touches this workflow or the script so a change to
+# either is proven before it merges.
+#
+# Same supply-chain policy as ci.yml: actions pinned by commit SHA, `npm ci --ignore-scripts`,
+# read-only token, first-party actions only. The story ids are an input, so they reach the shell
+# through an environment variable and are matched against a strict pattern before use.
+name: screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      stories:
+        description: 'Space-separated Storybook story ids to capture (each in light and dark)'
+        required: true
+        default: 'screens-home--subscriptions screens-watch--populated screens-wallet--populated screens-studio--upload-details'
+  pull_request:
+    paths:
+      - .github/workflows/screenshots.yml
+      - packages/ui/scripts/screenshots.ts
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: ''
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # @sovit/ui reads @sovit/core from dist/, so build the UI package and what it references.
+      - run: npm run -w packages/ui build
+      - run: npm run -w packages/ui storybook:build
+      # The runner's Chrome keeps its sandbox on (the script never passes --no-sandbox). Ubuntu
+      # 24.04 restricts unprivileged user namespaces, which that sandbox needs, so lift the
+      # restriction on this throwaway VM only.
+      - name: allow Chrome's user-namespace sandbox on this runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: capture
+        env:
+          STORIES: ${{ inputs.stories || 'screens-home--subscriptions screens-watch--populated screens-wallet--populated screens-studio--upload-details' }}
+        run: |
+          set -euo pipefail
+          NUTFLIX_CHROMIUM="$(command -v google-chrome)"
+          export NUTFLIX_CHROMIUM
+          read -r -a ids <<< "$STORIES" # split without globbing
+          for id in "${ids[@]}"; do
+            if ! [[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+              echo "refusing story id: $id" >&2
+              exit 1
+            fi
+            npm run -w packages/ui screenshots -- --static storybook-static --filter "$id" --themes light,dark
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: screenshots
+          path: artifacts/screens
+          if-no-files-found: error
+          retention-days: 14
