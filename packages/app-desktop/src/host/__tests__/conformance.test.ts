@@ -119,9 +119,8 @@ const isStats = obj(
     likes: isCount,
     dislikes: isCount,
     comments: isCount,
-    seedersOnline: isCount,
   },
-  { myReaction: oneOf(['like', 'dislike'] as const) },
+  { myReaction: oneOf(['like', 'dislike'] as const), seedersOnline: isCount },
 );
 const isNostrEventLike = obj({
   id: isEventId,
