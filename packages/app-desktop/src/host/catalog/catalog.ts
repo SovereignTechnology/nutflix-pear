@@ -29,11 +29,11 @@ export interface CatalogSource {
   search(q: SearchQuery): Promise<Page<VideoManifest>>;
   profile(pubkey: NostrPubkey): Promise<Profile | null>;
   /**
-   * `VideoStats.seedersOnline`. Stage 1 has no swarm lookup on the host, so a source answers
-   * only what it KNOWS is seeded and says 0 otherwise (fail closed: the screens gate play on
-   * 0, and `play()` reports the truth anyway). See docs/archive/contract-requests/L6-B.md.
+   * `VideoStats.seedersOnline`: a count only when the source KNOWS it, `undefined` otherwise
+   * (contract v5: absent = unknown). The screens gate play only on a known 0, so a source
+   * with no swarm lookup must never guess 0; `play()` reports the truth either way (#23).
    */
-  seedersOnline(video: VideoManifest): Promise<number>;
+  seedersOnline(video: VideoManifest): Promise<number | undefined>;
 }
 
 /** Page sizes when the caller gives none (the mock's, so screens see the same rhythm). */
@@ -99,7 +99,8 @@ export class NostrCatalog implements CatalogSource {
     return nostr.fetchProfile(this.client(), pubkey);
   }
 
-  seedersOnline(_video: VideoManifest): Promise<number> {
-    return Promise.resolve(0);
+  /** The host has no swarm lookup for relay videos, so the count is unknown (#23). */
+  seedersOnline(_video: VideoManifest): Promise<number | undefined> {
+    return Promise.resolve(undefined);
   }
 }

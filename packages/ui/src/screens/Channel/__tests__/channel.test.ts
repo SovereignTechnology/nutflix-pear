@@ -397,6 +397,20 @@ describe('Channel — "Seeding N videos"', () => {
       'No seeders online for these videos right now',
     );
   });
+
+  it('About shows no availability when every seeder count is unknown (#23)', async () => {
+    const adapter = adapterWith();
+    const stats = adapter.stats.bind(adapter);
+    vi.spyOn(adapter, 'stats').mockImplementation(async (id) => {
+      const { seedersOnline: _unknown, ...rest } = await stats(id);
+      return rest;
+    });
+    const { r } = mount(adapter, { tab: 'about' });
+    await flush();
+    const details = r.get('.nf-channelpage__details').textContent;
+    expect(details).not.toContain('Availability');
+    expect(details).not.toContain('No seeders online');
+  });
 });
 
 describe('Channel — cards, price and navigation', () => {
