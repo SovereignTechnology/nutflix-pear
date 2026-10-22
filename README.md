@@ -1,5 +1,7 @@
 # Nutflix
 
+> **Source of truth:** [`nostr://npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx/git.sovit.xyz/nutflix-pear`](https://gitworkshop.dev/npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx/git.sovit.xyz/nutflix-pear) — issues and pull requests live there. This GitHub repository is a mirror; push to the Nostr remote, not here.
+
 [![CI](https://github.com/SovereignTechnology/nutflix-pear/actions/workflows/ci.yml/badge.svg)](https://github.com/SovereignTechnology/nutflix-pear/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/SovereignTechnology/nutflix-pear)](https://github.com/SovereignTechnology/nutflix-pear/releases/latest)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
