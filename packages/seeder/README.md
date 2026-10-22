@@ -18,3 +18,7 @@ and the hardened systemd unit are documented in
 The standalone daemon serves the core it already holds. The command line has no option to load a
 video into it yet, so for now it is of use mainly as a building block: the desktop app embeds the
 same code in its worker.
+
+It also carries the NFX-12 HyperDHT transport (`src/nfx/`, ADR 0020): `listenNfx` serves whole
+files by sha256 on a per-network peer key, `dialNfx` fetches them and checks each one. It is free
+mode only for now, runs beside the Hypercore path above and shares no keys or stores with it.
