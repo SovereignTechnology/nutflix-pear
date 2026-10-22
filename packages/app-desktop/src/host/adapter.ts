@@ -403,7 +403,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       dislikes: summary.dislikes,
       ...(mine === 'like' || mine === 'dislike' ? { myReaction: mine } : {}),
       comments,
-      seedersOnline,
+      ...(seedersOnline === undefined ? {} : { seedersOnline }),
     };
   }
 

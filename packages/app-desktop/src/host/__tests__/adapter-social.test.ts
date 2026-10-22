@@ -178,8 +178,9 @@ describe('stats()', () => {
       dislikes: 2,
       myReaction: 'like',
       comments: 0,
-      seedersOnline: 0,
     });
+    // Relay videos have no seeder count on the host: absent = unknown, never a guessed 0 (#23).
+    expect('seedersOnline' in s).toBe(false);
   });
 
   it('honours NIP-09 only when the deletion is signed by the reaction’s author', async () => {

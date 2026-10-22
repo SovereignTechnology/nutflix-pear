@@ -14,6 +14,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   notes now point at `SovereignTechnology/nutflix-pear`. The 0.1.0 downloads and their signed
   notice are unchanged.
 
+### Fixed
+
+- Playback on real relays: the desktop app no longer reports zero seeders for every video it finds
+  on a relay. It has no seeder count for those videos, so it reports the count as unknown. The
+  watch page and Shorts no longer replace Play with "Nobody is seeding this video right now", and
+  a channel's About tab no longer says no seeders are online
+  ([#23](https://github.com/SovereignTechnology/nutflix-pear/issues/23)).
+
 ## [0.1.0] - 2026-10-05
 
 The first release of the desktop app, for Linux x86_64. It is experimental: read the

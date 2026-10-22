@@ -119,9 +119,8 @@ const isStats = obj(
     likes: isCount,
     dislikes: isCount,
     comments: isCount,
-    seedersOnline: isCount,
   },
-  { myReaction: oneOf(['like', 'dislike'] as const) },
+  { myReaction: oneOf(['like', 'dislike'] as const), seedersOnline: isCount },
 );
 const isNostrEventLike = obj({
   id: isEventId,
@@ -734,9 +733,13 @@ describe('conformance: failWith-equivalents reject with the same code and classi
     }
   });
 
-  it('no-seeders: stats.seedersOnline is 0 on both (the Watch/Shorts pre-play gate)', async () => {
+  it('no-seeders: the mock reports 0 seeders, the desktop host unknown (#23)', async () => {
     const [m, d] = await pair({ failWith: 'no-seeders' }, { failWith: 'no-seeders' });
-    for (const s of [m, d]) expect((await s.a.stats(s.id(0))).seedersOnline, s.name).toBe(0);
+    expect((await m.a.stats(m.id(0))).seedersOnline, m.name).toBe(0);
+    // The host has no swarm lookup for relay videos, so it cannot know the count before play:
+    // the Watch/Shorts pre-play gate stays open, and play() rejects with `no-seeders` on both
+    // (the 'no-seeders: play' case above).
+    expect('seedersOnline' in (await d.a.stats(d.id(0))), d.name).toBe(false);
   });
 
   it('no-signer: identity reads look the same (pubkey null, me null)', async () => {

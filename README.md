@@ -90,8 +90,8 @@ These are the things you would otherwise find out by trying them. Release 0.1.0:
 - **Playback does not start on real relays.** The desktop app reports zero seeders for every video
   it finds on a relay, and the watch page treats zero seeders as "Nobody is seeding this video right
   now", so a signed-in viewer sees that message instead of a Play control. The offline demo
-  (`npm start`, below) uses fixture data and is not affected. Tracked in
-  [#23](https://github.com/SovereignTechnology/nutflix-pear/issues/23).
+  (`npm start`, below) uses fixture data and is not affected. Fixed on `main` for the next
+  release ([#23](https://github.com/SovereignTechnology/nutflix-pear/issues/23)).
 - **It has not been run end to end against real relays, real peers and a real mint.** The
   real-mint tests use two mint implementations (Nutshell 0.21.0 and cdk-mintd 0.18.1) on a local
   machine with a fake Lightning backend. No real payment is on record. Cashu ecash is bearer money
