@@ -367,6 +367,9 @@ declare module 'protomux' {
       opts: { readonly protocol: string; readonly id?: Uint8Array | null },
       notify: (id: Uint8Array | null) => unknown,
     ): void;
+    /** Batch the messages sent until `uncork` into one stream write (tests: one arrival). */
+    cork(): void;
+    uncork(): void;
   }
   export default Protomux;
 }

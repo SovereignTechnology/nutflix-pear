@@ -4,7 +4,7 @@
  * connection's rules (`connection.ts`). Hostile peers speak raw Protomux.
  */
 import { nfx } from '@sovit/core';
-import Protomux from 'protomux';
+import Protomux, { type ProtomuxMessage } from 'protomux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { nodeCrypto } from '../../adapters/node/crypto.js';
@@ -304,6 +304,13 @@ describe('hostile watchers', () => {
     })!;
     ch.open();
     expect(await ch.fullyOpened()).toBe(false);
+    // A served address behind a byte-order mark: the bytes are not the canonical id.
+    const bom = mux.createChannel({
+      protocol: nfx.FILES_PROTOCOL,
+      id: new Uint8Array([0xef, 0xbb, 0xbf, ...V.channelId()]),
+    })!;
+    bom.open();
+    expect(await bom.fullyOpened()).toBe(false);
     server.destroy('test over');
   });
 });
@@ -341,6 +348,46 @@ describe('the watcher side', () => {
     expect(r).toEqual({ ok: false, reason: 'timeout' });
     expect(files.closed).toBe(true);
     expect(p.client.closed).toBe(false);
+  });
+
+  it('treats `data` after `end` as a protocol error, not part of the file', async () => {
+    const data = bytes(10, 13);
+    const sha = sha256Hex(data);
+    const s = await streamPair();
+    const client = new NfxConnection(s.client, { crypto: nodeCrypto });
+    const mux = Protomux.from(s.server);
+    const frame = (m: nfx.FilesMessage): Uint8Array => {
+      const f = nfx.encodeFilesMessage(m);
+      if (!f.ok) throw new Error(f.error.reason);
+      return f.value.bytes;
+    };
+    mux.pair({ protocol: nfx.FILES_PROTOCOL }, () => {
+      const ch = mux.createChannel({ protocol: nfx.FILES_PROTOCOL, id: V.channelId() })!;
+      const out: { data?: ProtomuxMessage; end?: ProtomuxMessage } = {};
+      ch.addMessage({
+        onmessage: (b) => {
+          const g = nfx.decodeFilesMessage(0, b);
+          if (!g.ok) return;
+          const { req } = g.value;
+          // One write, so the three frames arrive together, before the sha256 check runs.
+          mux.cork();
+          out.data!.send(frame({ type: 'data', req, payload: data }));
+          out.end!.send(frame({ type: 'end', req }));
+          out.data!.send(frame({ type: 'data', req, payload: bytes(5, 14) }));
+          mux.uncork();
+        },
+      });
+      out.data = ch.addMessage({});
+      out.end = ch.addMessage({});
+      ch.addMessage({});
+      ch.open();
+    });
+    // A hash-list fetch (a cap, not an exact size), so the late bytes are not `too-long`.
+    const r = await client
+      .files(V)!
+      .fetch({ sha, size: 100, exact: false, sink: new MemorySink() });
+    expect(r).toEqual({ ok: false, reason: 'protocol' });
+    client.destroy('test over');
   });
 
   it('fails a fetch whose sink throws', async () => {

@@ -217,7 +217,8 @@ export class NfxConnection implements ConnectionHost {
     if (id === null || id.byteLength > 256 || this.closed) return undefined;
     let text: string;
     try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(id);
+      // `ignoreBOM` keeps a leading U+FEFF, so the canonical-form check below refuses it.
+      text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(id);
     } catch {
       return undefined;
     }

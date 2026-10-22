@@ -9,8 +9,9 @@
  *   sha256 is checked before the result says `ok`, and a mismatch drops the whole connection:
  *   the source is discarded for the session (NFX-05 §4). The sink's bytes are the caller's to
  *   discard on any failure; only `ok` means they are the file.
- * - `data`, `end` or `missing` for a `req` that is not open, a seeder's `get`, or a trapped
- *   unknown type close the channel; its open requests fail `protocol`.
+ * - `data`, `end` or `missing` for a `req` that is not open, `data` or a second `end` after a
+ *   request's `end`, a seeder's `get`, or a trapped unknown type close the channel; its open
+ *   requests fail `protocol`.
  * - A request that gets no frame for the idle limit (60 s) fails `timeout`, and the channel is
  *   closed to abandon it: a seeder's keepalives hold the connection open, so the connection's
  *   own idle rule cannot catch a transfer that simply stops.
@@ -81,6 +82,8 @@ interface Transfer {
   readonly hasher: Sha256Hasher;
   received: number;
   waiting: number;
+  /** `end` arrived; the sha256 check waits for the sink. */
+  ended: boolean;
   /** Restart the stall timer: a frame of this request arrived. */
   alive(): void;
   writes: Promise<void>;
@@ -197,6 +200,7 @@ export class FilesClient {
         hasher: this.crypto.createSha256(),
         received: 0,
         waiting: 0,
+        ended: false,
         alive: () => {
           if (stall !== undefined) clearTimeout(stall);
           stall = setTimeout(() => {
@@ -232,7 +236,7 @@ export class FilesClient {
     const m = this.decode(1, bytes);
     if (m?.type !== 'data') return;
     const t = this.open.get(m.req);
-    if (t === undefined) {
+    if (t === undefined || t.ended) {
       this.protocolError();
       return;
     }
@@ -265,16 +269,19 @@ export class FilesClient {
     const m = this.decode(2, bytes);
     if (m?.type !== 'end') return;
     const t = this.open.get(m.req);
-    if (t === undefined) {
+    if (t === undefined || t.ended) {
       this.protocolError();
       return;
     }
+    t.ended = true;
     if (t.exact && t.received !== t.size) {
       this.discardSource(t, 'too-short');
       return;
     }
+    const { req } = m;
     void t.writes.then(() => {
-      if (t.sinkFailed) return;
+      // Settled meanwhile (a protocol error, a timeout): nothing left to check.
+      if (t.sinkFailed || this.open.get(req) !== t) return;
       if (t.hasher.digestHex() !== t.sha) {
         this.discardSource(t, 'mismatch');
         return;
