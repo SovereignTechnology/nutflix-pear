@@ -1,8 +1,8 @@
 # NFX test vectors
 
 Byte-for-byte copies of twelve files from the NFX suite's `spec/test-vectors/`, at nfx commit
-`cc7128811be3f0246d3c237a02c8ac500e02451a` (SovereignTechnology/nfx PR #2, the NFX-12 HyperDHT
-rewrite). They are the golden fixtures `packages/core/src/nfx/` is written against (NFX-11 §4:
+`47cb059f6632a3932a787c20bfd421eb5779d659` (SovereignTechnology/nfx `main`, the merge of PR #2, the
+NFX-12 HyperDHT rewrite). They are the golden fixtures `packages/core/src/nfx/` is written against (NFX-11 §4:
 the wire is pinned by its fixtures, not by a library version).
 
 | File                                                     | What it pins                                     |

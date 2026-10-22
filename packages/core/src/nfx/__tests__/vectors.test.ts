@@ -1,6 +1,6 @@
 /**
  * Every NFX test vector this package implements (docs/vendor/nfx-test-vectors, nfx commit
- * cc71288), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
+ * 47cb059), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
  * reproduced up to their id: nfx-proto re-signs with a zero BIP-340 `aux_rand`, which no
  * signer here exposes, so a rebuilt event's id is compared and the vector's signature verified.
  */
