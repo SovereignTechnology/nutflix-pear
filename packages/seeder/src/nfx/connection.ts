@@ -234,6 +234,11 @@ export class NfxConnection implements ConnectionHost {
     } catch {
       served = false;
     }
-    return served && !this.closed ? video.value : undefined;
+    return served && this.isOpen() ? video.value : undefined;
+  }
+
+  /** `!closed`, read fresh after an `await` (the earlier check's narrowing no longer holds). */
+  private isOpen(): boolean {
+    return !this.closed;
   }
 }

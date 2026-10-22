@@ -72,8 +72,12 @@ export function serveFiles(
   video: nfx.VideoAddr,
   o: FilesServerOptions,
 ): ProtomuxChannel | null {
-  const ch = host.mux.createChannel({ protocol: nfx.FILES_PROTOCOL, id: video.channelId() });
-  if (ch === null) return null;
+  const created = host.mux.createChannel({ protocol: nfx.FILES_PROTOCOL, id: video.channelId() });
+  if (created === null) return null;
+  // Bound once: TypeScript does not carry the null check into the hoisted `serve` below.
+  const ch: ProtomuxChannel = created;
+  // Read fresh after each `await`: the channel can close while a read or the source is pending.
+  const isClosed = (): boolean => ch.closed;
   const open = new Set<number>();
   const fail = (why: string): void => {
     o.onProtocolError?.(why);
@@ -138,7 +142,7 @@ export function serveFiles(
       fail('the source failed');
       return;
     }
-    if (ch.closed) return;
+    if (isClosed()) return;
     if (file === undefined) {
       send(missing, { type: 'missing', req });
       return;
@@ -159,7 +163,7 @@ export function serveFiles(
         fail('the source failed mid-file');
         return;
       }
-      if (ch.closed) {
+      if (isClosed()) {
         host.pump.skip();
         return;
       }
