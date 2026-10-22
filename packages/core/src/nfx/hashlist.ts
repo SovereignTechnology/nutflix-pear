@@ -191,6 +191,11 @@ function check(list: HashList, video: VideoAddr, segs: bigint): string | undefin
     if (f.durMs === 0n) return '`dur_ms` must be >= 1';
   }
   if (list.renditions.length === 0) return '`renditions` is empty';
+  // Names are unique by now. A map, not a `find` per rendition: a 16 MiB list could hold
+  // ~10^5 of each, and that product would stall the worker.
+  const playlistFiles = new Map(
+    list.files.filter((f) => f.role === 'playlist').map((f) => [f.name, f] as const),
+  );
   const ids = new Set<string>();
   const playlistNames = new Set<string>();
   const playlistHashes = new Set<string>();
@@ -199,7 +204,7 @@ function check(list: HashList, video: VideoAddr, segs: bigint): string | undefin
       return 'rendition ids must be unique, non-empty and not `meta`';
     }
     ids.add(r.id);
-    const playlist = list.files.find((f) => f.role === 'playlist' && f.name === r.playlist);
+    const playlist = playlistFiles.get(r.playlist);
     if (playlist === undefined) return 'rendition `playlist` does not name a playlist file';
     // NFX-05 §2: a playlist's content name identifies its rendition (NFX-10 §2).
     if (playlistNames.has(r.playlist) || playlistHashes.has(playlist.sha256)) {
@@ -322,11 +327,19 @@ function optional<T>(
   return value === undefined || value === null ? ok(undefined) : read(obj, name);
 }
 
-/** Rust's `str::lines` then `trim_end_matches('\r')`: split on `\n`, no final empty line. */
+/**
+ * Rust's `str::lines` then `trim_end_matches('\r')`: split on `\n`, no final empty line. The
+ * trim is a loop, not `/\r+$/`, which backtracks quadratically on a long run of `\r` that is
+ * not at the end of the line (a playlist is the creator's bytes).
+ */
 function lines(text: string): string[] {
   const out = text.split('\n');
   if (out[out.length - 1] === '') out.pop();
-  return out.map((line) => line.replace(/\r+$/, ''));
+  return out.map((line) => {
+    let end = line.length;
+    while (end > 0 && line.charCodeAt(end - 1) === 0x0d) end--;
+    return line.slice(0, end);
+  });
 }
 
 function pretty(open: string, items: readonly string[], close: string, indent: number): string {

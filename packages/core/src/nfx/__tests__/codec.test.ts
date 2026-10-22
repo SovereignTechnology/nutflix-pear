@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_DATA_PAYLOAD,
   MAX_PAY_MESSAGE,
+  checkPlaylist,
   decodeFilesMessage,
   decodePayMessage,
   encodeFilesMessage,
@@ -123,5 +124,15 @@ describe('hash list reader (serde struct rules)', () => {
     expect(verify(utf8(new TextDecoder().decode(list('')).replace('"size":1', '"size":1.0')))).toBe(
       false,
     );
+  });
+
+  it('checks a playlist whose line is a long run of \\r in linear time', () => {
+    // A trailing-\r regex backtracks quadratically here; this line would take minutes.
+    const parsed = verifyHashList(list(''), sha256Hex(list('')), video.value, 1n);
+    if (!parsed.ok) throw new Error('list');
+    const line = `#EXT-X-CUSTOM${'\r'.repeat(200_000)}x\n`;
+    const started = performance.now();
+    expect(checkPlaylist(parsed.value, utf8(line)).ok).toBe(true);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
