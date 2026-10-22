@@ -933,10 +933,16 @@ export function Channel({
     if (videos.status !== 'ready' || videos.items.length === 0) return null;
     const known = videos.items.filter((v) => stats[v.id] !== undefined);
     if (known.length < videos.items.length) return 'Checking seeders…';
-    const seeded = known.filter((v) => (stats[v.id]?.seedersOnline ?? 0) > 0).length;
+    // An absent count is unknown, not 0 (contract v5, #23): only counted videos are reported.
+    const counts = known.flatMap((v) => {
+      const n = stats[v.id]?.seedersOnline;
+      return n === undefined ? [] : [n];
+    });
+    if (counts.length === 0) return null;
+    const seeded = counts.filter((n) => n > 0).length;
     return seeded === 0
       ? 'No seeders online for these videos right now'
-      : `Seeders online for ${formatInteger(seeded)} of ${countLabel(known.length, 'video', 'videos')}`;
+      : `Seeders online for ${formatInteger(seeded)} of ${countLabel(counts.length, 'video', 'videos')}`;
   };
 
   const renderAboutPanel = (): ReactElement => {
