@@ -75,6 +75,11 @@ what you ask them for. You can change the relays and mints in Settings.
    list, in the seeder's list and in the viewer's own wallet. Neither side is ever more than the
    unpaid window of blocks ahead of the other, which bounds what a cheat can gain.
 
+That is the protocol the app speaks today. It is also becoming an implementation of
+[NFX](https://github.com/SovereignTechnology/nfx), the protocol suite nfx speaks, so the two share
+one network: NFX videos over HyperDHT, beside the protocol above, which stays as it is
+([ADR 0020](docs/decisions/0020-speak-nfx.md)). None of it has shipped yet.
+
 The threat model, the money-path invariants and the review of the implementation are in
 [SECURITY.md](SECURITY.md) and [docs/security-review.md](docs/security-review.md).
 
