@@ -17,6 +17,7 @@ and are **not covered by its AGPL-3.0-or-later grant**; each keeps the terms bel
 | `BUD-*.md` (6)                               | [hzrd149/blossom](https://github.com/hzrd149/blossom) | `master`, fetched 2026-09-04          | The Unlicense                                                                             |
 | Package READMEs (14, listed below)           | npm, at the versions in `versions.txt`              | exact version                           | The licence of each package, as declared on npm                                           |
 | Pear documentation and examples (33: `pear-*.md`, `bare-modules.md`, `bare-subprocess-reference.md`, `examples/`) | [holepunchto/pear-docs](https://github.com/holepunchto/pear-docs) | `published` and `preview` branches, fetched 2026-09-04 | **Not stated by the upstream repository** (see below) |
+| `nfx-test-vectors/` (12 JSON files)          | [SovereignTechnology/nfx](https://github.com/SovereignTechnology/nfx) `spec/test-vectors/` | commit `47cb059` (PR #2), pinned by `nfx-test-vectors/SHA256SUMS` | Public domain (CC0), per the nfx `spec/README.md` |
 
 Package READMEs and their declared licences: Apache-2.0 for `bare-ffmpeg`, `bare-media`,
 `bare-subprocess`, `compact-encoding`, `hyperblobs`, `hypercore-blob-server` and `pear-electron`;

@@ -13,6 +13,19 @@ declare module 'sodium-universal' {
     sodium_memcmp(a: Uint8Array, b: Uint8Array): boolean;
     randombytes_buf(buf: Uint8Array): void;
 
+    // NFX (`src/nfx/`): content hashes and the NFX-12 `bind` signature, RFC 8032 Ed25519.
+    readonly crypto_hash_sha256_BYTES: number;
+    crypto_hash_sha256(out: Uint8Array, input: Uint8Array): void;
+    readonly crypto_sign_BYTES: number;
+    readonly crypto_sign_PUBLICKEYBYTES: number;
+    readonly crypto_sign_SECRETKEYBYTES: number;
+    readonly crypto_sign_SEEDBYTES: number;
+    crypto_sign_verify_detached(sig: Uint8Array, m: Uint8Array, pk: Uint8Array): boolean;
+    /** Tests only: the vectors' throwaway peer key, from its seed. */
+    crypto_sign_seed_keypair(pk: Uint8Array, sk: Uint8Array, seed: Uint8Array): void;
+    /** Tests only: reproduces the vectors' `bind` (Ed25519 is deterministic). */
+    crypto_sign_detached(sig: Uint8Array, m: Uint8Array, sk: Uint8Array): void;
+
     readonly crypto_pwhash_ALG_ARGON2ID13: number;
     readonly crypto_pwhash_SALTBYTES: number;
     readonly crypto_pwhash_OPSLIMIT_INTERACTIVE: number;

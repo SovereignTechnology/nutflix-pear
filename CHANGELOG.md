@@ -7,6 +7,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- `@sovit/core` reads and writes the NFX wire formats (`nfx/`, ADR 0020): namespaces, kind-38504
+  manifests and their deletions, kind-20464 beacons including the NFX-12 `hyperdht` endpoint and
+  its `bind`, hash lists and playlists, canonical JSON, and the `nfx/files/1` and `nfx/pay/1`
+  message layouts. Every case of the suite's vectors runs in the tests, against copies pinned by
+  sha256 in `docs/vendor/nfx-test-vectors/`. Nothing in the app uses it yet.
+
 ### Changed
 
 - The repository is renamed `nutflix-pear` (was `nutflix-demo`): the GitHub repo, every README

@@ -9,6 +9,7 @@ builds on it. It is internal to this workspace and is not published to npm.
 | `contracts/`    | The frozen interfaces (network adapter, signer, wallet, payment engine, `pay/1`, manifest, media) and `CONTRACTS_VERSION` |
 | `nostr/`        | The relay data layer: feeds, follows, profiles, reactions, comments, reports, trending           |
 | `manifest/`     | Parsing and building the signed video events (NIP-71)                                            |
+| `nfx/`          | The NFX wire formats (ADR 0020): manifests, beacons, hash lists, canonical JSON, the NFX-12 messages; pinned by `docs/vendor/nfx-test-vectors` |
 | `media/`        | The rendition ladder and the ffmpeg helpers                                                      |
 | `payment/`      | The payment engine: the seeder/creator split, P2PK locks, seen proofs, unpaid-block records      |
 | `pay-protocol/` | The `pay/1` wire format                                                                          |
