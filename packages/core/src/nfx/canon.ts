@@ -4,7 +4,7 @@
  * the rule calls non-canonicalizable (fractions, exponents, `-0`, integers outside
  * ±(2^53 − 1), duplicate keys, lone surrogates) is **rejected**, never normalized.
  */
-import { JsonNumber, JsonObject, isJsonArray, parseJson, type JsonValue } from './json.js';
+import { JsonNumber, isJsonArray, parseJson, type JsonObject, type JsonValue } from './json.js';
 import { fail, ok, type NfxResult } from './errors.js';
 import { compareCodePoints } from './util.js';
 

@@ -216,6 +216,8 @@ class Reader {
         if (low < 0xdc00 || low > 0xdfff) this.fail('lone leading surrogate in hex escape');
         return String.fromCharCode(high, low);
       }
+      case undefined:
+        return this.fail('EOF while parsing a string');
       default:
         return this.fail('invalid escape');
     }
