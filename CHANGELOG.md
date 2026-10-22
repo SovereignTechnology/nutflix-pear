@@ -22,6 +22,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   a channel's About tab no longer says no seeders are online
   ([#23](https://github.com/SovereignTechnology/nutflix-pear/issues/23)).
 
+### Security
+
+- Electron 44.9.3 (was 44.2.0). It fixes GHSA-fw47-9c62-h3vw, where `hid` and `usb` permission
+  checks from a subframe were attributed to the top-level origin (fixed in 44.3.0), and carries
+  the later backported ANGLE, Chromium, PDFium, Skia and V8 fixes. Chromium 152.0.7977.167 (was
+  .76) and Node 24.22.0 (was 24.20.0); the native-module ABI is unchanged (149).
+
 ## [0.1.0] - 2026-10-05
 
 The first release of the desktop app, for Linux x86_64. It is experimental: read the
