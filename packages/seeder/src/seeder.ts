@@ -50,6 +50,7 @@ import { CasIndex } from './store/cas-index.js';
 import type { CasEntry } from './store/cas-index.js';
 import { CorePolicyStore } from './store/core-policies.js';
 import { DiskCap } from './store/disk-cap.js';
+import { NfxFileStore } from './store/nfx-files.js';
 
 export interface SeederDeps {
   /**
@@ -109,6 +110,8 @@ export class Seeder {
   readonly banList: BanList;
   readonly index: CasIndex;
   readonly diskCap: DiskCap;
+  /** NFX videos' files (ADR 0020), apart from every core, counted in the same disk cap. */
+  readonly nfx: NfxFileStore;
   readonly rateLimiter: RateLimiter;
   readonly sessions: SessionRegistry;
   readonly blobs: BlobStore;
@@ -167,6 +170,7 @@ export class Seeder {
       readonly banList: BanList;
       readonly index: CasIndex;
       readonly corePolicies: CorePolicyStore;
+      readonly nfx: NfxFileStore;
     },
   ) {
     this.config = config;
@@ -178,7 +182,13 @@ export class Seeder {
     this.index = loaded.index;
     this.corePolicyStore = loaded.corePolicies;
     for (const [core, policy] of loaded.corePolicies.entries()) this.corePolicies.set(core, policy);
-    this.diskCap = new DiskCap(config.diskCapBytes, this.index.totalBytes());
+    // One cap over both stores: the Hyperblobs payload and the NFX files.
+    this.diskCap = new DiskCap(
+      config.diskCapBytes,
+      this.index.totalBytes() + loaded.nfx.totalBytes(),
+    );
+    this.nfx = loaded.nfx;
+    this.nfx.attach(this.diskCap);
     this.rateLimiter = new RateLimiter(config.rateLimits, deps.now ?? Date.now);
     this.sessions = new SessionRegistry({
       engine: deps.engine,
@@ -266,9 +276,17 @@ export class Seeder {
       crypto: deps.crypto,
       dataDir: config.dataDir,
     });
+    const nfx = new NfxFileStore({
+      fs: deps.fs,
+      crypto: deps.crypto,
+      dataDir: config.dataDir,
+      logger: log,
+      now: nowSec,
+    });
     await banList.load();
     await index.load();
     await corePolicies.load();
+    await nfx.load();
     if (banList.corruptOnLoad)
       log.error('ban list on disk was unreadable; starting with an empty list');
     if (index.corruptOnLoad)
@@ -277,13 +295,16 @@ export class Seeder {
       log.error('core policies on disk were unreadable; starting with none');
     if (corePolicies.dropped > 0)
       log.warn('malformed core policies on disk were dropped', { dropped: corePolicies.dropped });
+    if (nfx.corruptOnLoad)
+      log.error('NFX file index on disk was unreadable; starting with no NFX videos');
 
-    const seeder = new Seeder(config, deps, { banList, index, corePolicies });
+    const seeder = new Seeder(config, deps, { banList, index, corePolicies, nfx });
     await seeder.blobs.ready();
     seeder.wireEvents();
     seeder.log.info('seeder created', {
       dataDir: config.dataDir,
       blobs: index.entries().length,
+      nfxVideos: nfx.videos().length,
       usedBytes: seeder.diskCap.usedBytes,
       capBytes: config.diskCapBytes,
       bans: banList.entries().length,

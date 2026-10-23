@@ -31,6 +31,14 @@ export type {
 export { CasIndex, CAS_INDEX_FILE } from './store/cas-index.js';
 export type { CasEntry } from './store/cas-index.js';
 export { DiskCap } from './store/disk-cap.js';
+export { NfxFileStore, NFX_DIR, NFX_INDEX_FILE } from './store/nfx-files.js';
+export type {
+  NfxPutError,
+  NfxPutResult,
+  NfxStoredFile,
+  NfxStoredVideo,
+  NfxVideoInput,
+} from './store/nfx-files.js';
 
 // Network / sessions
 export { PeerSession } from './net/peer-session.js';

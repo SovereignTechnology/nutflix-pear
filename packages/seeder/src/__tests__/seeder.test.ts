@@ -9,7 +9,15 @@ import { Seeder } from '../seeder.js';
 import type { SeederEvent } from '../seeder.js';
 import { toHex } from '../util/hex.js';
 import { FakePayProtocol, hello } from './fake-pay-protocol.js';
-import { FakeStream, adapters, capturedLogger, noiseKey, pubkey, tmpDir } from './helpers.js';
+import {
+  FakeStream,
+  adapters,
+  capturedLogger,
+  nfxVideo,
+  noiseKey,
+  pubkey,
+  tmpDir,
+} from './helpers.js';
 
 const BLOCK = 1024;
 const cleanups: (() => Promise<void>)[] = [];
@@ -90,6 +98,30 @@ describe('Seeder façade', () => {
     expect(second.events.at(-1)).toMatchObject({ type: 'blob-removed', sha256: a.entry.sha256 });
     expect(second.seeder.stats().usedBytes).toBe(2 * BLOCK);
     expect(second.seeder.listBlobs()).toHaveLength(1);
+  });
+
+  it('counts NFX files and the Hyperblobs payload in one disk cap, across a restart', async () => {
+    const v = nfxVideo('capped-video', [
+      new Uint8Array(100).fill(1),
+      new Uint8Array(200).fill(2),
+      new Uint8Array(1000).fill(3),
+    ]);
+    const nfxBytes = 1300 + v.input.hashListBytes.byteLength;
+    const first = await make({ diskCapBytes: 4 * BLOCK });
+    expect((await first.seeder.nfx.putVideo(v.input)).ok).toBe(true);
+    expect(first.seeder.stats().usedBytes).toBe(nfxBytes);
+    const dataDir = first.seeder.config.dataDir;
+    await first.seeder.close();
+
+    const second = await make({ diskCapBytes: 4 * BLOCK, dataDir });
+    expect(second.seeder.stats().usedBytes).toBe(nfxBytes);
+    expect(second.seeder.nfx.videos()).toHaveLength(1);
+    // A blob the cap would take alone does not fit beside the NFX files.
+    const tooBig = await second.seeder.putBytes(new Uint8Array(3 * BLOCK).fill(4));
+    expect(tooBig).toMatchObject({ ok: false, error: { code: 'disk-cap' } });
+    expect((await second.seeder.putBytes(new Uint8Array(BLOCK).fill(4))).ok).toBe(true);
+    expect(await second.seeder.nfx.removeVideo(v.input.video.toString())).toBe(true);
+    expect(second.seeder.stats().usedBytes).toBe(BLOCK);
   });
 
   it('logs (redacted) and survives corrupt state files', async () => {

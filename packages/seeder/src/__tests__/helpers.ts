@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { NostrPubkey, PaymentEngineSeeder } from '@sovit/core';
-import { mocks } from '@sovit/core';
+import type { NostrPubkey, PaymentEngineSeeder, Sha256Hex } from '@sovit/core';
+import { mocks, nfx } from '@sovit/core';
 import type { ReplicationStream } from 'hypercore';
 
 import { nodeCrypto } from '../adapters/node/crypto.js';
@@ -11,6 +12,7 @@ import { nodeFs } from '../adapters/node/fs.js';
 import { createLogger } from '../log/logger.js';
 import type { Logger, LogRecord } from '../log/logger.js';
 import { BanList } from '../store/ban-list.js';
+import type { NfxVideoInput } from '../store/nfx-files.js';
 import { fromHex } from '../util/hex.js';
 
 export const adapters = { fs: nodeFs, crypto: nodeCrypto } as const;
@@ -128,3 +130,70 @@ export function honestEngine(windowBlocks = 4): mocks.MockPaymentEngine {
 }
 
 export type EngineLike = PaymentEngineSeeder;
+
+const sha256Hex = (bytes: Uint8Array): Sha256Hex =>
+  createHash('sha256').update(bytes).digest('hex') as Sha256Hex;
+
+export interface NfxFixture {
+  readonly input: NfxVideoInput;
+  /** Each listed file's bytes, by sha256. */
+  readonly bytes: ReadonlyMap<string, Uint8Array>;
+  /** The sha256 of every file `input.read` was asked for, in order. */
+  readonly reads: string[];
+}
+
+/**
+ * An NFX-05 video on `nfx:regtest:1` with a valid hash list: `contents[0]` is its playlist,
+ * `contents[1]` its init segment, the rest 2 s media segments (at least two contents).
+ */
+export function nfxVideo(videoId: string, contents: readonly Uint8Array[]): NfxFixture {
+  const ns = nfx.Namespace.parse('nfx:regtest:1');
+  if (!ns.ok) throw new Error('namespace');
+  const addr = nfx.VideoAddr.of(ns.value, videoId);
+  if (!addr.ok) throw new Error(`video id ${videoId}`);
+  const bytes = new Map<string, Uint8Array>();
+  const files: nfx.FileEntry[] = contents.map((c, i) => {
+    const sha = sha256Hex(c);
+    bytes.set(sha, c);
+    const role: nfx.Role = i === 0 ? 'playlist' : i === 1 ? 'init' : 'segment';
+    const ext = i === 0 ? 'm3u8' : i === 1 ? 'mp4' : 'm4s';
+    return {
+      name: `${sha}.${ext}`,
+      role,
+      sha256: sha,
+      size: BigInt(c.byteLength),
+      durMs: role === 'segment' ? 2000n : undefined,
+    };
+  });
+  const playlist = files[0]!;
+  const hashListBytes = nfx.renderHashList({
+    v: 1,
+    video: addr.value.toString(),
+    files,
+    renditions: [
+      {
+        id: '360p',
+        playlist: playlist.name,
+        bandwidth: 800_000n,
+        codecs: undefined,
+        resolution: '640x360',
+      },
+    ],
+  });
+  const reads: string[] = [];
+  return {
+    input: {
+      video: addr.value,
+      root: sha256Hex(hashListBytes),
+      segs: BigInt(files.length),
+      hashListBytes,
+      read: (entry) => {
+        reads.push(entry.sha256);
+        const b = bytes.get(entry.sha256);
+        return b === undefined ? Promise.reject(new Error('unlisted')) : Promise.resolve(b);
+      },
+    },
+    bytes,
+    reads,
+  };
+}
