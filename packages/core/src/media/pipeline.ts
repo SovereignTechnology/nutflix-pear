@@ -5,7 +5,6 @@ import type {
   LadderPlan,
   MediaPipeline,
   MediaProbe,
-  ProcessRunner,
   RenditionSpec,
   TranscodeOutput,
   TranscodeProgress,
@@ -13,12 +12,13 @@ import type {
 import type { Sha256Hex } from '../contracts/primitives.js';
 import { placeholderArgv, renditionArgv, storyboardArgv, thumbnailArgv } from './argv.js';
 import { dataUrl } from './base64.js';
-import { MediaError, isProcessRunnerError } from './errors.js';
+import { MediaError } from './errors.js';
 import { ffprobeArgv, isMp4Container, parseFfprobeJson } from './ffprobe.js';
 import { defaultHyperUrl } from './hyper-url.js';
 import { planLadder } from './ladder.js';
 import { Mp4BoxScanner } from './mp4-boxes.js';
 import { ProgressTracker } from './progress.js';
+import { runOrThrow } from './run.js';
 import { storyboardVtt } from './storyboard.js';
 import type { MediaPipelineDeps, Sha256Factory } from './types.js';
 
@@ -34,35 +34,6 @@ const DEFAULT_CHUNK = 65_536;
 const DEFAULT_PREFIX = 'nutflix-transcode-';
 
 const decoder = new TextDecoder();
-
-async function runOrThrow(
-  runner: ProcessRunner,
-  file: string,
-  args: readonly string[],
-  what: string,
-  onStderrLine?: (line: string) => void,
-): Promise<{ readonly stdout: Uint8Array; readonly stderr: string }> {
-  let res: Awaited<ReturnType<ProcessRunner['run']>>;
-  try {
-    res = await runner.run(file, args, onStderrLine ? { onStderrLine } : undefined);
-  } catch (e) {
-    if (isProcessRunnerError(e)) {
-      if (e.code === 'aborted') throw new MediaError('aborted', `${what}: aborted`, { cause: e });
-      throw new MediaError(
-        'ffmpeg-not-found',
-        `${what}: could not spawn ${e.file}${e.errno ? ` (${e.errno})` : ''}`,
-        { cause: e },
-      );
-    }
-    throw new MediaError('process-failed', `${what}: runner failed`, { cause: e });
-  }
-  if (res.exitCode !== 0) {
-    throw new MediaError('process-failed', `${what}: exit ${res.exitCode}`, {
-      stderr: res.stderr,
-    });
-  }
-  return res;
-}
 
 async function hashFile(
   fs: FsAdapter,
