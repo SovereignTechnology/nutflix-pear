@@ -14,6 +14,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   its `bind`, hash lists and playlists, canonical JSON, and the `nfx/files/1` and `nfx/pay/1`
   message layouts. Every case of the suite's vectors runs in the tests, against copies pinned by
   sha256 in `docs/vendor/nfx-test-vectors/`. Nothing in the app uses it yet.
+- `@sovit/seeder` speaks the NFX-12 HyperDHT transport (`nfx/`): a seeder listens on its
+  per-network peer key and serves whole files over `nfx/files/1`, a watcher dials that key and
+  fetches them, each file capped at its size and checked against its sha256 before it counts.
+  Flow control keeps at most one 64 KiB frame queued on top of the stream's buffer, and the
+  per-connection limits, keepalives and the 60-second idle rule are enforced. It also signs the
+  beacon's `hyperdht` `bind` and carries `nfx/pay/1` messages without acting on them. Free mode
+  only, and nothing in the app uses it yet.
 
 ### Changed
 
