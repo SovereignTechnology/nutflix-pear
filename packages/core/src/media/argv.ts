@@ -1,4 +1,5 @@
 import type { LadderPlan, MediaProbe, RenditionSpec } from '../contracts/media.js';
+import { MediaError } from './errors.js';
 import { displayDimensions } from './ffprobe.js';
 import { GOP_SECONDS, fitToHeight } from './ladder.js';
 
@@ -149,6 +150,68 @@ export function renditionArgv(
     'pipe:2',
     '-nostats',
     output,
+  ];
+}
+
+/**
+ * The NFX remux input guard: local files only, and only ffmpeg's MP4 demuxer (`mov`). The
+ * input is a rendition this pipeline encoded, but a playlist-like demuxer reads other files,
+ * so nothing else may open it (nfx-media `INPUT_GUARD`, narrowed to the one format).
+ */
+export const REMUX_INPUT_GUARD: readonly string[] = [
+  '-protocol_whitelist',
+  'file',
+  '-format_whitelist',
+  'mov',
+];
+
+/**
+ * NFX-05 CMAF from an H.264 + AAC rendition this pipeline already encoded (`renditionArgv`),
+ * by STREAM COPY: no second encode. The rendition's keyframes are pinned every GOP_SECONDS,
+ * so the HLS muxer cuts segments of exactly that length, aligned across renditions. The tail
+ * is nfx-media's `rendition_cmaf_argv`: HLS VOD, fMP4 segments, `EXT-X-INDEPENDENT-SEGMENTS`,
+ * `init.mp4` + `seg_%05d.m4s` + `index.m3u8` inside `outDir`.
+ *
+ * `input` is read through the file protocol (`file:`), so a name that looks like an option or
+ * a protocol (`-x.mp4`, `concat:…`) is only a name. `outDir` must not contain `%` (ffmpeg
+ * expands `-hls_segment_filename` as a format string) or start with `-`.
+ */
+export function cmafRemuxArgv(input: string, outDir: string): readonly string[] {
+  if (outDir.includes('%') || outDir.startsWith('-') || outDir === '') {
+    throw new MediaError('unsupported-input', 'NFX remux: unusable output directory');
+  }
+  return [
+    ...COMMON,
+    ...REMUX_INPUT_GUARD,
+    '-i',
+    `file:${input}`,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a:0?',
+    '-c',
+    'copy',
+    '-sn',
+    '-dn',
+    '-map_metadata',
+    '-1',
+    '-map_chapters',
+    '-1',
+    '-f',
+    'hls',
+    '-hls_time',
+    String(GOP_SECONDS),
+    '-hls_playlist_type',
+    'vod',
+    '-hls_segment_type',
+    'fmp4',
+    '-hls_flags',
+    'independent_segments',
+    '-hls_fmp4_init_filename',
+    'init.mp4',
+    '-hls_segment_filename',
+    `${outDir}/seg_%05d.m4s`,
+    `${outDir}/index.m3u8`,
   ];
 }
 

@@ -31,6 +31,8 @@ export {
 } from './ladder.js';
 export {
   renditionArgv,
+  cmafRemuxArgv,
+  REMUX_INPUT_GUARD,
   thumbnailArgv,
   placeholderArgv,
   storyboardArgv,
@@ -47,6 +49,16 @@ export {
   Mp4BoxScanner,
   type Mp4Box,
 } from './mp4-boxes.js';
+export { childBoxes, initCodecs, type Mp4Child } from './mp4-codecs.js';
+export { packageNfx } from './nfx-package.js';
+export type {
+  NfxPackageDeps,
+  NfxPackageInput,
+  NfxPackageRendition,
+  NfxPackaged,
+  NfxPackagedFile,
+  NfxPackagedSource,
+} from './nfx-package.js';
 export { parseProgressLine, ProgressTracker, type ProgressSample } from './progress.js';
 export { storyboardVtt, vttTimestamp, type StoryboardVttInput } from './storyboard.js';
 export { defaultHyperUrl } from './hyper-url.js';

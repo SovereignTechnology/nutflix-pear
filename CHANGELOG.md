@@ -14,6 +14,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   its `bind`, hash lists and playlists, canonical JSON, and the `nfx/files/1` and `nfx/pay/1`
   message layouts. Every case of the suite's vectors runs in the tests, against copies pinned by
   sha256 in `docs/vendor/nfx-test-vectors/`. Nothing in the app uses it yet.
+- `@sovit/core` packages a video as NFX-05 content (`media.packageNfx`): the H.264 renditions the
+  studio already encodes are remuxed by stream copy, with no second encode, into CMAF (an init
+  segment and 2 s fMP4 segments each). Every file is named by its sha256, playlists name content
+  only, the CODECS strings come from the init segments' bytes, and the hash list is checked as a
+  consumer would check it before it is returned. Nothing in the app calls it yet.
 
 ### Changed
 
