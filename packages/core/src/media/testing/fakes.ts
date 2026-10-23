@@ -202,3 +202,56 @@ export class MemorySink implements BlobSink {
     };
   }
 }
+
+const u8 = (...n: number[]): Uint8Array => new Uint8Array(n);
+
+/** An MPEG-4 descriptor: tag, size (one byte, or four as ffmpeg writes), body (< 128 B). */
+export function descriptor(tag: number, body: Uint8Array, longSize = false): Uint8Array {
+  return concat([u8(tag), longSize ? u8(0x80, 0x80, 0x80, body.length) : u8(body.length), body]);
+}
+
+/** A `trak` whose `stsd` holds one sample entry. */
+export function trakBox(entry: Uint8Array): Uint8Array {
+  const stsd = concat([u8(0, 0, 0, 0, 0, 0, 0, 1), entry]);
+  return box('trak', box('mdia', box('minf', box('stbl', box('stsd', stsd)))));
+}
+
+/** An H.264 sample entry (`avc1` or `avc3`) with its `avcC`. */
+export function avcEntry(
+  profile: number,
+  compat: number,
+  level: number,
+  type = 'avc1',
+): Uint8Array {
+  return box(
+    type,
+    concat([new Uint8Array(78), box('avcC', u8(1, profile, compat, level, 0xff, 0xe1))]),
+  );
+}
+
+/** An AAC sample entry whose `esds` carries `asc` as its AudioSpecificConfig. */
+export function mp4aEntry(asc: Uint8Array, longSize = false): Uint8Array {
+  const dcd = concat([
+    u8(0x40, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    descriptor(0x05, asc, longSize),
+  ]);
+  const es = concat([u8(0, 1, 0), descriptor(0x04, dcd, longSize)]);
+  const esds = concat([u8(0, 0, 0, 0), descriptor(0x03, es, longSize)]);
+  return box('mp4a', concat([new Uint8Array(28), box('esds', esds)]));
+}
+
+/** A CMAF-shaped init segment: `ftyp` + `moov` holding `traks`. */
+export function initSegment(traks: readonly Uint8Array[]): Uint8Array {
+  return concat([
+    box('ftyp', new TextEncoder().encode('iso6\0\0\0\0')),
+    box('moov', concat(traks)),
+  ]);
+}
+
+/** An init segment for H.264 High (`avc1.64 00 <level>`) + AAC-LC, as ffmpeg's remux writes. */
+export function h264AacInit(level = 0x28): Uint8Array {
+  return initSegment([
+    trakBox(avcEntry(0x64, 0x00, level)),
+    trakBox(mp4aEntry(u8(0x12, 0x10), true)),
+  ]);
+}
