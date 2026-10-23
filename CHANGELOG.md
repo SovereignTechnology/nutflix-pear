@@ -26,6 +26,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   segment and 2 s fMP4 segments each). Every file is named by its sha256, playlists name content
   only, the CODECS strings come from the init segments' bytes, and the hash list is checked as a
   consumer would check it before it is returned. Nothing in the app calls it yet.
+- The seeder keeps NFX videos' files in their own store (`NfxFileStore`, ADR 0020), each under
+  its sha256 and apart from every Hypercore, so none of them is served on the legacy swarm. A
+  put checks the hash list against its root and each file against the list, and keeps nothing
+  on a mismatch; a file two videos list is stored and counted once. Both stores share the one
+  disk cap. The studio can package a free H.264 upload into it before the legacy publish, and
+  removes it again if that publish fails; that step stays off until NFX has its settings.
 
 ### Changed
 

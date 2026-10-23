@@ -10,7 +10,9 @@
  *     the seeder needs a re-readable source for its hash-then-write passes — and refuses a
  *     result whose sha256 differs from the transcode output's (`hash-mismatch`);
  *   - `publish` = a worker → host `studio.publish(PublishDraft)` request: the HOST builds and
- *     signs the NIP-71 event (it owns the signer seam) and returns the verified manifest.
+ *     signs the NIP-71 event (it owns the signer seam) and returns the verified manifest;
+ *   - with `nfx` (ADR 0020, `nfx.ts`), a free H.264 video is also packaged as NFX-05 content
+ *     and stored before that publish, and removed again if the publish fails.
  *
  * Progress goes out as `upload.progress` events, shaped to pass the host's guard (error
  * messages go through the ipc scrubber: no paths, one line, capped).
@@ -35,6 +37,8 @@ import type { Logger, Seeder } from '@sovit/seeder';
 import { fromHex as hexToBytes } from '../../ipc/codec.js';
 import { toWireError } from '../../ipc/errors.js';
 import type { PublishDraft, StudioUploadArgs } from '../../ipc/worker-protocol.js';
+import { nfxEligible, storeNfxUpload } from './nfx.js';
+import type { WorkerNfxDeps } from './nfx.js';
 
 export interface WorkerUploadDeps {
   readonly seeder: Seeder;
@@ -55,6 +59,8 @@ export interface WorkerUploadDeps {
   readonly progress: (p: UploadProgress) => void;
   /** x264 preset (tests use `ultrafast`). */
   readonly preset?: string;
+  /** NFX publishing (ADR 0020): absent, the upload is legacy only. */
+  readonly nfx?: WorkerNfxDeps;
 }
 
 /** A progress event as it may cross to the host (error text scrubbed and capped). */
@@ -206,11 +212,34 @@ export async function runWorkerUpload(
           codec: first?.spec.codec ?? 'h264',
         };
         const thumbnailImage = await publishThumbnail(draft, deps, log);
+        const nfxVideo =
+          deps.nfx !== undefined && nfxEligible(args.meta, draft.output)
+            ? await storeNfxUpload(
+                draft.output,
+                draft.thumbnail.kind === 'candidate' ? draft.thumbnail.path : undefined,
+                {
+                  store: deps.seeder.nfx,
+                  nfx: deps.nfx,
+                  runner: deps.runner,
+                  fs: deps.fs,
+                  sha256: deps.sha256,
+                  binaries: deps.binaries,
+                  logger: log,
+                },
+              )
+            : undefined;
         log.info('upload transcoded; asking the host to publish', {
           renditions: draft.renditions.length,
           thumbnail: thumbnailImage !== undefined,
+          nfx: nfxVideo !== undefined,
         });
-        return deps.publish(thumbnailImage === undefined ? pd : { ...pd, thumbnailImage });
+        try {
+          return await deps.publish(thumbnailImage === undefined ? pd : { ...pd, thumbnailImage });
+        } catch (err) {
+          if (nfxVideo !== undefined)
+            await deps.seeder.nfx.removeVideo(nfxVideo.video).catch(() => undefined);
+          throw err;
+        }
       },
     },
   );
