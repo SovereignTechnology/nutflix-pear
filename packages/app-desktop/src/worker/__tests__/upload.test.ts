@@ -9,9 +9,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { NostrEvent, NostrEventId, NostrPubkey, VideoManifest } from '@sovit/core';
-import { manifest, mocks } from '@sovit/core';
+import { manifest, mocks, nfx } from '@sovit/core';
 import { nodeProcessRunner } from '@sovit/core/media/node';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { PublishDraft, StudioUploadArgs, WorkerEvent } from '../../ipc/worker-protocol.js';
 import type { DevTestnet } from '../dev/fixtures-net.js';
@@ -178,6 +178,59 @@ describe.skipIf(!hasFfmpeg)('studio.upload with the system ffmpeg', () => {
       expect(stages.at(-1)).toBe('done');
       expect(w.invalid).toEqual([]);
       expect(w.rpc.stats().droppedEvents).toBe(0);
+    },
+  );
+
+  it(
+    'packages a free upload for NFX once it has published, in the shared disk cap (contracts v8)',
+    { timeout: 120_000 },
+    async () => {
+      const uploadId = randomBytes(16).toString('hex') as StudioUploadArgs['uploadId'];
+      const seeder = w.host.internals.seeder!;
+      const before = seeder.diskCap.usedBytes;
+      const video = await w.call('studio.upload', {
+        uploadId,
+        path: source,
+        name: 'clip.mp4',
+        meta: { ...meta, satsPerBlock: mocks.sats(0), nfx: true },
+      });
+      // The legacy upload is the result, whatever the NFX side does.
+      expect(video.renditions.length).toBeGreaterThan(0);
+
+      const ev = await vi.waitFor(
+        () => {
+          const e = w.events.find(
+            (x): x is Extract<WorkerEvent, { e: 'upload.nfx' }> =>
+              x.e === 'upload.nfx' && x.uploadId === uploadId,
+          );
+          if (e === undefined) throw new Error('no upload.nfx yet');
+          return e;
+        },
+        { timeout: 90_000, interval: 100 },
+      );
+      expect(ev.status).toMatchObject({ state: 'stored' });
+      if (ev.status.state !== 'stored') return;
+      expect(ev.status.video).toBe(`nfx:testnet:1:nutflix-${video.id.slice(0, 32)}`);
+      const addr = nfx.VideoAddr.parse(ev.status.video);
+      if (!addr.ok) throw new Error(addr.error.reason);
+      expect(seeder.nfx.hasVideo(addr.value)).toBe(true);
+      const list = seeder.nfx.file(addr.value, ev.status.root)!;
+      const listBytes = await list.read(0, list.size);
+      expect(createHash('sha256').update(listBytes).digest('hex')).toBe(ev.status.root);
+      // What the hash list names is what the store serves for this video, and nothing else.
+      const verified = nfx.verifyHashList(
+        listBytes,
+        ev.status.root,
+        addr.value,
+        BigInt(ev.status.segs),
+      );
+      expect(verified.ok).toBe(true);
+      if (!verified.ok) return;
+      for (const f of verified.value.files) {
+        expect(seeder.nfx.file(addr.value, f.sha256)?.size).toBe(Number(f.size));
+      }
+      expect(seeder.diskCap.usedBytes - before).toBeGreaterThanOrEqual(ev.status.bytes);
+      expect(w.invalid).toEqual([]);
     },
   );
 });
