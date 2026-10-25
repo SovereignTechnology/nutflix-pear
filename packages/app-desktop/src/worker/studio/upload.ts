@@ -64,7 +64,7 @@ export interface WorkerUploadDeps {
    * Contracts v8: the NFX side of an upload with `meta.nfx` (`./nfx.ts`). It runs after the
    * legacy upload resolved and reports on its own; absent, `meta.nfx` is ignored.
    */
-  readonly nfx?: (status: Promise<NfxUploadStatusWire>) => void;
+  readonly nfx?: (this: void, status: Promise<NfxUploadStatusWire>) => void;
 }
 
 /** A progress event as it may cross to the host (error text scrubbed and capped). */
@@ -227,7 +227,10 @@ export async function runWorkerUpload(
 
   // The NFX side (contracts v8), only once the legacy upload has published, and detached: its
   // packaging (a remux and the store's verified writes) never delays or fails the legacy result.
-  const done: TranscodeOutput | null = output;
+  // Read through a function: `output` is set inside the transcode callback, which TypeScript's
+  // narrowing from the `null` initializer does not see.
+  const transcoded = (): TranscodeOutput | null => output;
+  const done = transcoded();
   if (args.meta.nfx === true && deps.nfx !== undefined && done !== null) {
     deps.nfx(
       packageUploadForNfx(
