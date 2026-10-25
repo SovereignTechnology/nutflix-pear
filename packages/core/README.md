@@ -10,7 +10,7 @@ builds on it. It is internal to this workspace and is not published to npm.
 | `nostr/`        | The relay data layer: feeds, follows, profiles, reactions, comments, reports, trending           |
 | `manifest/`     | Parsing and building the signed video events (NIP-71)                                            |
 | `nfx/`          | The NFX wire formats (ADR 0020): manifests, beacons, hash lists, canonical JSON, the NFX-12 messages; pinned by `docs/vendor/nfx-test-vectors` |
-| `media/`        | The rendition ladder and the ffmpeg helpers                                                      |
+| `media/`        | The rendition ladder and the ffmpeg helpers, and NFX-05 packaging (CMAF by stream copy)          |
 | `payment/`      | The payment engine: the seeder/creator split, P2PK locks, seen proofs, unpaid-block records      |
 | `pay-protocol/` | The `pay/1` wire format                                                                          |
 | `signer/`       | The local-key signer and the NIP-46 remote signer                                                |

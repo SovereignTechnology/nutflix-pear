@@ -72,6 +72,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      # The real-ffmpeg suites (core/media: the transcode pipeline and the NFX CMAF remux) skip
+      # without a binary; Ubuntu's ffmpeg, as the e2e job installs it, so they run here.
+      - name: system packages (ffmpeg for the real-ffmpeg suites)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm ci --ignore-scripts
       # The app-desktop suites read sibling packages from dist/ and the packaging tests stage
       # the built app, so the build comes first.

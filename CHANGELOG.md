@@ -21,6 +21,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   per-connection limits, keepalives and the 60-second idle rule are enforced. It also signs the
   beacon's `hyperdht` `bind` and carries `nfx/pay/1` messages without acting on them. Free mode
   only, and nothing in the app uses it yet.
+- `@sovit/core` packages a video as NFX-05 content (`media.packageNfx`): the H.264 renditions the
+  studio already encodes are remuxed by stream copy, with no second encode, into CMAF (an init
+  segment and 2 s fMP4 segments each). Every file is named by its sha256, playlists name content
+  only, the CODECS strings come from the init segments' bytes, and the hash list is checked as a
+  consumer would check it before it is returned. Nothing in the app calls it yet.
 
 ### Changed
 

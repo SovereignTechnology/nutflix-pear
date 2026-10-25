@@ -48,7 +48,7 @@ function codeOf(err: unknown): ErrorCode | undefined {
     const code = field(e, 'code');
     const name = field(e, 'name');
     if (name === 'ProcessRunnerError') {
-      // core's pipeline maps these the same way (media/pipeline.ts runOrThrow).
+      // core's pipeline maps these the same way (media/run.ts runOrThrow).
       if (code === 'spawn-failed') return 'ffmpeg-not-found';
       if (code === 'aborted') return 'aborted';
     }
