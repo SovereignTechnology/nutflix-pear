@@ -288,7 +288,11 @@ export class Seeder {
     if (corePolicies.corruptOnLoad)
       log.error('core policies on disk were unreadable; starting with none');
     if (nfxStore.corruptOnLoad)
-      log.error('NFX store index on disk was unreadable; starting with no NFX videos');
+      log.error('NFX store index on disk was unreadable; set aside, starting with no NFX videos');
+    if (nfxStore.loadError !== null)
+      log.error('NFX store could not load; NFX is off', { error: nfxStore.loadError });
+    if (nfxStore.droppedOnLoad > 0)
+      log.warn('NFX videos dropped at load', { dropped: nfxStore.droppedOnLoad });
     if (corePolicies.dropped > 0)
       log.warn('malformed core policies on disk were dropped', { dropped: corePolicies.dropped });
 

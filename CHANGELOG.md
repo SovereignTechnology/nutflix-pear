@@ -42,6 +42,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Fixed
 
+- The NFX file store refuses a hash list that gives a file two sizes, or another size than the
+  one it already stores. Before, such a list (from a peer, once seeders fetch NFX videos)
+  skewed the disk cap and could delete another video's files at the next start. It also cleans
+  up after a crash mid-write, checks every recorded file's size on disk when it loads, drops a
+  damaged record on its own instead of the whole list, refuses hash lists over 16 MiB, and no
+  longer stops the seeder from starting when it cannot load.
 - Playback on real relays: the desktop app no longer reports zero seeders for every video it finds
   on a relay. It has no seeder count for those videos, so it reports the count as unknown. The
   watch page and Shorts no longer replace Play with "Nobody is seeding this video right now", and

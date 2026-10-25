@@ -3,7 +3,7 @@
  * every file against its entry), nothing left behind by a refused put, per-video listing,
  * refcounted removal, bounded reads, path validation and the shared disk cap.
  */
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { nfx } from '@sovit/core';
@@ -115,6 +115,42 @@ async function onDisk(dir: string): Promise<string[]> {
 }
 
 const seg = (n: number, fill: number): Uint8Array => new Uint8Array(n).fill(fill);
+
+/**
+ * A package whose hash list says what `entries` say, true or not: each entry's sha256 and size
+ * are taken as given (the first is the rendition playlist), and `files` serves what it has.
+ */
+function listed(
+  id: string,
+  entries: readonly { readonly sha256: string; readonly size: number }[],
+  files: ReadonlyMap<string, Uint8Array>,
+): Pkg {
+  const video = addr(id);
+  const list: nfx.HashList = {
+    v: 1,
+    video: video.toString(),
+    files: entries.map((e, i) => ({
+      name: i === 0 ? 'r720p.m3u8' : `720p-seg_${String(i).padStart(5, '0')}.m4s`,
+      role: i === 0 ? 'playlist' : 'segment',
+      sha256: e.sha256,
+      size: BigInt(e.size),
+      durMs: i === 0 ? undefined : 2000n,
+    })),
+    renditions: [
+      {
+        id: '720p',
+        playlist: 'r720p.m3u8',
+        bandwidth: 1000n,
+        codecs: undefined,
+        resolution: undefined,
+      },
+    ],
+  };
+  const hashListBytes = nfx.renderHashList(list);
+  return { video, root: sha(hashListBytes), segs: BigInt(list.files.length), hashListBytes, files };
+}
+
+const videosJson = (dir: string): string => path.join(dir, 'nfx', 'videos.json');
 
 describe('NfxStore', () => {
   it('stores a verified video and serves only the files its hash list lists', async () => {
@@ -249,5 +285,167 @@ describe('NfxStore', () => {
     expect(src.hasVideo(p.video)).toBe(true);
     expect(src.file(p.video, p.root)?.size).toBe(p.hashListBytes.byteLength);
     expect(src.hasVideo(addr('nfx-store-absent'))).toBe(false);
+  });
+
+  it('refuses a list naming a stored file at another size, and keeps the stored video', async () => {
+    const { store, cap, dir } = await open();
+    const shared = seg(500, 9);
+    const honest = pkg('nfx-honest', [shared, seg(300, 1)]);
+    expect((await put(store, honest)).ok).toBe(true);
+    const used = cap.usedBytes;
+    const own = enc.encode('#EXTM3U\n#liar\n');
+    const files = new Map([[sha(own), own]]);
+    const liar = listed(
+      'nfx-liar',
+      [
+        { sha256: sha(own), size: own.byteLength },
+        { sha256: sha(shared), size: 999 },
+      ],
+      files,
+    );
+    expect(await put(store, liar)).toMatchObject({ ok: false, error: 'invalid' });
+    // The same lie, told with the stored video's hash list as a "segment".
+    const rootLiar = listed(
+      'nfx-root-liar',
+      [
+        { sha256: sha(own), size: own.byteLength },
+        { sha256: honest.root, size: 1 },
+      ],
+      files,
+    );
+    expect(await put(store, rootLiar)).toMatchObject({ ok: false, error: 'invalid' });
+    expect(cap.usedBytes).toBe(used);
+    expect(store.file(honest.video, sha(shared))?.size).toBe(500);
+
+    const again = new NfxStore({ fs: adapters.fs, crypto: adapters.crypto, dataDir: dir });
+    await again.load();
+    expect(again.droppedOnLoad).toBe(0);
+    expect(again.videos().map((v) => v.video)).toEqual([honest.video.toString()]);
+  });
+
+  it('refuses a list that gives one sha256 two sizes', async () => {
+    const { store, cap } = await open();
+    const x = enc.encode('#EXTM3U\n#twice\n');
+    const twice = listed(
+      'nfx-two-sizes',
+      [
+        { sha256: sha(x), size: x.byteLength },
+        { sha256: sha(x), size: 2 ** 53 - 1 },
+      ],
+      new Map([[sha(x), x]]),
+    );
+    expect(await put(store, twice)).toMatchObject({ ok: false, error: 'invalid' });
+    expect(cap.usedBytes + cap.pendingBytes).toBe(0);
+  });
+
+  it('refuses a hash list over 16 MiB before hashing it', async () => {
+    const { store } = await open();
+    const p = pkg('nfx-huge-list', [seg(10, 1)]);
+    const huge = new Uint8Array(nfx.MAX_HASH_LIST_BYTES + 1);
+    expect(await put(store, { ...p, hashListBytes: huge })).toMatchObject({
+      ok: false,
+      error: 'invalid',
+    });
+  });
+
+  it('removes what an interrupted put wrote, at the next load', async () => {
+    const { store, dir } = await open();
+    const p = pkg('nfx-interrupted', [seg(400, 4)]);
+    expect((await put(store, p)).ok).toBe(true);
+    // As a crash between the pending record and the finished one leaves it, mid-write.
+    const raw = JSON.parse(await readFile(videosJson(dir), 'utf8')) as {
+      videos: Record<string, unknown>[];
+    };
+    await writeFile(
+      videosJson(dir),
+      JSON.stringify({ ...raw, videos: raw.videos.map((v) => ({ ...v, pending: true })) }),
+    );
+    await writeFile(path.join(dir, 'nfx', 'tmp', `${p.root}.part`), 'half a file');
+
+    const again = new NfxStore({ fs: adapters.fs, crypto: adapters.crypto, dataDir: dir });
+    await again.load();
+    expect(again.videos()).toEqual([]);
+    expect(again.totalBytes()).toBe(0);
+    expect(await onDisk(dir)).toEqual([]);
+    expect(JSON.parse(await readFile(videosJson(dir), 'utf8'))).toEqual({ version: 1, videos: [] });
+  });
+
+  it('at load, keeps the record the disk agrees with and drops the one it does not', async () => {
+    const { store, dir } = await open();
+    const shared = seg(600, 6);
+    const kept = pkg('nfx-true', [shared, seg(10, 1)]);
+    const lost = pkg('nfx-false', [shared, seg(11, 2)]);
+    const gone = pkg('nfx-gone', [seg(12, 3)]);
+    for (const p of [kept, lost, gone]) expect((await put(store, p)).ok).toBe(true);
+    // One record edited to give the shared file another size; another's file deleted.
+    const raw = JSON.parse(await readFile(videosJson(dir), 'utf8')) as {
+      videos: { video: string; files: { sha256: string; size: number }[] }[];
+    };
+    for (const f of raw.videos.find((v) => v.video === lost.video.toString())!.files)
+      if (f.sha256 === sha(shared)) f.size = 999;
+    await writeFile(videosJson(dir), JSON.stringify(raw));
+    await unlink(path.join(dir, 'nfx', 'files', gone.root.slice(0, 2), gone.root));
+
+    const again = new NfxStore({ fs: adapters.fs, crypto: adapters.crypto, dataDir: dir });
+    await again.load();
+    expect(again.droppedOnLoad).toBe(2);
+    expect(again.videos().map((v) => v.video)).toEqual([kept.video.toString()]);
+    expect(again.file(kept.video, sha(shared))?.size).toBe(600);
+    // Only the kept video's five files are left: hash list, two playlists, two segments.
+    expect((await onDisk(dir)).filter((f) => f.startsWith('files'))).toHaveLength(5);
+  });
+
+  it('drops a malformed record on its own, and sets an index of another version aside', async () => {
+    const { store, dir } = await open();
+    const p = pkg('nfx-good', [seg(20, 2)]);
+    expect((await put(store, p)).ok).toBe(true);
+    const raw = JSON.parse(await readFile(videosJson(dir), 'utf8')) as {
+      videos: Record<string, unknown>[];
+    };
+    const good = raw.videos[0]!;
+    await writeFile(
+      videosJson(dir),
+      JSON.stringify({
+        version: 1,
+        videos: [
+          { ...good, video: 'nfx:regtest:1:../../etc' },
+          good,
+          { ...good, root: 'ab'.repeat(32) },
+        ],
+      }),
+    );
+    const again = new NfxStore({ fs: adapters.fs, crypto: adapters.crypto, dataDir: dir });
+    await again.load();
+    expect(again.corruptOnLoad).toBe(false);
+    expect(again.droppedOnLoad).toBe(2);
+    expect(again.hasVideo(p.video)).toBe(true);
+
+    await writeFile(videosJson(dir), JSON.stringify({ version: 2, videos: [] }));
+    const newer = new NfxStore({ fs: adapters.fs, crypto: adapters.crypto, dataDir: dir });
+    await newer.load();
+    expect(newer.corruptOnLoad).toBe(true);
+    const aside = (await readdir(path.join(dir, 'nfx'))).filter((n) =>
+      n.startsWith('videos.json.unreadable-'),
+    );
+    expect(aside).toHaveLength(1);
+    expect(JSON.parse(await readFile(path.join(dir, 'nfx', aside[0]!), 'utf8'))).toEqual({
+      version: 2,
+      videos: [],
+    });
+  });
+
+  it('is off, not failing, when it cannot load', async () => {
+    const d = await tmpDir('nf-nfx-store-');
+    dirs.push(d);
+    await rm(path.join(d.dir, 'nfx'), { recursive: true, force: true });
+    await writeFile(path.join(d.dir, 'nfx'), 'not a directory');
+    const store = new NfxStore({ fs: adapters.fs, crypto: adapters.crypto, dataDir: d.dir });
+    await store.load();
+    expect(store.loadError).not.toBeNull();
+    store.attachCap(new DiskCap(1 << 20, 0));
+    expect(await put(store, pkg('nfx-while-off', [seg(5, 5)]))).toMatchObject({
+      ok: false,
+      error: 'unavailable',
+    });
   });
 });
