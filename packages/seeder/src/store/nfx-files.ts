@@ -12,9 +12,15 @@
  *
  * A put verifies before it keeps: the hash list against `root`, the address and `segs`, then
  * each file's size and sha256 against the list (NFX-05 §4), so nothing unlisted is ever stored.
- * The index records a put as `pending` before its first file is written, and a load removes a
- * pending put's files: a crash mid-put leaves nothing uncounted, although the fs adapter
- * cannot list a directory. Every mutation runs one at a time.
+ * A list that gives one sha256 two sizes, or a size other than the one a stored file has, is
+ * refused: a record never disagrees with the bytes it names.
+ *
+ * Crashes: the fs adapter cannot list a directory, so nothing may be left on disk that no index
+ * record names. A put is recorded as `pending` before its first file is written, and a load
+ * removes a pending put's files; a removal deletes files before it saves the index, so a crash
+ * between leaves a record whose file is missing, which a load drops. At load the size on disk
+ * decides which records are true; a video with any file missing or of another size is dropped.
+ * Every mutation runs one at a time.
  */
 import { nfx } from '@sovit/core';
 import type { Sha256Hex, UnixSeconds } from '@sovit/core';
@@ -65,7 +71,9 @@ export type NfxPutError =
   | { readonly code: 'conflict'; readonly root: Sha256Hex }
   | { readonly code: 'disk-cap'; readonly needed: number; readonly free: number }
   | { readonly code: 'hash-mismatch'; readonly sha256: Sha256Hex }
-  | { readonly code: 'write-failed'; readonly message: string };
+  | { readonly code: 'write-failed'; readonly message: string }
+  /** The store could not load (`loadError`): NFX is off until a restart that loads. */
+  | { readonly code: 'unavailable' };
 
 export type NfxPutResult =
   | { readonly ok: true; readonly video: NfxStoredVideo; readonly deduplicated: boolean }
@@ -79,6 +87,8 @@ interface IndexVideo extends NfxStoredVideo {
 interface IndexFile {
   readonly version: 1;
   readonly videos: readonly IndexVideo[];
+  /** Entries refused at load (malformed, or an address given twice). Never saved. */
+  readonly dropped?: number;
 }
 
 const isSize = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) >= 0;
@@ -120,24 +130,38 @@ function validateVideo(raw: unknown): IndexVideo | null {
   };
 }
 
+/**
+ * The index, entry by entry: a malformed entry, or a second one for an address, is dropped on
+ * its own (its files are not trusted, so it keeps nothing alive). `null` only when the file is
+ * not an index at all, or of another version.
+ */
 function validateIndex(raw: unknown): IndexFile | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const o = raw as Record<string, unknown>;
   if (o['version'] !== 1 || !Array.isArray(o['videos'])) return null;
   const videos: IndexVideo[] = [];
   const seen = new Set<string>();
+  let dropped = 0;
   for (const v of o['videos'] as unknown[]) {
     const video = validateVideo(v);
-    if (video === null || seen.has(video.video)) return null;
+    if (video === null || seen.has(video.video)) {
+      dropped += 1;
+      continue;
+    }
     seen.add(video.video);
     videos.push(video);
   }
-  return { version: 1, videos };
+  return { version: 1, videos, dropped };
 }
 
 /** Every file a video keeps: its listed files, then the hash list under `root`. */
 function filesOf(v: NfxStoredVideo): readonly NfxStoredFile[] {
   return [...v.files, { sha256: v.root, size: v.listSize }];
+}
+
+/** A video's files, each sha256 once. */
+function uniqueFiles(v: NfxStoredVideo): readonly NfxStoredFile[] {
+  return [...new Map(filesOf(v).map((f) => [f.sha256, f])).values()];
 }
 
 export interface NfxFileStoreOptions {
@@ -151,8 +175,8 @@ export interface NfxFileStoreOptions {
 export class NfxFileStore {
   private readonly fs: SeederFs;
   private readonly crypto: SeederCrypto;
-  private readonly dir: string;
   private readonly filesDir: string;
+  private readonly indexPath: string;
   private readonly store: JsonStore<IndexFile>;
   private readonly log: Logger;
   private readonly now: () => UnixSeconds;
@@ -164,19 +188,23 @@ export class NfxFileStore {
   private chain: Promise<unknown> = Promise.resolve();
   private diskCap: DiskCap | null = null;
   private loaded = false;
+  /** Why `load` failed; the store then holds nothing and refuses every put. */
+  loadError: string | null = null;
+  /** The index was not an index (or of another version) and was set aside. */
   corruptOnLoad = false;
-  /** Videos dropped at load: a file missing or of the wrong size. */
+  /** Videos dropped at load: malformed, or a file missing or of another size. */
   droppedOnLoad = 0;
 
   constructor(opts: NfxFileStoreOptions) {
     this.fs = opts.fs;
     this.crypto = opts.crypto;
-    this.dir = opts.fs.join(opts.dataDir, NFX_DIR);
-    this.filesDir = opts.fs.join(this.dir, FILES_DIR);
+    const dir = opts.fs.join(opts.dataDir, NFX_DIR);
+    this.filesDir = opts.fs.join(dir, FILES_DIR);
+    this.indexPath = opts.fs.join(dir, NFX_INDEX_FILE);
     this.store = new JsonStore<IndexFile>(
       opts.fs,
       opts.crypto,
-      opts.fs.join(this.dir, NFX_INDEX_FILE),
+      this.indexPath,
       validateIndex,
       () => ({ version: 1, videos: [] }),
     );
@@ -186,45 +214,62 @@ export class NfxFileStore {
 
   /**
    * Read the index, remove what an interrupted put left, and drop any video whose files are
-   * not all on disk at their sizes. Call before `totalBytes()` sizes the disk cap.
+   * not all on disk at their sizes. Call before `totalBytes()` sizes the disk cap. Never
+   * throws: a failure leaves the store empty and off (`loadError`), so the seeder still starts.
    */
   async load(): Promise<void> {
+    try {
+      await this.loadIndex();
+    } catch (err) {
+      this.byVideo.clear();
+      this.refs.clear();
+      this.loadError = err instanceof Error ? err.message : String(err);
+      this.log.error('NFX file store could not load; NFX is off', { error: err });
+    }
+    this.loaded = true;
+  }
+
+  private async loadIndex(): Promise<void> {
     await this.fs.mkdir(this.filesDir, { recursive: true });
     const { value, corrupt } = await this.store.load();
     this.corruptOnLoad = corrupt;
+    if (corrupt && (await this.fs.stat(this.indexPath)) !== null) {
+      // Kept for a person to read (a newer version's index, a damaged file), never overwritten.
+      const aside = `${this.indexPath}.unreadable-${this.crypto.randomHex(4)}`;
+      await this.fs.rename(this.indexPath, aside);
+      this.log.error('NFX file index was unreadable; set aside, starting with no NFX videos');
+    }
     this.byVideo.clear();
     this.refs.clear();
     const done = value.videos.filter((v) => v.pending !== true);
     const interrupted = value.videos.filter((v) => v.pending === true);
 
-    // A file that is missing, of the wrong size, or recorded at two sizes breaks every video
-    // listing it.
-    const bad = new Set<string>();
-    const sizes = new Map<string, number>();
+    // The size on disk decides: a record that names a file missing, not a file, or of another
+    // size is wrong, and its video is dropped. A record that agrees keeps its video.
+    const onDisk = new Map<string, number | null>();
     for (const v of done)
       for (const f of filesOf(v)) {
-        const seen = sizes.get(f.sha256);
-        if (seen !== undefined && seen !== f.size) bad.add(f.sha256);
-        sizes.set(f.sha256, f.size);
+        if (onDisk.has(f.sha256)) continue;
+        const st = await this.fs.stat(this.pathOf(f.sha256));
+        onDisk.set(f.sha256, st !== null && st.isFile ? st.size : null);
       }
-    for (const [sha, size] of sizes) {
-      const st = await this.fs.stat(this.pathOf(sha));
-      if (st === null || !st.isFile || st.size !== size) bad.add(sha);
-    }
-    const kept = done.filter((v) => filesOf(v).every((f) => !bad.has(f.sha256)));
-    this.droppedOnLoad = done.length - kept.length;
+    const kept = done.filter((v) => filesOf(v).every((f) => onDisk.get(f.sha256) === f.size));
+    this.droppedOnLoad = (value.dropped ?? 0) + done.length - kept.length;
     for (const v of kept) this.keep(v);
 
-    // Remove what nothing kept lists: the files of dropped and interrupted puts.
+    // Remove what nothing kept lists: the files of dropped and interrupted puts, and any
+    // temporary file a crash mid-write left for one of them.
     const orphans = new Set<string>();
     for (const v of [...done, ...interrupted])
       for (const f of filesOf(v)) if (!this.refs.has(f.sha256)) orphans.add(f.sha256);
-    for (const sha of orphans) await this.unlinkQuietly(sha);
+    for (const sha of orphans) {
+      await this.unlinkQuietly(this.pathOf(sha));
+      await this.unlinkQuietly(this.tmpOf(sha));
+    }
 
-    this.loaded = true;
-    if (this.droppedOnLoad > 0 || interrupted.length > 0) {
+    if (this.droppedOnLoad > 0 || interrupted.length > 0 || corrupt) {
       this.log.warn('NFX videos dropped at load', {
-        broken: this.droppedOnLoad,
+        dropped: this.droppedOnLoad,
         interrupted: interrupted.length,
       });
       await this.persist();
@@ -274,6 +319,10 @@ export class NfxFileStore {
    * Store a packaged video: verify its hash list, then write each listed file it does not hold
    * yet, checked against the list. All or nothing: a failure removes what this put wrote and
    * releases its reservation. The same address with the same `root` is a no-op.
+   *
+   * The first put for an address wins, and a later `root` for it is refused (`conflict`), so a
+   * caller storing what a PEER sent must take `video` and `root` from a manifest it verified
+   * (NFX-02, signed by the video's author), never from the peer's word (slice 5).
    */
   putVideo(input: NfxVideoInput): Promise<NfxPutResult> {
     return this.serial(() => this.put(input));
@@ -286,18 +335,27 @@ export class NfxFileStore {
       const v = this.byVideo.get(addr);
       if (v === undefined) return false;
       this.byVideo.delete(addr);
-      const freed: string[] = [];
-      for (const f of new Map(filesOf(v).map((x) => [x.sha256, x])).values()) {
+      const freed: NfxStoredFile[] = [];
+      for (const f of uniqueFiles(v)) {
         const r = this.refs.get(f.sha256);
         if (r === undefined) continue;
         r.count -= 1;
         if (r.count > 0) continue;
         this.refs.delete(f.sha256);
-        cap.free(r.size);
-        freed.push(f.sha256);
+        freed.push({ sha256: f.sha256, size: r.size });
       }
-      await this.persist();
-      for (const sha of freed) await this.unlinkQuietly(sha);
+      // Files first, then the index: a crash between leaves a record whose file is missing,
+      // which a load drops; never a file that no record names.
+      for (const f of freed) {
+        await this.unlinkQuietly(this.pathOf(f.sha256));
+        cap.free(f.size);
+      }
+      await this.persist().catch((err: unknown) => {
+        this.log.error('NFX index not saved after a removal; the next load drops it', {
+          video: addr,
+          error: err,
+        });
+      });
       this.log.info('NFX video removed', { video: addr, files: freed.length });
       return true;
     });
@@ -305,10 +363,14 @@ export class NfxFileStore {
 
   private async put(input: NfxVideoInput): Promise<NfxPutResult> {
     const cap = this.ready();
+    if (this.loadError !== null) return fail({ code: 'unavailable' });
     if (!isHex(input.root, 32)) return fail({ code: 'hash-list', reason: 'root is not hex' });
-    const listed = nfx.verifyHashList(input.hashListBytes, input.root, input.video, input.segs);
-    if (!listed.ok) return fail({ code: 'hash-list', reason: listed.error.reason });
-    const list = listed.value;
+    if (input.hashListBytes.byteLength > nfx.MAX_HASH_LIST_BYTES)
+      return fail({ code: 'hash-list', reason: 'the hash list is too large' });
+    // Copies: the caller's buffers may change after they are checked.
+    const listBytes = input.hashListBytes.slice();
+    const verified = nfx.verifyHashList(listBytes, input.root, input.video, input.segs);
+    if (!verified.ok) return fail({ code: 'hash-list', reason: verified.error.reason });
     const addr = input.video.toString();
 
     const existing = this.byVideo.get(addr);
@@ -319,19 +381,28 @@ export class NfxFileStore {
     }
 
     const listed: { readonly entry: nfx.FileEntry; readonly file: NfxStoredFile }[] = [];
-    for (const entry of list.files) {
+    for (const entry of verified.value.files) {
       if (entry.size > BigInt(Number.MAX_SAFE_INTEGER))
         return fail({ code: 'hash-list', reason: `${entry.name} is too large` });
       listed.push({ entry, file: { sha256: entry.sha256 as Sha256Hex, size: Number(entry.size) } });
     }
-    const files = listed.map((l) => l.file);
     const video: NfxStoredVideo = {
       video: addr,
       root: input.root,
-      listSize: input.hashListBytes.byteLength,
-      files,
+      listSize: listBytes.byteLength,
+      files: listed.map((l) => l.file),
       addedAt: this.now(),
     };
+
+    // One size per sha256, within the list (the hash list itself included) and against what
+    // is stored: a record never disagrees with the bytes it names.
+    const sizes = new Map<string, number>();
+    for (const f of filesOf(video)) {
+      const seen = sizes.get(f.sha256) ?? this.refs.get(f.sha256)?.size;
+      if (seen !== undefined && seen !== f.size)
+        return fail({ code: 'hash-list', reason: `${f.sha256} is listed at another size` });
+      sizes.set(f.sha256, f.size);
+    }
 
     // What this put must write: each file this store does not hold yet, once.
     const toWrite = new Map<string, { size: number; entry: nfx.FileEntry | null }>();
@@ -352,15 +423,19 @@ export class NfxFileStore {
     const written: string[] = [];
     const undo = async (): Promise<void> => {
       reservation.release();
+      for (const sha of written) {
+        await this.unlinkQuietly(this.pathOf(sha));
+        await this.unlinkQuietly(this.tmpOf(sha));
+      }
+      written.length = 0;
       this.pending = null;
       await this.persist().catch(() => undefined);
-      for (const sha of written) await this.unlinkQuietly(sha);
     };
     try {
       this.pending = { ...video, pending: true };
       await this.persist();
       for (const [sha, w] of toWrite) {
-        const bytes = w.entry === null ? input.hashListBytes : await input.read(w.entry);
+        const bytes = w.entry === null ? listBytes : (await input.read(w.entry)).slice();
         if (bytes.byteLength !== w.size || this.sha256(bytes) !== sha) {
           await undo();
           return fail({ code: 'hash-mismatch', sha256: sha as Sha256Hex });
@@ -379,13 +454,13 @@ export class NfxFileStore {
       return fail({ code: 'write-failed', message });
     }
     reservation.commit();
-    this.log.info('NFX video stored', { video: addr, files: files.length, bytes: needed });
+    this.log.info('NFX video stored', { video: addr, files: video.files.length, bytes: needed });
     return { ok: true, video, deduplicated: false };
   }
 
   private keep(v: NfxStoredVideo): void {
     this.byVideo.set(v.video, v);
-    for (const f of new Map(filesOf(v).map((x) => [x.sha256, x])).values()) {
+    for (const f of uniqueFiles(v)) {
       const r = this.refs.get(f.sha256);
       if (r === undefined) this.refs.set(f.sha256, { size: f.size, count: 1 });
       else r.count += 1;
@@ -395,7 +470,7 @@ export class NfxFileStore {
   /** Undo a `keep` whose index write failed. */
   private unkeep(v: NfxStoredVideo): void {
     this.byVideo.delete(v.video);
-    for (const f of new Map(filesOf(v).map((x) => [x.sha256, x])).values()) {
+    for (const f of uniqueFiles(v)) {
       const r = this.refs.get(f.sha256);
       if (r === undefined) continue;
       r.count -= 1;
@@ -415,23 +490,26 @@ export class NfxFileStore {
     return this.fs.join(this.filesDir, sha256);
   }
 
+  /** One temporary name per file, so a load can find what a crash mid-write left. */
+  private tmpOf(sha256: string): string {
+    return `${this.pathOf(sha256)}.tmp`;
+  }
+
   private async writeAtomic(sha256: string, bytes: Uint8Array): Promise<void> {
-    const path = this.pathOf(sha256);
-    const tmp = `${path}.${this.crypto.randomHex(4)}.tmp`;
+    const tmp = this.tmpOf(sha256);
     await this.fs.writeFile(tmp, bytes);
     try {
-      await this.fs.rename(tmp, path);
+      await this.fs.rename(tmp, this.pathOf(sha256));
     } catch (err) {
       await this.fs.unlink(tmp).catch(() => undefined);
       throw err;
     }
   }
 
-  private async unlinkQuietly(sha256: string): Promise<void> {
-    const path = this.pathOf(sha256);
+  private async unlinkQuietly(path: string): Promise<void> {
     if ((await this.fs.stat(path)) === null) return;
     await this.fs.unlink(path).catch((err: unknown) => {
-      this.log.warn('NFX file could not be removed', { sha256, error: err });
+      this.log.warn('NFX file could not be removed', { path, error: err });
     });
   }
 

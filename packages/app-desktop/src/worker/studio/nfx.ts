@@ -45,8 +45,9 @@ export function nfxEligible(meta: UploadMeta, output: TranscodeOutput): boolean 
 }
 
 /**
- * Package `output` for NFX and store it. Resolves the stored video, or `undefined` when
- * anything failed (logged); never rejects.
+ * Package `output` for NFX and store it. Resolves the video THIS call stored, or `undefined`
+ * when anything failed or the address was already stored (logged); never rejects. What it
+ * resolves is the caller's to remove if the legacy publish then fails.
  */
 export async function storeNfxUpload(
   output: TranscodeOutput,
@@ -54,7 +55,14 @@ export async function storeNfxUpload(
   deps: StoreNfxDeps,
 ): Promise<NfxStoredVideo | undefined> {
   const log = deps.logger.child({ component: 'studio-nfx' });
-  const addr = nfx.VideoAddr.of(deps.nfx.namespace, deps.nfx.newVideoId());
+  let videoId: string;
+  try {
+    videoId = deps.nfx.newVideoId();
+  } catch (err) {
+    log.warn('no NFX video-id: uploading without NFX', { error: err });
+    return undefined;
+  }
+  const addr = nfx.VideoAddr.of(deps.nfx.namespace, videoId);
   if (!addr.ok) {
     log.warn('NFX video-id refused: uploading without NFX', { reason: addr.error.reason });
     return undefined;
@@ -97,6 +105,11 @@ export async function storeNfxUpload(
     });
     if (!put.ok) {
       log.warn('NFX files could not be stored: uploading without NFX', { code: put.error.code });
+      return undefined;
+    }
+    if (put.deduplicated) {
+      // Not ours to roll back: a video-id is fresh per upload, so this one was already here.
+      log.warn('NFX address already stored: uploading without NFX', { video: put.video.video });
       return undefined;
     }
     log.info('NFX video stored', {

@@ -131,6 +131,7 @@ describe('NFX on upload', () => {
     expect(stored).toBeUndefined();
     expect(messages).toEqual(['NFX packaging failed: uploading without NFX']);
     expect(store.videos()).toEqual([]);
+    expect(await readdir(t.dir)).toEqual([]);
     expect(cap.usedBytes + cap.pendingBytes).toBe(0);
   });
 
@@ -159,6 +160,31 @@ describe('NFX on upload', () => {
     expect(stored).toBeUndefined();
     expect(ran).toBe(false);
     expect(messages).toEqual(['NFX video-id refused: uploading without NFX']);
+  });
+
+  it('goes on without NFX when the video-id source throws', async () => {
+    const { store } = await openStore();
+    const { logger, messages } = recordingLogger();
+    const stored = await storeNfxUpload(
+      outputOf([{ codec: 'h264', container: 'mp4' }]),
+      undefined,
+      {
+        store,
+        nfx: {
+          namespace: regtest,
+          newVideoId: () => {
+            throw new Error('no entropy');
+          },
+        },
+        runner: { run: () => Promise.reject(new Error('never run')) },
+        fs: nodeFsAdapter(),
+        sha256: sodiumSha256,
+        binaries: { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
+        logger,
+      },
+    );
+    expect(stored).toBeUndefined();
+    expect(messages).toEqual(['no NFX video-id: uploading without NFX']);
   });
 });
 
@@ -295,10 +321,16 @@ describe.skipIf(bins === undefined)('NFX on upload with the system ffmpeg', () =
     );
     expect(seeder.nfx.videos()).toEqual([]);
     expect(seeder.nfx.totalBytes()).toBe(0);
+    // Nothing left on disk or in the cap: only the legacy renditions are counted.
+    const nfxFiles = join(t.dir, 'nfx', 'files');
+    expect(await readdir(nfxFiles)).toEqual([]);
+    expect(seeder.diskCap.usedBytes).toBe(seeder.index.totalBytes());
 
     const published = { id: 'published' } as unknown as VideoManifest;
     await expect(upload(() => Promise.resolve(published))).resolves.toBe(published);
     expect(seeder.nfx.videos().map((v) => v.video)).toEqual(['nfx:regtest:1:upload-clip-2']);
+    expect((await readdir(nfxFiles)).length).toBeGreaterThan(0);
+    expect(seeder.diskCap.usedBytes).toBe(seeder.index.totalBytes() + seeder.nfx.totalBytes());
 
     // A priced upload never reaches NFX (ADR 0020).
     await expect(upload(() => Promise.resolve(published), 2)).resolves.toBe(published);
