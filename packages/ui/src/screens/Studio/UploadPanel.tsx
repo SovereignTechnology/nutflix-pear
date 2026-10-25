@@ -42,6 +42,7 @@ import {
   looksLikeImage,
   looksLikeVideo,
   normalizeMintUrl,
+  nfxEligible,
   parsePrice,
   parseSplit,
   parseTags,
@@ -530,6 +531,28 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
             <FieldError id={id} field="price" errors={errors} />
             {price !== undefined ? <PriceEstimate satsPerBlock={price} /> : null}
           </div>
+
+          {nfxEligible(draft) ? (
+            <div className="nf-studio__field">
+              <label className="nf-studio__choice">
+                <input
+                  type="checkbox"
+                  name="nfx"
+                  checked={draft.nfx === true}
+                  onChange={(e) => {
+                    onDraft({ nfx: e.currentTarget.checked });
+                  }}
+                />
+                <span>
+                  <span className="nf-studio__choice-title">Also publish on NFX (free)</span>
+                  <span className="nf-studio__choice-text">
+                    Packages the video for NFX too, so apps on that network can play it. Its files
+                    are kept on this computer and count toward your disk cap.
+                  </span>
+                </span>
+              </label>
+            </div>
+          ) : null}
 
           <div className="nf-studio__field" role="group" aria-labelledby={`${id}-split`}>
             <span id={`${id}-split`} className="nf-studio__label">
