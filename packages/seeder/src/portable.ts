@@ -68,6 +68,49 @@ export {
 } from './store/core-policies.js';
 export type { PersistedBan } from './store/ban-list.js';
 
+// NFX-12 transport (HyperDHT + Protomux; ADR 0020): beside the legacy path, sharing nothing
+export {
+  DEFAULT_DIAL_TIMEOUT_MS,
+  DEFAULT_MAX_CONNECTIONS,
+  DEFAULT_MAX_CONNECTIONS_PER_PEER,
+  FilePump,
+  FilesClient,
+  MAX_REJECTED_OPENS,
+  NFX_LIMITS,
+  NfxConnection,
+  PayLane,
+  TRAPPED_TYPES,
+  dialNfx,
+  hyperdhtBind,
+  hyperdhtEndpoint,
+  listenNfx,
+} from './nfx/index.js';
+export type {
+  ConnectionHost,
+  DialResult,
+  DrainSource,
+  FetchFailure,
+  FetchOptions,
+  FetchResult,
+  FilesServerOptions,
+  HyperdhtEndpoint,
+  NfxAdmission,
+  NfxConnectionOptions,
+  NfxDht,
+  NfxDialOptions,
+  NfxFileSource,
+  NfxLimits,
+  NfxListener,
+  NfxListenOptions,
+  NfxRequest,
+  NfxServedFile,
+  NfxServeOptions,
+  NfxSink,
+  PayLaneHandlers,
+  PeerKeyPair,
+  PumpStats,
+} from './nfx/index.js';
+
 // Payment
 export { FlushScheduler } from './payment/flush-scheduler.js';
 export type { FlushResult, FlushTrigger } from './payment/flush-scheduler.js';

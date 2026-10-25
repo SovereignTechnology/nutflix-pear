@@ -1,8 +1,9 @@
 /**
  * Minimal ambient declarations for the Holepunch stack, covering EXACTLY the surface the
  * seeder uses. Written against the pinned versions (hypercore@11.35.3, hyperblobs@2.12.1,
- * corestore@7.12.2, hyperswarm@4.17.0, hyperdht@6.34.0) by reading their source — see
- * docs/archive/lanes/L2.md. Nothing here is a full typing of those libraries.
+ * corestore@7.12.2, hyperswarm@4.17.0, hyperdht@6.34.0, protomux@3.11.0,
+ * @hyperswarm/secret-stream@6.9.1) by reading their source — see docs/archive/lanes/L2.md.
+ * Nothing here is a full typing of those libraries.
  */
 
 declare module 'hypercore' {
@@ -232,12 +233,145 @@ declare module 'hyperswarm' {
 }
 
 declare module 'hyperdht' {
+  import type NoiseSecretStream from '@hyperswarm/secret-stream';
+
+  export interface KeyPair {
+    publicKey: Uint8Array;
+    secretKey: Uint8Array;
+  }
+
+  export interface DHTOptions {
+    readonly bootstrap?: readonly { host: string; port: number }[];
+    /** UDP bind host; `127.0.0.1` keeps the node off every other interface. */
+    readonly host?: string;
+    readonly ephemeral?: boolean;
+  }
+
+  export interface ServerOptions {
+    /**
+     * Called with the remote's Noise key during the handshake (`lib/server.js` `_addHandshake`);
+     * return `true` to REJECT. Only the first argument is used here.
+     */
+    readonly firewall?: (remotePublicKey: Uint8Array) => boolean | Promise<boolean>;
+  }
+
+  /** `lib/server.js` `Server`: listens on one key pair. */
+  export interface Server {
+    readonly publicKey: Uint8Array | null;
+    listen(keyPair: KeyPair): Promise<void>;
+    close(): Promise<void>;
+  }
+
+  export interface ConnectOptions {
+    readonly keyPair?: KeyPair;
+  }
+
   class DHT {
-    constructor(opts?: { readonly bootstrap?: readonly { host: string; port: number }[] });
-    static keyPair(seed?: Uint8Array): { publicKey: Uint8Array; secretKey: Uint8Array };
+    constructor(opts?: DHTOptions);
+    static keyPair(seed?: Uint8Array): KeyPair;
+    fullyBootstrapped(): Promise<void>;
+    /** Every accepted connection is a secret-stream whose `remotePublicKey` is the dialer's. */
+    createServer(opts: ServerOptions, onconnection: (socket: NoiseSecretStream) => void): Server;
+    /** The returned stream opens once the Noise IK handshake with `remotePublicKey` completes. */
+    connect(remotePublicKey: Uint8Array, opts?: ConnectOptions): NoiseSecretStream;
     destroy(): Promise<void>;
   }
   export default DHT;
+}
+
+declare module '@hyperswarm/secret-stream' {
+  /** The paired raw side of a stream made without a transport (an in-memory Bridge). */
+  export interface RawStream {
+    pipe<T extends RawStream>(dest: T): T;
+  }
+
+  /**
+   * A streamx Duplex of framed, encrypted messages. `write` returns `false` once 16 KiB are
+   * buffered (streamx `highWaterMark`), and `'drain'` fires when the buffer has emptied.
+   */
+  class NoiseSecretStream {
+    constructor(
+      isInitiator: boolean,
+      rawStream?: null,
+      opts?: { readonly keyPair?: { publicKey: Uint8Array; secretKey: Uint8Array } },
+    );
+    readonly isInitiator: boolean;
+    readonly publicKey: Uint8Array | null;
+    readonly remotePublicKey: Uint8Array | null;
+    readonly handshakeHash: Uint8Array | null;
+    /** Resolves `true` once the handshake is done, `false` if the stream closed first. */
+    readonly opened: Promise<boolean>;
+    readonly destroyed: boolean;
+    readonly rawStream: RawStream;
+    /** Protomux keeps itself here (`Protomux.from`). */
+    userData: unknown;
+    write(data: Uint8Array): boolean;
+    destroy(err?: Error): void;
+    pause(): this;
+    resume(): this;
+    /** Send an empty keepalive frame after `ms` without a write. */
+    setKeepAlive(ms: number): void;
+    /** Destroy the stream after `ms` without receiving anything (refreshed by every frame). */
+    setTimeout(ms: number): void;
+    on(event: 'open' | 'close' | 'drain' | 'end', cb: () => void): this;
+    on(event: 'error', cb: (err: Error) => void): this;
+    once(event: 'open' | 'close' | 'drain', cb: () => void): this;
+    once(event: 'error', cb: (err: Error) => void): this;
+    off(event: 'open' | 'close' | 'drain', cb: () => void): this;
+    off(event: 'error', cb: (err: Error) => void): this;
+  }
+  export default NoiseSecretStream;
+}
+
+declare module 'protomux' {
+  /** `addMessage` result: `send` returns the stream's `write()` (`false` = wait for drain). */
+  export interface ProtomuxMessage {
+    send(message: Uint8Array): boolean;
+  }
+
+  /** `Channel` (protomux 3.11.0 `index.js`). Messages are numbered in `addMessage` order. */
+  export interface ProtomuxChannel {
+    readonly protocol: string;
+    readonly id: Uint8Array | null;
+    readonly opened: boolean;
+    readonly closed: boolean;
+    /** No encoding → compact-encoding `raw`: the handler gets a view into the frame. */
+    addMessage(opts: { readonly onmessage?: (message: Uint8Array) => unknown }): ProtomuxMessage;
+    open(): void;
+    close(): void;
+    /** `true` once the remote opened its side, `false` if it rejected or the channel closed. */
+    fullyOpened(): Promise<boolean>;
+  }
+
+  export interface ChannelOptions {
+    readonly protocol: string;
+    readonly id?: Uint8Array | null;
+    readonly onopen?: () => unknown;
+    readonly onclose?: (isRemote: boolean) => unknown;
+  }
+
+  class Protomux {
+    /** The stream's existing muxer (`stream.userData`), or a new one. */
+    static from(stream: unknown): Protomux;
+    /**
+     * `null` when the stream is destroyed, or when a channel for (protocol, id) is already
+     * open on this mux (`unique`, the default).
+     */
+    createChannel(opts: ChannelOptions): ProtomuxChannel | null;
+    /**
+     * `notify(id)` runs when the remote opens a channel of `protocol` that is not open here
+     * (`id: null` = any id without a pairing of its own). It is awaited; if it creates no
+     * channel for that id, the remote's open is rejected.
+     */
+    pair(
+      opts: { readonly protocol: string; readonly id?: Uint8Array | null },
+      notify: (id: Uint8Array | null) => unknown,
+    ): void;
+    /** Batch the messages sent until `uncork` into one stream write (tests: one arrival). */
+    cork(): void;
+    uncork(): void;
+  }
+  export default Protomux;
 }
 
 declare module 'hyperdht/testnet.js' {
