@@ -145,6 +145,14 @@ export interface UploadInput {
   readonly satsPerBlock: Sats;
   readonly split: { readonly seeder: number; readonly creator: number };
   readonly thumbnailChoice?: number | BlobLike;
+  /**
+   * v8 (ADR 0020): also package this video for NFX — CMAF files named by sha256 and a hash list,
+   * kept in the node's NFX store — once the legacy upload has published. Free videos only
+   * (`satsPerBlock` 0, issue #15): every boundary refuses `nfx` on a priced video, so the free
+   * NFX path never undercuts a paid one. Absent or `false`: legacy only. An NFX failure never
+   * fails the legacy upload.
+   */
+  readonly nfx?: boolean;
   // v6: no `mirrorTo` — media lives on Pear only (Cameron, 2026-09-25); nothing is mirrored to
   // Blossom servers and our manifests name none.
 }

@@ -173,6 +173,21 @@ export const VALID: Samples = {
         thumbnailChoice: 2,
       },
     ],
+    // Contracts v8: a free video may also be packaged for NFX.
+    [
+      {
+        uploadId: UPLOAD_ID,
+        file: TOKEN,
+        title: 'Free on NFX',
+        description: '',
+        tags: [],
+        kind: 21,
+        mints: [MINT],
+        satsPerBlock: sats(0),
+        split: { seeder: 50, creator: 50 },
+        nfx: true,
+      },
+    ],
   ],
   'studio.myVideos': [[], ['10']],
   'studio.analytics': [[VIDEO_ID]],
@@ -303,6 +318,9 @@ export const INVALID: Partial<Record<Method, readonly unknown[][]>> = {
     ],
     [{ ...VALID['studio.upload'][0]![0], thumbnailChoice: 64 }],
     [{ ...VALID['studio.upload'][0]![0], uploadId: undefined }],
+    // Contracts v8: NFX never for a priced video (free only, issue #15), and only a boolean.
+    [{ ...VALID['studio.upload'][0]![0], nfx: true }],
+    [{ ...VALID['studio.upload'][0]![0], satsPerBlock: sats(0), nfx: 1 }],
   ],
   updateSettings: [
     [{ theme: 'neon' }],

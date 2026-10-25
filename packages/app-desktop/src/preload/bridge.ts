@@ -194,6 +194,8 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
       mints: input.mints,
       satsPerBlock: input.satsPerBlock,
       split: input.split,
+      // Contracts v8 (free videos only; the host and the worker refuse it on a priced one).
+      ...(input.nfx === true ? { nfx: true } : {}),
       ...(thumb === undefined ? {} : { thumbnailChoice: thumb }),
     };
     const unsubscribe = await t.subscribeAcked({ t: 'upload.progress', uploadId }, (p) => {
