@@ -64,7 +64,7 @@ export interface WorkerUploadDeps {
    * Contracts v8: the NFX side of an upload with `meta.nfx` (`./nfx.ts`). It runs after the
    * legacy upload resolved and reports on its own; absent, `meta.nfx` is ignored.
    */
-  readonly nfx?: (this: void, status: Promise<NfxUploadStatusWire>) => void;
+  readonly nfx?: (status: Promise<NfxUploadStatusWire>) => void;
 }
 
 /** A progress event as it may cross to the host (error text scrubbed and capped). */

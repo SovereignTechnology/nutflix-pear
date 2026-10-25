@@ -229,7 +229,9 @@ describe('NfxStore', () => {
   });
 
   it('reads ranges through the stream when the adapter has no readRange', async () => {
-    const { readRange: _omit, ...withoutRange } = adapters.fs;
+    // A copy without the optional method (destructuring it out reads as an unbound method).
+    const withoutRange: SeederFs = { ...adapters.fs };
+    delete withoutRange.readRange;
     const { store } = await open(10 * 1024 * 1024, withoutRange);
     const big = new Uint8Array(200_000);
     for (let i = 0; i < big.length; i++) big[i] = i % 251;
