@@ -264,7 +264,7 @@ export class NfxStore {
       for (const f of r.files) {
         if (onDisk.has(f.sha256)) continue;
         const st = await fs.stat(this.filePath(f.sha256));
-        onDisk.set(f.sha256, st !== null && st.isFile ? st.size : null);
+        onDisk.set(f.sha256, st?.isFile ? st.size : null);
       }
     const kept = done.filter((r) => r.files.every((f) => onDisk.get(f.sha256) === f.size));
     this.droppedOnLoad = (value.dropped ?? 0) + done.length - kept.length;
