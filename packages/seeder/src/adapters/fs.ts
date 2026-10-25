@@ -18,5 +18,11 @@ export interface SeederFs {
   stat(path: string): Promise<FileStat | null>;
   /** Streaming read for large files. Chunk size is implementation-defined. */
   readStream(path: string): AsyncIterable<Uint8Array>;
+  /**
+   * Exactly the `length` bytes at `offset` (fewer only at the end of the file). Optional: the
+   * NFX file store (`nfx-store/`) falls back to `readStream` without it, which is correct but
+   * reads the file from its start for every range.
+   */
+  readRange?(path: string, offset: number, length: number): Promise<Uint8Array>;
   join(...parts: string[]): string;
 }

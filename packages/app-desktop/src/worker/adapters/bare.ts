@@ -51,6 +51,22 @@ export const bareSeederFs: SeederFs = {
     }
   },
   readStream: (p) => fs.createReadStream(p) as AsyncIterable<Uint8Array>,
+  readRange: async (p, offset, length) => {
+    if (length === 0) return new Uint8Array(0);
+    const parts: Uint8Array[] = [];
+    // `end` is inclusive (bare-fs `ReadStreamOptions`).
+    const stream = fs.createReadStream(p, { start: offset, end: offset + length - 1 });
+    for await (const chunk of stream as AsyncIterable<Uint8Array>) parts.push(chunk);
+    let n = 0;
+    for (const part of parts) n += part.byteLength;
+    const out = new Uint8Array(n);
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.byteLength;
+    }
+    return out;
+  },
   join: (...parts) => path.join(...parts),
 };
 
