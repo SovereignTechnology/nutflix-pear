@@ -402,12 +402,29 @@ export const uploadMetaGuards = {
   split: isSplit,
 } as const;
 
-const isUploadInputWire = obj(
+/** Optional upload-meta fields. v8 (ADR 0020): `nfx`, also package the video for NFX. */
+export const uploadMetaOptGuards = { nfx: bool } as const;
+
+/**
+ * Contracts v8: `nfx` only on a free video (`satsPerBlock` 0, issue #15) — the free NFX path
+ * must never undercut a paid video. Checked here and again by the worker.
+ */
+export function nfxOnlyIfFree(meta: {
+  readonly satsPerBlock: number;
+  readonly nfx?: boolean;
+}): boolean {
+  return meta.nfx !== true || meta.satsPerBlock === 0;
+}
+
+const isUploadInputShape = obj(
   { ...uploadMetaGuards, uploadId: isUploadId, file: isFileToken },
   {
     thumbnailChoice: union(int(0, 63), isThumbnailBytes),
+    ...uploadMetaOptGuards,
   },
 );
+const isUploadInputWire = ((x: unknown) =>
+  isUploadInputShape(x) && nfxOnlyIfFree(x)) as typeof isUploadInputShape;
 
 const isRelayConfig = obj({ url: isRelayUrl, read: bool, write: bool });
 

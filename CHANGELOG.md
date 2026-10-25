@@ -26,6 +26,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   segment and 2 s fMP4 segments each). Every file is named by its sha256, playlists name content
   only, the CODECS strings come from the init segments' bytes, and the hash list is checked as a
   consumer would check it before it is returned. Nothing in the app calls it yet.
+- Studio can also package a free video for NFX (contracts v8 `UploadInput.nfx`, ADR 0020): after
+  the legacy upload publishes, the worker packages its renditions and keeps the files in a new
+  NFX file store beside the legacy one, in the same disk cap and joined to no swarm, and reports
+  the result as its own `upload.nfx` status. Every boundary refuses it for a priced video, and an
+  NFX failure never fails the legacy upload. The Studio choice appears once free videos can be
+  uploaded (#15); nothing is published to NFX yet.
 
 ### Changed
 

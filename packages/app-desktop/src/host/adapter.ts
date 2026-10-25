@@ -944,6 +944,18 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       case 'upload.progress':
         this.onUploadEvent(ev.uploadId, ev.progress);
         return;
+      case 'upload.nfx':
+        // Contracts v8 (ADR 0020). Recorded only: publishing it is slice 4, showing it slice 5.
+        if (ev.status.state === 'stored') {
+          this.log.info('upload packaged for NFX', {
+            video: ev.status.video,
+            segs: ev.status.segs,
+            renditions: ev.status.renditions,
+          });
+        } else {
+          this.log.warn('upload not packaged for NFX', { reason: ev.status.reason });
+        }
+        return;
       case 'dev.fixtures':
         this.onDevFixtures(ev.videos);
         return;

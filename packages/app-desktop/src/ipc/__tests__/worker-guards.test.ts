@@ -1,6 +1,7 @@
 import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
+import type { Sha256Hex } from '@sovit/core';
 import { mocks, payProtocol } from '@sovit/core';
 
 import { toHex } from '../codec.js';
@@ -82,6 +83,14 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
       thumbnailChoice: { hex: toHex(Uint8Array.of(0xff, 0xd8)), type: 'image/jpeg' },
     },
     { uploadId: UPLOAD_ID, path: '/a.mp4', name: 'a.mp4', meta, thumbnailChoice: 1 },
+    // Contracts v8: a free video may also go to NFX.
+    {
+      uploadId: UPLOAD_ID,
+      path: '/a.mp4',
+      name: 'a.mp4',
+      meta: { ...meta, satsPerBlock: sats(0), nfx: true },
+    },
+    { uploadId: UPLOAD_ID, path: '/a.mp4', name: 'a.mp4', meta: { ...meta, nfx: false } },
   ],
   // ADR 0015: a profile-core image.
   'image.fetch': [{ url: HYPER_IMG, sha256: R.sha256, size: 1000 }],
@@ -230,6 +239,27 @@ const EVENTS: { readonly [E in WorkerEventName]: readonly Extract<WorkerEvent, {
       progress: { stage: 'error', message: 'process-failed: exit 1' },
     },
   ],
+  'upload.nfx': [
+    {
+      op: 'ev',
+      e: 'upload.nfx',
+      uploadId: UPLOAD_ID,
+      status: {
+        state: 'stored',
+        video: `nfx:testnet:1:nutflix-${'0a'.repeat(16)}`,
+        root: 'ef'.repeat(32) as Sha256Hex,
+        segs: '12',
+        renditions: 3,
+        bytes: 1_000_000,
+      },
+    },
+    {
+      op: 'ev',
+      e: 'upload.nfx',
+      uploadId: UPLOAD_ID,
+      status: { state: 'failed', reason: 'disk-cap' },
+    },
+  ],
   'dev.fixtures': [{ op: 'ev', e: 'dev.fixtures', videos: mocks.VIDEOS }],
   log: [{ op: 'ev', e: 'log', level: 'warn', msg: 'peer banned' }],
 };
@@ -296,6 +326,9 @@ describe('host → worker', () => {
       ['studio.upload', { ...up, meta: { ...meta, mirrorTo: ['http://x'] } }],
       // v6: media on Pear only — no Blossom mirror list crosses, not even a well-formed one.
       ['studio.upload', { ...up, meta: { ...meta, mirrorTo: ['https://blossom.example'] } }],
+      // Contracts v8: never NFX for a priced video (free only, issue #15), and only a boolean.
+      ['studio.upload', { ...up, meta: { ...meta, nfx: true } }],
+      ['studio.upload', { ...up, meta: { ...meta, satsPerBlock: sats(0), nfx: 'yes' } }],
       ['seeder.status', { extra: 1 }],
       ['studio.ffmpeg', { recheck: true, path: 'ffmpeg' }],
       // ADR 0015: only a profile-core reference, within the image cap.
@@ -489,6 +522,50 @@ describe('worker → host', () => {
         uploadId: UPLOAD_ID,
         progress: { stage: 'transcoding', rendition: '720p', percent: 101 },
       },
+      ...[
+        {
+          state: 'stored',
+          video: 'nutflix:testnet:1:x',
+          root: 'ef'.repeat(32),
+          segs: '1',
+          renditions: 1,
+          bytes: 1,
+        },
+        {
+          state: 'stored',
+          video: 'nfx:testnet:1:Upper-Case',
+          root: 'ef'.repeat(32),
+          segs: '1',
+          renditions: 1,
+          bytes: 1,
+        },
+        {
+          state: 'stored',
+          video: 'nfx:testnet:1:nutflix-abc1234',
+          root: 'EF'.repeat(32),
+          segs: '1',
+          renditions: 1,
+          bytes: 1,
+        },
+        {
+          state: 'stored',
+          video: 'nfx:testnet:1:nutflix-abc1234',
+          root: 'ef'.repeat(32),
+          segs: '01',
+          renditions: 1,
+          bytes: 1,
+        },
+        {
+          state: 'stored',
+          video: 'nfx:testnet:1:nutflix-abc1234',
+          root: 'ef'.repeat(32),
+          segs: '1',
+          renditions: 0,
+          bytes: 1,
+        },
+        { state: 'failed', reason: 'oops' },
+        { state: 'failed', reason: 'disk-cap', message: '/home/u/secret path' },
+      ].map((status) => ({ op: 'ev', e: 'upload.nfx', uploadId: UPLOAD_ID, status })),
       { op: 'ev', e: 'log', level: 'trace', msg: 'x' },
       { op: 'ev', e: 'log', level: 'info', msg: 'x', extra: 1 },
       { op: 'ev', e: 'constructor' },

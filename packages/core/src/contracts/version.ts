@@ -74,5 +74,8 @@
  *       every seeder this repository builds, also when nothing is owed, so a viewer knows the
  *       report is complete without waiting `REPORT_WAIT_MS`. `PAY_PROTOCOL_VERSION` stays 1: an
  *       older build's codec refuses the marker and closes pay/1 (no deployed base yet), as in v6.
+ *   8 — 2026-10-24 (ADR 0020, Phase 1 slice 2b). Additive: `UploadInput.nfx?` — also package
+ *       the upload for NFX into the node's NFX store; refused for a priced video (free only,
+ *       issue #15). Every v7 consumer compiles.
  */
-export const CONTRACTS_VERSION = 7 as const;
+export const CONTRACTS_VERSION = 8 as const;

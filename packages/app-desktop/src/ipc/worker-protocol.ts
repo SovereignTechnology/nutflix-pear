@@ -211,6 +211,40 @@ export interface PublishDraft {
   };
 }
 
+/** Why the NFX side of an upload did not complete (the legacy upload is unaffected). */
+export type NfxUploadFailure =
+  /** The renditions are not H.264 in MP4, which NFX-05 packages. */
+  | 'unsupported'
+  /** ffmpeg's CMAF remux or the packager's own checks failed. */
+  | 'packaging-failed'
+  /** The NFX files do not fit in the disk cap (one pool with the legacy store). */
+  | 'disk-cap'
+  /** The NFX store refused the package or could not write it. */
+  | 'store-failed';
+
+export const NFX_UPLOAD_FAILURES: readonly NfxUploadFailure[] = [
+  'unsupported',
+  'packaging-failed',
+  'disk-cap',
+  'store-failed',
+];
+
+/** `upload.nfx`: the packaged video as slice 4's publisher needs it, or why there is none. */
+export type NfxUploadStatusWire =
+  | {
+      readonly state: 'stored';
+      /** `<namespace>:<video-id>` (NFX-01): the hash list's `video`, the manifest's `d`. */
+      readonly video: string;
+      /** sha256 of the hash list: the manifest `root`. */
+      readonly root: Sha256Hex;
+      /** The manifest `segs` (a u64 as decimal text). */
+      readonly segs: string;
+      readonly renditions: number;
+      /** Bytes the store holds for the video's files (shared files counted once). */
+      readonly bytes: number;
+    }
+  | { readonly state: 'failed'; readonly reason: NfxUploadFailure };
+
 /** A proof set on the worker → host hop (ADR 0012: the host redeems / checks it). */
 export interface ProofSetWire {
   readonly mint: MintUrl;
@@ -296,6 +330,16 @@ export type WorkerEvent =
       readonly uploadId: UploadId;
       /** `thumbnails.candidates` are absolute paths here; the host maps them to `nf-media://img/…`. */
       readonly progress: UploadProgress;
+    }
+  /**
+   * Contracts v8 (ADR 0020): the NFX side of an upload asked for with `meta.nfx`, after the
+   * legacy upload published. Its own status: it never changes the legacy upload's result.
+   */
+  | {
+      readonly op: 'ev';
+      readonly e: 'upload.nfx';
+      readonly uploadId: UploadId;
+      readonly status: NfxUploadStatusWire;
     }
   /** `--dev-fixtures` only: live manifests of the worker's fixture cores (unsigned, dev). */
   | { readonly op: 'ev'; readonly e: 'dev.fixtures'; readonly videos: readonly VideoManifest[] }

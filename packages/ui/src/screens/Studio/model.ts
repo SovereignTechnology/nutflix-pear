@@ -210,6 +210,11 @@ export interface StudioDraft {
   readonly seeder: string;
   readonly creator: string;
   readonly thumbnail: ThumbnailDraft;
+  /**
+   * Also publish on NFX (ADR 0020). Offered only for a free video (`nfxEligible`); absent =
+   * off.
+   */
+  readonly nfx?: boolean;
 }
 
 export const EMPTY_DRAFT: StudioDraft = {
@@ -278,6 +283,15 @@ export function validateDraft(d: StudioDraft): DraftErrors {
   return e;
 }
 
+/**
+ * Whether the draft may also go to NFX: free videos only (a price of 0, issue #15), so the free
+ * NFX path never undercuts a paid video (ADR 0020). Until free videos can be uploaded (#15) no
+ * draft is eligible, and the choice is not shown.
+ */
+export function nfxEligible(d: StudioDraft): boolean {
+  return wholeNumber(d.price) === 0;
+}
+
 /** The contract input for a valid draft, or `undefined` when `validateDraft` has errors. */
 export function toUploadInput(d: StudioDraft): UploadInput | undefined {
   const price = parsePrice(d.price);
@@ -293,6 +307,8 @@ export function toUploadInput(d: StudioDraft): UploadInput | undefined {
     mints: d.mints,
     satsPerBlock: price as Sats,
     split,
+    // Contracts v8: only for an eligible (free) draft; the host and the worker check it again.
+    ...(d.nfx === true && nfxEligible(d) ? { nfx: true } : {}),
     ...(d.thumbnail.mode === 'custom' && d.thumbnail.image !== undefined
       ? { thumbnailChoice: d.thumbnail.image }
       : {}),

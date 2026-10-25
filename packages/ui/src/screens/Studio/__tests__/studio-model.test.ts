@@ -17,6 +17,7 @@ import {
   failProgress,
   formatBytes,
   looksLikeVideo,
+  nfxEligible,
   normalizeHttpsUrl,
   normalizeInvoice,
   parseSplit,
@@ -158,6 +159,17 @@ describe('draft → UploadInput', () => {
       ['file', 'mints', 'price', 'split', 'tags', 'thumbnail', 'title'].sort(),
     );
     expect(toUploadInput(bad)).toBeUndefined();
+  });
+
+  it('offers NFX only for a free video, and never sends it for a priced one (contracts v8)', () => {
+    expect(nfxEligible(draft)).toBe(false);
+    expect(nfxEligible({ ...draft, price: '0' })).toBe(true);
+    expect(nfxEligible({ ...draft, price: ' 0 ' })).toBe(true);
+    expect(nfxEligible({ ...draft, price: '00x' })).toBe(false);
+    // A priced draft drops a stale choice instead of sending it.
+    expect(toUploadInput({ ...draft, nfx: true })).not.toHaveProperty('nfx');
+    // Issue #15: a zero price is not valid yet, so no draft reaches NFX until it is.
+    expect(toUploadInput({ ...draft, price: '0', nfx: true })).toBeUndefined();
   });
 });
 

@@ -5,6 +5,18 @@ import { join } from 'node:path';
 
 import type { FileStat, SeederFs } from '../fs.js';
 
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+  let n = 0;
+  for (const p of parts) n += p.byteLength;
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
+
 function isEnoent(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ENOENT';
 }
@@ -27,5 +39,13 @@ export const nodeFs: SeederFs = {
     }
   },
   readStream: (path) => createReadStream(path) as AsyncIterable<Uint8Array>,
+  readRange: async (path, offset, length) => {
+    if (length === 0) return new Uint8Array(0);
+    const parts: Uint8Array[] = [];
+    // `end` is inclusive.
+    const stream = createReadStream(path, { start: offset, end: offset + length - 1 });
+    for await (const chunk of stream as AsyncIterable<Uint8Array>) parts.push(chunk);
+    return concat(parts);
+  },
   join: (...parts) => join(...parts),
 };

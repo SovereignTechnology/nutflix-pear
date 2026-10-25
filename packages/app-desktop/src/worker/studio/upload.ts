@@ -34,7 +34,12 @@ import type { Logger, Seeder } from '@sovit/seeder';
 
 import { fromHex as hexToBytes } from '../../ipc/codec.js';
 import { toWireError } from '../../ipc/errors.js';
-import type { PublishDraft, StudioUploadArgs } from '../../ipc/worker-protocol.js';
+import type {
+  NfxUploadStatusWire,
+  PublishDraft,
+  StudioUploadArgs,
+} from '../../ipc/worker-protocol.js';
+import { packageUploadForNfx } from './nfx.js';
 
 export interface WorkerUploadDeps {
   readonly seeder: Seeder;
@@ -55,6 +60,11 @@ export interface WorkerUploadDeps {
   readonly progress: (p: UploadProgress) => void;
   /** x264 preset (tests use `ultrafast`). */
   readonly preset?: string;
+  /**
+   * Contracts v8: the NFX side of an upload with `meta.nfx` (`./nfx.ts`). It runs after the
+   * legacy upload resolved and reports on its own; absent, `meta.nfx` is ignored.
+   */
+  readonly nfx?: (status: Promise<NfxUploadStatusWire>) => void;
 }
 
 /** A progress event as it may cross to the host (error text scrubbed and capped). */
@@ -165,7 +175,7 @@ export async function runWorkerUpload(
       : { thumbnailChoice: typeof t === 'number' ? t : blobLike(t.hex, t.type) }),
   };
 
-  return media.runStudioUpload(
+  const video = await media.runStudioUpload(
     input,
     (p) => {
       deps.progress(wireProgress(p));
@@ -214,4 +224,27 @@ export async function runWorkerUpload(
       },
     },
   );
+
+  // The NFX side (contracts v8), only once the legacy upload has published, and detached: its
+  // packaging (a remux and the store's verified writes) never delays or fails the legacy result.
+  // Read through a function: `output` is set inside the transcode callback, which TypeScript's
+  // narrowing from the `null` initializer does not see.
+  const transcoded = (): TranscodeOutput | null => output;
+  const done = transcoded();
+  if (args.meta.nfx === true && deps.nfx !== undefined && done !== null) {
+    deps.nfx(
+      packageUploadForNfx(
+        { legacyEventId: video.id, satsPerBlock: args.meta.satsPerBlock, output: done },
+        {
+          store: deps.seeder.nfx,
+          runner: deps.runner,
+          fs: deps.fs,
+          sha256: deps.sha256,
+          binaries: deps.binaries,
+          logger: deps.logger,
+        },
+      ),
+    );
+  }
+  return video;
 }

@@ -1042,6 +1042,12 @@ export class WorkerHost {
           this.o.emit({ op: 'ev', e: 'upload.progress', uploadId: a.uploadId, progress: p });
         },
         ...(this.o.uploadPreset !== undefined ? { preset: this.o.uploadPreset } : {}),
+        // Contracts v8: the NFX side reports on its own, after the legacy result went back.
+        nfx: (status) => {
+          void status.then((s) => {
+            this.o.emit({ op: 'ev', e: 'upload.nfx', uploadId: a.uploadId, status: s });
+          });
+        },
       });
       for (const r of video.renditions) {
         net.seeder.setCorePolicy(r.hyper.core, video.price);

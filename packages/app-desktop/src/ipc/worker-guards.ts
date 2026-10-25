@@ -47,7 +47,9 @@ import {
   safe,
   text,
   union,
+  nfxOnlyIfFree,
   uploadMetaGuards,
+  uploadMetaOptGuards,
 } from './guards.js';
 import type {
   HostMethod,
@@ -60,7 +62,7 @@ import type {
   WorkerMethodTable,
   WorkerToHost,
 } from './worker-protocol.js';
-import { WORKER_V } from './worker-protocol.js';
+import { NFX_UPLOAD_FAILURES, WORKER_V } from './worker-protocol.js';
 
 const anyValue = (_x: unknown): _x is unknown => true;
 
@@ -135,7 +137,28 @@ const isThumbnailHex = obj({
   type: isImageMime,
 });
 
-const isUploadMeta = obj(uploadMetaGuards);
+const isUploadMetaShape = obj(uploadMetaGuards, uploadMetaOptGuards);
+/** Contracts v8: `nfx` only on a free video, re-checked on this hop (the host checked it too). */
+const isUploadMeta = ((x: unknown) =>
+  isUploadMetaShape(x) && nfxOnlyIfFree(x)) as typeof isUploadMetaShape;
+
+/** An NFX-01 video address: `nfx:<network>:<specver>:<video-id>`. */
+const isNfxVideoAddr = matches(
+  /^nfx:[a-z0-9-]{2,32}:(?:0|[1-9][0-9]{0,19}):[a-z0-9][a-z0-9-]{6,62}$/,
+  128,
+);
+
+const isNfxUploadStatusWire = union(
+  obj({
+    state: literal('stored'),
+    video: isNfxVideoAddr,
+    root: isSha256,
+    segs: matches(/^(?:0|[1-9][0-9]{0,19})$/, 20),
+    renditions: int(1, 16),
+    bytes: isCount,
+  }),
+  obj({ state: literal('failed'), reason: oneOf(NFX_UPLOAD_FAILURES) }),
+);
 
 const isStudioUpload = obj(
   { uploadId: isUploadId, path: isAbsolutePath, name: text(1, 1024), meta: isUploadMeta },
@@ -407,6 +430,7 @@ export const validateWorkerEvent: {
     uploadId: isUploadId,
     progress: isWorkerUploadProgress,
   }),
+  'upload.nfx': ev('upload.nfx', { uploadId: isUploadId, status: isNfxUploadStatusWire }),
   'dev.fixtures': ev('dev.fixtures', { videos: arrayOf(isVideoManifest, LIMITS.maxArray) }),
   log: ev('log', {
     level: oneOf(['debug', 'info', 'warn', 'error'] as const),
