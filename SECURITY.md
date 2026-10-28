@@ -16,7 +16,7 @@ new signed release notice, and users have to download and
 
 **Do not open a public issue.** Report it privately, either on GitHub (the Security tab, then
 [Report a vulnerability](https://github.com/SovereignTechnology/nutflix-pear/security/advisories/new))
-or by email to <git@sovit.xyz>, with:
+or by email to <services@sovtech.pro>, with:
 
 - a description of the issue and its impact
 - steps to reproduce, or a proof of concept
