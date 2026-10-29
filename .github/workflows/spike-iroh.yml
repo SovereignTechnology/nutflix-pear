@@ -220,9 +220,11 @@ jobs:
           shipped=0; uring_off=0; traced=0
           smoke shipped || shipped=$?
           smoke uring-off env UV_USE_IO_URING=0 || uring_off=$?
-          smoke traced strace -f -tt -s 64 -o results/bare-strace.txt \
-            -e trace=process,signal,read,write,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_enter,io_uring_setup || traced=$?
-          [ -f results/bare-strace.txt ] && { tail -c 3000000 results/bare-strace.txt > results/bare-strace.tail; rm results/bare-strace.txt; }
+          # Who closes the event loop's epoll fd (run 7: a thread spun on epoll_pwait(3) = EBADF):
+          # every close/dup/epoll_create/clone/exec, kept from the start.
+          smoke traced strace -f -tt -o results/bare-strace.txt \
+            -e trace=close,close_range,dup2,dup3,epoll_create1,clone,clone3,vfork,execve,exit_group,kill,tgkill || traced=$?
+          [ -f results/bare-strace.txt ] && { head -c 3000000 results/bare-strace.txt > results/bare-strace.head; rm results/bare-strace.txt; }
           echo "shipped=$shipped uring_off=$uring_off traced=$traced" | tee results/bare-outcomes.txt
           [ "$shipped" = 0 ] || [ "$uring_off" = 0 ]
       - name: NAT matrix (root, network namespaces)
