@@ -35,6 +35,9 @@ pub const MAX_GET_BYTES: u64 = 64 * 1024 * 1024;
 pub const GET_BUDGET_MIB: u32 = 256;
 /// Members in one `seq`.
 pub const MAX_SEQ_MEMBERS: usize = 100_000;
+/// Relay CAs in `init`, and the size of each (DER).
+pub const MAX_RELAY_CAS: usize = 4;
+pub const MAX_RELAY_CA_BYTES: usize = 8192;
 /// Frames waiting for stdout. A worker that stops reading stalls the helper here, and so
 /// every transfer behind it: the bound on what the helper holds for an unread pipe.
 const OUT_QUEUE: usize = 16;
@@ -54,6 +57,10 @@ enum Op {
         /// Off unless asked: a viewer's node has no business opening ports on the gateway.
         #[serde(default)]
         portmapper: bool,
+        /// Extra trust anchors (DER, hex) for the relays' TLS only, beside iroh's embedded roots:
+        /// a network whose relays use a private CA. Never consulted for iroh connections.
+        #[serde(default)]
+        relay_cas: Vec<String>,
     },
     Addr,
     Import {
@@ -189,6 +196,7 @@ impl Shared {
         relays: Vec<String>,
         relay_only: bool,
         portmapper: bool,
+        relay_cas: Vec<String>,
     ) -> OpResult {
         if self.node.initialized() {
             return Err(err("bad-request", "init was already done"));
@@ -206,9 +214,29 @@ impl Shared {
         if relay_only && relays.is_empty() {
             return Err(err("bad-request", "relay_only needs a relay"));
         }
-        let node = Node::spawn(&self.state, secret, relays, relay_only, portmapper)
-            .await
-            .map_err(|e| err("io", e))?;
+        if relay_cas.len() > MAX_RELAY_CAS {
+            return Err(err("bad-request", "at most 4 relay CAs"));
+        }
+        let relay_cas = relay_cas
+            .iter()
+            .map(|h| match hex::decode(h) {
+                Ok(der) if !der.is_empty() && der.len() <= MAX_RELAY_CA_BYTES => Ok(der),
+                _ => Err(err(
+                    "bad-request",
+                    "a relay CA is not 1-8192 bytes of DER in hex",
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let node = Node::spawn(
+            &self.state,
+            secret,
+            relays,
+            relay_only,
+            portmapper,
+            relay_cas,
+        )
+        .await
+        .map_err(|e| err("io", e))?;
         let answer = reach(&node);
         self.node
             .set(node)
@@ -441,10 +469,13 @@ pub async fn serve(state: &Path) -> u8 {
             relays,
             relay_only,
             portmapper,
+            relay_cas,
         } = op
         {
             // In order: nothing else is served before it answers.
-            let result = shared.init(secret, relays, relay_only, portmapper).await;
+            let result = shared
+                .init(secret, relays, relay_only, portmapper, relay_cas)
+                .await;
             if reply(&tx, id, result).await.is_err() {
                 break EXIT_IO;
             }

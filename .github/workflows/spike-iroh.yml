@@ -75,6 +75,7 @@ jobs:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
+            crates/iroh-helper/target
             nfx/crates/target
             ${{ runner.temp }}/iroh-relay
           key: spike-iroh-${{ env.RUST_VERSION }}-${{ env.NFX_SHA }}-relay-${{ env.IROH_RELAY_VERSION }}-${{ hashFiles('crates/iroh-helper/Cargo.lock') }}

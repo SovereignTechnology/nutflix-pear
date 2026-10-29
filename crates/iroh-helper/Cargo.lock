@@ -2242,6 +2242,7 @@ dependencies = [
  "hex",
  "iroh",
  "iroh-blobs",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "tokio",

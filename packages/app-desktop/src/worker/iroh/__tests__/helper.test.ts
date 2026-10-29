@@ -448,6 +448,20 @@ describe('IrohHelper options', () => {
       expect(() => new IrohHelper({ ...base, init: { relays: [] }, ...over })).toThrow(RangeError);
   });
 
+  it('passes relay CAs through to init, and refuses ones that are not hex DER', async () => {
+    let child: FakeChild | undefined;
+    const helper = new IrohHelper({
+      ...base,
+      spawn: () => (child = new FakeChild(responder())),
+      init: { relays: ['https://10.200.0.1:3443/'], relayCas: ['3082abcd'] },
+    });
+    await helper.start();
+    expect(child?.requests[0]).toMatchObject({ op: 'init', relay_cas: ['3082abcd'] });
+    await helper.close();
+    for (const relayCas of [['XYZ'], ['3'], ['00', '00', '00', '00', '00']])
+      expect(() => new IrohHelper({ ...base, init: { relays: [], relayCas } })).toThrow(RangeError);
+  });
+
   it('asks for the portmapper only when told to', async () => {
     let child: FakeChild | undefined;
     const helper = new IrohHelper({

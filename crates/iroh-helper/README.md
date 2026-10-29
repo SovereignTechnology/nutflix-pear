@@ -70,7 +70,7 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 
 | op | fields | reply |
 |---|---|---|
-| `init` | `secret?` (64 hex), `relays` (http(s) URLs), `relay_only?`, `portmapper?` | `node`, `relay`, `addrs` |
+| `init` | `secret?` (64 hex), `relays` (http(s) URLs), `relay_only?`, `portmapper?`, `relay_cas?` (≤ 4 DER CAs, hex) | `node`, `relay`, `addrs` |
 | `addr` | | `node`, `relay`, `addrs` |
 | `import` | `path` (absolute) | `hash` (BLAKE3, 64 hex), `size` |
 | `seq` | `members` (BLAKE3 hashes, each stored here), `tag` | `hash`, `ticket` (a HashSeq `BlobTicket` naming this node) |
@@ -85,7 +85,9 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
   a fresh key, so its id changes at every start (as nfxd's does). Empty `relays` means no relay
   at all, never n0's. The portmapper (UPnP, PCP, NAT-PMP) is off unless `portmapper` is true. A
   malformed `init` is answered "malformed init" and nothing more, so no field's value (the secret)
-  comes back in an error.
+  comes back in an error. `relay_cas` adds trust anchors for the relays' TLS beside iroh's
+  embedded (Mozilla) roots, for a network whose relays use a private CA; iroh never uses them for
+  its own connections, which the endpoint keys authenticate.
 - `dial` keeps the given direct addresses (none with `relay_only`) and only the relays in its own
   map; with nothing left it fails `dial-failed`. Connections time out after 15 s.
 - `get` makes one ranged request for at most `ceil(max / 1024)` chunks, as nfx-node does: a blob

@@ -32,6 +32,13 @@
 #   open-open poison           helper ← helper with one segment's bytes flipped: must fail
 #                              "poisoned" and store nothing (sha256 is checked in JS)
 #
+# Then, spike S-D unknown 1, the same NATs behind a TLS relay with QUIC address discovery on
+# (a CI CA, given to the helper as `relay_cas`): the address discovery holepunching needs.
+#   consistent-consistent-qad  helper ← helper must go direct (holepunched)
+#   consistent-symmetric-qad   helper ← helper, recorded
+#   consistent-consistent-qad nfxd ← helper  recorded: nfxd trusts only iroh's embedded roots
+#                              (no CA option at nfx 29019d2), so it cannot use this relay
+#
 # Results: $OUT/nat.jsonl, one line per check. Exit 1 if a judged check failed.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -48,6 +55,9 @@ IROH_RELAY=${IROH_RELAY:?the iroh-relay binary}
 HARNESS=$here/harness.mjs
 RELAY_IP=10.200.0.1
 IROH_URL=http://10.200.0.1:3340/
+IROH_TLS_URL=https://10.200.0.1:3443/
+RELAY_KIND=http
+CA_HEX=
 NOSTR_URL=ws://10.200.0.1:7447
 NS=nfx:regtest:1
 VIDEO_ID=spike-sd-clip
@@ -185,10 +195,41 @@ topology() { # mode-a mode-b
   ip -n sdrb route add 192.168.10.0/24 via 10.200.0.11
   router a "$1"
   router b "$2"
-  # The network's own iroh relay, over HTTP (as nfx's Phase A exit run).
-  start "iroh-relay-$1-$2" sdpub "$IROH_RELAY" --config-path "$work/iroh-relay.toml"
+  # The network's own iroh relay: over HTTP (as nfx's Phase A exit run), or over TLS with QUIC
+  # address discovery (RELAY_KIND=tls).
+  start "iroh-relay-$RELAY_KIND-$1-$2" sdpub "$IROH_RELAY" --config-path "$work/iroh-relay-$RELAY_KIND.toml"
   RELAY_PID=${pids[-1]}
-  wait_port sdpub "$RELAY_IP" 3340 20 || echo "iroh relay not listening on :3340" >&2
+  local port=3340
+  [ "$RELAY_KIND" = tls ] && port=3443
+  wait_port sdpub "$RELAY_IP" "$port" 20 || echo "iroh relay not listening on :$port" >&2
+}
+
+# A CI-only CA and a relay certificate for 10.200.0.1, and the TLS relay's config.
+tls_setup() {
+  local t=$work/tls
+  mkdir -p "$t"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+    -subj "/CN=spike S-D CI CA" -keyout "$t/ca.key" -out "$t/ca.crt" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign" 2>/dev/null
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=$RELAY_IP" \
+    -keyout "$t/relay.key" -out "$t/relay.csr" 2>/dev/null
+  printf 'subjectAltName=IP:%s\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\n' \
+    "$RELAY_IP" > "$t/ext.cnf"
+  openssl x509 -req -in "$t/relay.csr" -CA "$t/ca.crt" -CAkey "$t/ca.key" -CAcreateserial \
+    -days 2 -extfile "$t/ext.cnf" -out "$t/relay.crt" 2>/dev/null
+  CA_HEX=$(openssl x509 -in "$t/ca.crt" -outform DER | od -An -tx1 | tr -d ' \n')
+  cat > "$work/iroh-relay-tls.toml" <<EOF
+enable_relay = true
+http_bind_addr = "$RELAY_IP:3340"
+enable_quic_addr_discovery = true
+enable_metrics = false
+[tls]
+cert_mode = "Manual"
+manual_cert_path = "$t/relay.crt"
+manual_key_path = "$t/relay.key"
+https_bind_addr = "$RELAY_IP:3443"
+quic_bind_addr = "$RELAY_IP:7842"
+EOF
 }
 # ------------------------------------------------------------------------------------------------
 
@@ -202,7 +243,7 @@ table inet sdbytes {
   counter relayed_bytes {}
   chain count_in {
     type filter hook forward priority filter - 10; policy accept;
-    iifname "up-b" ip saddr $RELAY_IP tcp sport 3340 counter name relayed_bytes
+    iifname "up-b" ip saddr $RELAY_IP meta l4proto tcp counter name relayed_bytes
     iifname "up-b" ip saddr != $RELAY_IP meta l4proto udp counter name direct_bytes
   }
 }
@@ -233,7 +274,8 @@ client() {
   case $impl in
     helper)
       start "$name-client" sdhb "$NODE" "$HARNESS" fetch --helper "$HELPER" --state "$dir/client" \
-        --iroh-relay "$relay" --nostr "$NOSTR_URL" --a "$A" --timeout "$TIMEOUT"
+        --iroh-relay "$relay" --nostr "$NOSTR_URL" --a "$A" --timeout "$TIMEOUT" \
+        ${CA_HEX:+--relay-ca "$CA_HEX"}
       wait_for "$out/$name-client.out" '"watching"' 40 ;;
     nfxd)
       "$NFXD" key new "$dir/fetcher.key" > /dev/null
@@ -252,7 +294,8 @@ server() { # IMPL NAME DIR RELAY [--poison]
   case $impl in
     helper)
       start "$name-server" sdha "$NODE" "$HARNESS" serve --helper "$HELPER" --state "$dir/server" \
-        --iroh-relay "$relay" --nostr "$NOSTR_URL" --package "$work/pkg" --a "$A" ${poison:+--poison}
+        --iroh-relay "$relay" --nostr "$NOSTR_URL" --package "$work/pkg" --a "$A" ${poison:+--poison} \
+        ${CA_HEX:+--relay-ca "$CA_HEX"}
       wait_for "$out/$name-server.out" '"ready"|"ok": ?false' 60 ;;
     nfxd)
       "$NFXD" key new "$dir/seeder.key" > /dev/null
@@ -336,7 +379,7 @@ pairings() { # CELL JUDGED EXPECT PATH RELAY
 }
 
 # --- the content: one clip, packaged once by nfx-package, published by one creator key ---------
-cat > "$work/iroh-relay.toml" <<EOF
+cat > "$work/iroh-relay-http.toml" <<EOF
 enable_relay = true
 http_bind_addr = "$RELAY_IP:3340"
 enable_quic_addr_discovery = false
@@ -367,5 +410,14 @@ pairings symmetric-symmetric-norelay yes fail - none
 
 topology consistent symmetric
 pairings consistent-symmetric yes ok any "$IROH_URL"
+
+# Unknown 1: holepunching with the relay's QUIC address discovery (TLS relay, CI CA).
+tls_setup
+RELAY_KIND=tls
+topology consistent consistent
+pairing consistent-consistent-qad yes ok direct - helper helper "$IROH_TLS_URL"
+pairing consistent-consistent-qad no fail - helper nfxd "$IROH_TLS_URL"
+topology consistent symmetric
+pairing consistent-symmetric-qad no ok any - helper helper "$IROH_TLS_URL"
 
 exit "$failed"

@@ -56,6 +56,13 @@ export interface HelperInit {
   readonly relayOnly?: boolean;
   /** Ask the local gateway (UPnP, PCP, NAT-PMP) for a port. Off unless the node seeds and asks. */
   readonly portmapper?: boolean;
+  /**
+   * Extra CA certificates (DER, lowercase hex; at most 4) for the relays' TLS, added to iroh's
+   * embedded roots: a network whose relays use a private CA. iroh never uses them for its own
+   * connections, which its keys authenticate. From local network settings only, never from
+   * anything a peer or a beacon says.
+   */
+  readonly relayCas?: readonly string[];
 }
 
 /** Where the helper's node can be reached, as a beacon's iroh endpoint carries it. */
@@ -268,6 +275,9 @@ export class IrohHelper {
     if (secret !== undefined && !HEX64.test(secret))
       throw new RangeError('init.secret must be 64 lowercase hex');
     this.#secret = secret;
+    const cas = init.relayCas ?? [];
+    if (cas.length > 4 || cas.some((c) => !/^(?:[0-9a-f]{2}){1,8192}$/.test(c)))
+      throw new RangeError('init.relayCas must be at most 4 DER certificates in lowercase hex');
     this.o = { ...options, init };
     this.maxInflight = positive(options.maxInflight, 8, 'maxInflight');
     this.maxGetBytes = positive(
@@ -502,6 +512,8 @@ export class IrohHelper {
     if (this.#secret !== undefined) init['secret'] = this.#secret;
     if (this.o.init.relayOnly === true) init['relay_only'] = true;
     if (this.o.init.portmapper === true) init['portmapper'] = true;
+    if (this.o.init.relayCas !== undefined && this.o.init.relayCas.length > 0)
+      init['relay_cas'] = [...this.o.init.relayCas];
     let reach: HelperReach;
     try {
       const m = await this.send(run, init, null);

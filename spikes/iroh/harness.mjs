@@ -7,6 +7,7 @@
 //                     --package <nfx-package dir> --a <manifest a> [--poison]
 //   harness.mjs fetch --helper <bin> --state <dir> --iroh-relay <url|none> --nostr <ws url>
 //                     --a <manifest a> [--timeout <s>] [--evict-wait <s>]
+//   both take [--relay-ca <DER hex>]: the CI CA of a TLS relay (spike S-D unknown 1).
 //
 // serve: puts the packaged video into an NfxStore (verified), has the helper import the store's
 //   files by reference and form NFX-06's collections, then signs and publishes beacons (kind
@@ -162,11 +163,12 @@ async function resolveManifest(relay, a, deadline) {
 
 function helperFor(flags, relays) {
   const events = [];
+  const ca = flags.get('relay-ca');
   const helper = new IrohHelper({
     spawn: (file, a) => spawn(file, [...a], { stdio: ['pipe', 'pipe', 'pipe'] }),
     file: need(flags, 'helper'),
     stateDir: join(need(flags, 'state'), 'helper'),
-    init: { relays },
+    init: { relays, ...(typeof ca === 'string' && ca !== '' ? { relayCas: [ca] } : {}) },
     restart: false,
     onEvent: (e) => {
       if (e.type === 'stderr') process.stderr.write(`helper: ${e.line}\n`);

@@ -122,6 +122,7 @@ impl Node {
         relays: Vec<RelayUrl>,
         relay_only: bool,
         portmapper: bool,
+        relay_cas: Vec<Vec<u8>>,
     ) -> Result<Self, String> {
         let mut builder = Endpoint::builder(presets::Minimal);
         builder = if relays.is_empty() {
@@ -139,6 +140,14 @@ impl Node {
         }
         if !portmapper {
             builder = builder.portmapper_config(iroh::endpoint::PortmapperConfig::Disabled);
+        }
+        if !relay_cas.is_empty() {
+            // Added to iroh's embedded roots, never in place of them; relay TLS only.
+            let extra = relay_cas
+                .into_iter()
+                .map(rustls_pki_types::CertificateDer::from);
+            builder =
+                builder.ca_tls_config(iroh::tls::CaTlsConfig::default().with_extra_roots(extra));
         }
         let endpoint = builder.bind().await.map_err(|e| format!("bind: {e}"))?;
         let blobs_dir = dir.join("iroh-blobs");
@@ -368,7 +377,7 @@ mod tests {
         let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
         std::fs::write(&file, &bytes).unwrap();
 
-        let node = Node::spawn(&dir.join("state"), None, vec![], false, false)
+        let node = Node::spawn(&dir.join("state"), None, vec![], false, false, vec![])
             .await
             .unwrap();
         let (hash, size) = node.import(file.clone()).await.unwrap();
