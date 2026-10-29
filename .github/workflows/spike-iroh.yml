@@ -190,16 +190,41 @@ jobs:
           work=$(mktemp -d)
           head -c 307200 /dev/urandom > "$work/file.bin"
           sha=$(sha256sum "$work/file.bin" | cut -d' ' -f1)
-          set +e
-          NUTFLIX_IROH_HELPER_TRACE=1 timeout -k 5 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" \
-            "$work/file.bin" "$sha" "$PWD/results/bare.json" > results/bare.out 2> results/bare.err
-          status=$?
-          set -e
-          for f in bare.json bare.json.progress bare.out bare.err; do
-            echo "--- $f"; cat "results/$f" 2>/dev/null || echo "(none)"
-          done
-          echo "bare exited $status"
-          exit "$status"
+          # Three runs (spike S-D: the event loop stalled under Bare in runs 3-6): as shipped, with
+          # a process-state sample after 10 s; with libuv's io_uring off (Node's default since
+          # 20.3); and as shipped under strace. The check passes on the first run, or on the second
+          # with that setting recorded as a finding.
+          smoke() { # tag, then any prefix command
+            local tag=$1 pid status p
+            shift
+            set +e
+            NUTFLIX_IROH_HELPER_TRACE=1 timeout -k 5 40 "$@" "$bare" "$dir/boot.mjs" \
+              "$PWD/bins/nutflix-iroh-helper" "$work/$tag" "$work/file.bin" "$sha" \
+              "$PWD/results/bare-$tag.json" > "results/bare-$tag.out" 2> "results/bare-$tag.err" &
+            pid=$!
+            sleep 10
+            ps -eo pid,ppid,pgid,stat,wchan:32,pcpu,etimes,args | grep -E '[p]rebuilds/linux-x64/bare|[n]utflix-iroh-helper' > "results/bare-$tag.ps"
+            for p in $(pgrep -f '[n]utflix-iroh-helper|[p]rebuilds/linux-x64/bare'); do
+              echo "== $p"; grep -E '^(State|Threads|SigPnd|ShdPnd|SigBlk|SigIgn)' "/proc/$p/status"
+            done >> "results/bare-$tag.ps" 2>/dev/null
+            wait "$pid"
+            status=$?
+            set -e
+            for f in "bare-$tag.json" "bare-$tag.json.progress" "bare-$tag.ps" "bare-$tag.err"; do
+              echo "--- $f"; head -c 4000 "results/$f" 2>/dev/null || echo "(none)"
+            done
+            echo "bare ($tag) exited $status"
+            return "$status"
+          }
+          sudo apt-get install -y -qq strace >/dev/null
+          shipped=0; uring_off=0; traced=0
+          smoke shipped || shipped=$?
+          smoke uring-off env UV_USE_IO_URING=0 || uring_off=$?
+          smoke traced strace -f -tt -s 64 -o results/bare-strace.txt \
+            -e trace=process,signal,read,write,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_enter,io_uring_setup || traced=$?
+          [ -f results/bare-strace.txt ] && { tail -c 3000000 results/bare-strace.txt > results/bare-strace.tail; rm results/bare-strace.txt; }
+          echo "shipped=$shipped uring_off=$uring_off traced=$traced" | tee results/bare-outcomes.txt
+          [ "$shipped" = 0 ] || [ "$uring_off" = 0 ]
       - name: NAT matrix (root, network namespaces)
         id: nat
         continue-on-error: true
