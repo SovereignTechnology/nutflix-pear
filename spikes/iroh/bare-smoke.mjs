@@ -37,6 +37,8 @@ const finish = (code) => {
   Bare.exit(code);
 };
 progress('smoke loaded');
+// Shows whether the event loop is still turning when nothing else happens.
+const heartbeat = setInterval(() => progress('tick'), 5_000);
 const watchdog = setTimeout(() => {
   result.error = `watchdog: stalled after ${result.steps.at(-1)?.name ?? 'start'}`;
   finish(2);
@@ -48,6 +50,13 @@ function helper(name, children, events) {
     spawn: (file, args) => {
       const c = base(file, args);
       children.push(c);
+      // The pipe traffic, by size: where a stalled exchange stopped.
+      const write = c.stdin.write.bind(c.stdin);
+      c.stdin.write = (chunk) => {
+        progress(`stdin ${name} ${chunk.length}`);
+        return write(chunk);
+      };
+      c.stdout.on('data', (chunk) => progress(`stdout ${name} ${chunk.length}`));
       return c;
     },
     file: helperFile,
@@ -126,4 +135,5 @@ try {
   await b.close().catch(() => undefined);
 }
 clearTimeout(watchdog);
+clearInterval(heartbeat);
 finish(result.ok ? 0 : 1);

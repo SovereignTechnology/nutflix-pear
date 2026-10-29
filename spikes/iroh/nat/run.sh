@@ -58,6 +58,9 @@ IROH_URL=http://10.200.0.1:3340/
 IROH_TLS_URL=https://10.200.0.1:3443/
 RELAY_KIND=http
 CA_HEX=
+# Seconds a helper client waits after a fetch before its store is measured again (past the
+# helper's 10 s collection): set for the open-open cell, the disk-cap measurement.
+EVICT=
 NOSTR_URL=ws://10.200.0.1:7447
 NS=nfx:regtest:1
 VIDEO_ID=spike-sd-clip
@@ -275,7 +278,7 @@ client() {
     helper)
       start "$name-client" sdhb "$NODE" "$HARNESS" fetch --helper "$HELPER" --state "$dir/client" \
         --iroh-relay "$relay" --nostr "$NOSTR_URL" --a "$A" --timeout "$TIMEOUT" \
-        ${CA_HEX:+--relay-ca "$CA_HEX"}
+        ${CA_HEX:+--relay-ca "$CA_HEX"} ${EVICT:+--evict-wait "$EVICT"}
       wait_for "$out/$name-client.out" '"watching"' 40 ;;
     nfxd)
       "$NFXD" key new "$dir/fetcher.key" > /dev/null
@@ -398,7 +401,9 @@ echo "{\"check\":\"content\",\"a\":\"$A\",\"bytes\":$VIDEO_BYTES,\"package\":$(c
 echo "content: $VIDEO_BYTES bytes, $A"
 
 topology open open
+EVICT=12
 pairings open-open yes ok direct "$IROH_URL"
+EVICT=
 pairing open-open yes fail - poisoned helper helper "$IROH_URL" --poison
 
 topology consistent consistent
@@ -416,7 +421,7 @@ tls_setup
 RELAY_KIND=tls
 topology consistent consistent
 pairing consistent-consistent-qad yes ok direct - helper helper "$IROH_TLS_URL"
-pairing consistent-consistent-qad no fail - helper nfxd "$IROH_TLS_URL"
+pairing consistent-consistent-qad no fail - - helper nfxd "$IROH_TLS_URL"
 topology consistent symmetric
 pairing consistent-symmetric-qad no ok any - helper helper "$IROH_TLS_URL"
 

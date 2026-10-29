@@ -191,7 +191,7 @@ jobs:
           head -c 307200 /dev/urandom > "$work/file.bin"
           sha=$(sha256sum "$work/file.bin" | cut -d' ' -f1)
           set +e
-          timeout -k 5 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" \
+          NUTFLIX_IROH_HELPER_TRACE=1 timeout -k 5 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" \
             "$work/file.bin" "$sha" "$PWD/results/bare.json" > results/bare.out 2> results/bare.err
           status=$?
           set -e

@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iroh::RelayUrl;
@@ -131,6 +131,13 @@ struct Shared {
 
 type Out = mpsc::Sender<Vec<u8>>;
 
+/// `NUTFLIX_IROH_HELPER_TRACE` set: each request's id and op, and each reply's id and outcome,
+/// on stderr. Never a field's value, so never a secret or a path.
+fn trace() -> bool {
+    static TRACE: OnceLock<bool> = OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("NUTFLIX_IROH_HELPER_TRACE").is_some())
+}
+
 /// One reply frame. `Err` means stdout is gone.
 async fn reply(out: &Out, id: u32, result: OpResult) -> Result<(), ()> {
     let mut m = match result {
@@ -147,6 +154,10 @@ async fn reply(out: &Out, id: u32, result: OpResult) -> Result<(), ()> {
         }
     };
     m.insert("id".into(), Value::from(id));
+    if trace() {
+        let outcome = m.get("err").and_then(Value::as_str).unwrap_or("ok");
+        eprintln!("nutflix-iroh-helper: trace reply {id} {outcome}");
+    }
     let mut bytes = serde_json::to_vec(&Value::Object(m)).map_err(|_| ())?;
     if bytes.len() > MAX_PAYLOAD {
         // Only a huge address list could do this; the worker still gets an answer.
@@ -450,6 +461,16 @@ pub async fn serve(state: &Path) -> u8 {
         };
         // serde's message can quote a field's value; for `init` that could be the secret.
         let is_init = value.get("op").and_then(Value::as_str) == Some("init");
+        if trace() {
+            let op = value.get("op").and_then(Value::as_str).unwrap_or("?");
+            // The op name only if it is one of ours (it is the worker's text).
+            let op = if op.len() <= 16 && op.bytes().all(|c| c.is_ascii_lowercase() || c == b'-') {
+                op
+            } else {
+                "?"
+            };
+            eprintln!("nutflix-iroh-helper: trace recv {id} {op}");
+        }
         let op: Op = match serde_json::from_value(value) {
             Ok(op) => op,
             Err(e) => {
