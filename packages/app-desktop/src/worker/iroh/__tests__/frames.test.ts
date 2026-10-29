@@ -68,13 +68,23 @@ describe('helper frames', () => {
 
   it('refuses an oversize length from its header alone, before buffering any body', () => {
     const d = new HelperFrameDecoder(() => undefined);
-    expect(code(() => d.push(header(MAX_FRAME + 1)))).toBe('frame-too-large');
+    expect(
+      code(() => {
+        d.push(header(MAX_FRAME + 1));
+      }),
+    ).toBe('frame-too-large');
     expect(d.pendingBytes).toBe(0);
     // Failed for good: nothing after a bad frame is trusted.
-    expect(code(() => d.push(encodeCtl({ id: 1 })))).toBe('frame-too-large');
-    expect(code(() => new HelperFrameDecoder(() => undefined).push(header(0xffff_ffff)))).toBe(
-      'frame-too-large',
-    );
+    expect(
+      code(() => {
+        d.push(encodeCtl({ id: 1 }));
+      }),
+    ).toBe('frame-too-large');
+    expect(
+      code(() => {
+        new HelperFrameDecoder(() => undefined).push(header(0xffff_ffff));
+      }),
+    ).toBe('frame-too-large');
   });
 
   it('passes the largest frames and refuses one byte more', () => {

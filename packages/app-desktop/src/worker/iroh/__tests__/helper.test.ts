@@ -85,7 +85,9 @@ class FakeChild implements HelperChild {
   }
 
   say(line: string): void {
-    for (const l of this.err) l(new Uint8Array([...line].map((c) => c.charCodeAt(0))));
+    const bytes = new Uint8Array(line.length);
+    for (let i = 0; i < line.length; i += 1) bytes[i] = line.charCodeAt(i);
+    for (const l of this.err) l(bytes);
   }
 
   exit(code: number | null, signal: string | null): void {

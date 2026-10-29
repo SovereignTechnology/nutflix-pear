@@ -233,7 +233,7 @@ export function dialTarget(
     node: ticket.node,
     relays: ticket.relays.filter((r) => networkRelays.includes(r)),
     addrs: [...ticket.addrs],
-  } as HelperDialTarget;
+  } as unknown as HelperDialTarget;
 }
 
 export class IrohHelper {
