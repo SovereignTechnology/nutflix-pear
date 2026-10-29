@@ -9,7 +9,10 @@
 // bare-encoding's globals first, as packages/app-desktop/src/worker/__tests__/helpers/bare.ts
 // does. CI only: .github/workflows/spike-iroh.yml.
 //
-//   bare boot.mjs <helper binary> <work dir> <data file> <its sha256>
+//   bare boot.mjs <helper binary> <work dir> <data file> <its sha256> <result file>
+//
+// The result is written to <result file> synchronously before exiting: Bare.exit does not wait
+// for stdout to drain into a pipe, so a console.log just before it can be lost.
 import fs from 'bare-fs';
 import { spawn } from 'bare-subprocess';
 
@@ -19,7 +22,7 @@ import {
   bareHelperSpawn,
 } from '../../packages/app-desktop/dist/worker/iroh/index.js';
 
-const [helperFile, work, dataFile, dataSha] = Bare.argv.slice(-4);
+const [helperFile, work, dataFile, dataSha, resultFile] = Bare.argv.slice(-5);
 const result = { ok: false, steps: [] };
 const step = (name, detail = {}) => result.steps.push({ name, ...detail });
 
@@ -103,5 +106,6 @@ try {
   await a.close().catch(() => undefined);
   await b.close().catch(() => undefined);
 }
+fs.writeFileSync(resultFile, `${JSON.stringify(result)}\n`);
 console.log(JSON.stringify(result));
 Bare.exit(result.ok ? 0 : 1);

@@ -192,27 +192,28 @@ topology() { # mode-a mode-b
 }
 # ------------------------------------------------------------------------------------------------
 
-# A byte meter on router B, beside (never inside) the NAT tables, reset for every pairing.
+# A byte meter on router B, beside (never inside) the NAT tables, reset for every pairing. Its
+# names avoid nft keywords (`meter` and `fwd` both are; S5′ hit the second).
 meter_reset() {
-  ip netns exec sdrb nft delete table inet meter 2>/dev/null || true
+  ip netns exec sdrb nft delete table inet sdbytes 2>/dev/null || true
   ip netns exec sdrb nft -f - <<EOF
-table inet meter {
-  counter direct {}
-  counter relayed {}
-  chain fwd {
+table inet sdbytes {
+  counter direct_bytes {}
+  counter relayed_bytes {}
+  chain count_in {
     type filter hook forward priority filter - 10; policy accept;
-    iifname "up-b" ip saddr $RELAY_IP tcp sport 3340 counter name relayed
-    iifname "up-b" ip saddr != $RELAY_IP meta l4proto udp counter name direct
+    iifname "up-b" ip saddr $RELAY_IP tcp sport 3340 counter name relayed_bytes
+    iifname "up-b" ip saddr != $RELAY_IP meta l4proto udp counter name direct_bytes
   }
 }
 EOF
 }
 meter_read() { # → {"direct_bytes":N,"relayed_bytes":N}
-  ip netns exec sdrb nft -j list counters table inet meter | json 'import json,sys
+  ip netns exec sdrb nft -j list counters table inet sdbytes | json 'import json,sys
 c={}
 for o in json.load(sys.stdin)["nftables"]:
     k=o.get("counter")
-    if k: c[k["name"]+"_bytes"]=k.get("bytes",0)
+    if k: c[k["name"]]=k.get("bytes",0)
 print(json.dumps(c))'
 }
 
@@ -293,8 +294,9 @@ pairing() { # CELL JUDGED EXPECT PATH ERROR SERVER CLIENT RELAY [--poison]
     record "$name" "$judged" "$expect" "$path" "$err" '{"ok":false,"error":"harness: no scoped relay"}'
     return
   fi
-  meter_reset
-  if ! client "$cli" "$name" "$dir" "$relay"; then
+  if ! meter_reset; then
+    record "$name" "$judged" "$expect" "$path" "$err" '{"ok":false,"error":"harness: byte meter"}'
+  elif ! client "$cli" "$name" "$dir" "$relay"; then
     record "$name" "$judged" "$expect" "$path" "$err" '{"ok":false,"error":"harness: client never watched"}'
   else
     cpid=${pids[-1]}

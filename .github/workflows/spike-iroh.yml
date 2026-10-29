@@ -190,7 +190,8 @@ jobs:
           head -c 307200 /dev/urandom > "$work/file.bin"
           sha=$(sha256sum "$work/file.bin" | cut -d' ' -f1)
           timeout 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" \
-            "$work/file.bin" "$sha" | tee results/bare.json
+            "$work/file.bin" "$sha" "$PWD/results/bare.json"
+          cat results/bare.json
       - name: NAT matrix (root, network namespaces)
         id: nat
         continue-on-error: true
