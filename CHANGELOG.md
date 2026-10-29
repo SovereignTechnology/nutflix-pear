@@ -9,6 +9,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- Spike S-D: the app will also speak iroh (NFX-06) through a thin Rust helper process (ADR 0021,
+  nfx ADR 0103). `crates/iroh-helper/` moves bytes over iroh and iroh-blobs and decides nothing;
+  the worker's client for it (`worker/iroh/`) frames requests over stdio with a maximum frame
+  length, validates every reply, bounds what it buffers, and kills and restarts a helper that
+  breaks the protocol. The helper never says bytes are "verified": every NFX file is still checked
+  against its sha256 in JavaScript. The `spike-iroh` workflow builds it, runs it under the real
+  Bare runtime, and judges it against nfxd in both directions through S5′'s NAT matrix
+  (`docs/spikes/S-D-iroh-helper.md`). Nothing in the app starts the helper yet.
 - `@sovit/core` reads and writes the NFX wire formats (`nfx/`, ADR 0020): namespaces, kind-38504
   manifests and their deletions, kind-20464 beacons including the NFX-12 `hyperdht` endpoint and
   its `bind`, hash lists and playlists, canonical JSON, and the `nfx/files/1` and `nfx/pay/1`

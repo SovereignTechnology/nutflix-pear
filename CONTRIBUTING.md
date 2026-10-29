@@ -88,7 +88,7 @@ workflow; that only applies when a `.lane` file exists, so you can ignore it.)
 Anything that constrains the project long-term (language, framework, datastore, protocol) gets a
 short record in `docs/decisions/NNNN-title.md` with a Status, the Context, the Decision and the
 Consequences, as in [ADR 0001](docs/decisions/0001-record-architecture-decisions.md). The next
-number is **0019**. Numbers 0006 and 0008 belong to the sibling nfx repository and are not used
+number is **0022**. Numbers 0006 and 0008 belong to the sibling nfx repository and are not used
 here. Never renumber or rename an ADR: code comments cite them by number. To change an accepted
 decision, add a dated amendment and say so in its Status line, or write a new ADR that supersedes it.
 

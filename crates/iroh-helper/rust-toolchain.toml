@@ -1,0 +1,5 @@
+# The toolchain nfx builds with (its CI image rust:1.98.0), so the helper and nfxd compile alike.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

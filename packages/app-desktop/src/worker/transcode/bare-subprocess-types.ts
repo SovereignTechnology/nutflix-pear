@@ -21,8 +21,16 @@ export interface BareReadable {
   on(event: 'end' | 'close', listener: () => void): this;
 }
 
+/** A `bare-pipe` opened for writing (stdin with `stdio[0] = 'pipe'`): the iroh helper's input. */
+export interface BareWritable {
+  write(chunk: Uint8Array): boolean;
+  end(): void;
+}
+
 export interface BareSubprocessHandle {
   readonly pid: number | null;
+  /** Present when `stdio[0]` is `'pipe'` (the iroh helper, ADR 0021); the transcode path ignores it. */
+  readonly stdin?: BareWritable | null;
   readonly stdout: BareReadable | null;
   readonly stderr: BareReadable | null;
   on(event: 'exit' | 'close', listener: (code: number | null, signal: string | null) => void): this;
