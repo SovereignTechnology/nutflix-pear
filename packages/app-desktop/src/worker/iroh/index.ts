@@ -4,6 +4,7 @@ export {
   HelperError,
   IrohHelper,
   MAX_GET_BYTES,
+  PoisonedError,
   dialTarget,
   type HelperChild,
   type HelperDialTarget,

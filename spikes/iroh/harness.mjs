@@ -25,7 +25,7 @@ import { NfxStore, nodeCrypto, nodeFs } from '@sovit/seeder';
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 
 import { IrohHelper } from '../../packages/app-desktop/dist/worker/iroh/index.js';
-import { Poisoned, fetchVideo, metaMembers, renditionMembers } from './nfx06.mjs';
+import { PoisonedError, fetchVideo, metaMembers, renditionMembers } from './nfx06.mjs';
 
 const BEACON_TTL = 120;
 const REPUBLISH_MS = 30_000;
@@ -400,7 +400,7 @@ async function fetchRole(flags) {
       await helper.close();
       return 0;
     } catch (e) {
-      if (e instanceof Poisoned) {
+      if (e instanceof PoisonedError) {
         // The source is dropped and never asked again; the spike reports it and stops.
         dropped.add(endpoint.node);
         emit({

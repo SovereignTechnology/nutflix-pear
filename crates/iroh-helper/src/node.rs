@@ -121,6 +121,7 @@ impl Node {
         secret: Option<[u8; 32]>,
         relays: Vec<RelayUrl>,
         relay_only: bool,
+        portmapper: bool,
     ) -> Result<Self, String> {
         let mut builder = Endpoint::builder(presets::Minimal);
         builder = if relays.is_empty() {
@@ -135,6 +136,9 @@ impl Node {
         }
         if relay_only {
             builder = builder.clear_ip_transports();
+        }
+        if !portmapper {
+            builder = builder.portmapper_config(iroh::endpoint::PortmapperConfig::Disabled);
         }
         let endpoint = builder.bind().await.map_err(|e| format!("bind: {e}"))?;
         let blobs_dir = dir.join("iroh-blobs");
@@ -347,4 +351,39 @@ pub fn rss_hwm_kib() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
     line.split_whitespace().nth(1)?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The worker's NFX store files are imported by reference. Untagging them (a video dropped)
+    /// and the collector that follows must forget them, never delete the worker's copy.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_collector_never_deletes_a_referenced_file() {
+        let dir = std::env::temp_dir().join(format!("iroh-helper-gc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("store-file");
+        let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&file, &bytes).unwrap();
+
+        let node = Node::spawn(&dir.join("state"), None, vec![], false, false)
+            .await
+            .unwrap();
+        let (hash, size) = node.import(file.clone()).await.unwrap();
+        assert_eq!(size, bytes.len() as u64);
+        node.seq(&[hash], "test/one").await.unwrap();
+        node.store.tags().delete_all().await.unwrap();
+        // Past one collection: GC_INTERVAL plus slack.
+        tokio::time::sleep(GC_INTERVAL + Duration::from_secs(3)).await;
+
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            bytes,
+            "a referenced file was changed"
+        );
+        node.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

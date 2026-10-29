@@ -3,10 +3,12 @@
  * that breaks the protocol is killed and restarted, and what the worker buffers is bounded
  * (nfx ADR 0103, sharp edges 1–3). The real helper runs only in the spike-iroh workflow.
  */
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { HelperFrameDecoder, encodeCtl, encodeData } from '../frames.js';
-import { HelperError, IrohHelper, dialTarget } from '../helper.js';
+import { HelperError, IrohHelper, PoisonedError, dialTarget } from '../helper.js';
 import type { HelperChild, HelperEvent, HelperTicket, IrohHelperOptions } from '../helper.js';
 
 type Msg = Readonly<Record<string, unknown>>;
@@ -14,6 +16,7 @@ type Responder = (msg: Msg, child: FakeChild) => void;
 
 const NODE = 'ab'.repeat(32);
 const HASH = 'cd'.repeat(32);
+const sha = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
 
 function header(len: number): Uint8Array {
   const b = new Uint8Array(4);
@@ -118,7 +121,7 @@ function setup(
     file: '/opt/helper',
     stateDir: '/tmp/state',
     init: { relays: ['http://10.200.0.1:3340/'] },
-    restart: { minMs: 1, maxMs: 2 },
+    restart: { minMs: 50, maxMs: 100 },
     onEvent: (e) => events.push(e),
     ...options,
   });
@@ -129,6 +132,7 @@ async function rejection(p: Promise<unknown>): Promise<string> {
   try {
     await p;
   } catch (e) {
+    if (e instanceof PoisonedError) return 'poisoned';
     return e instanceof HelperError ? e.code : `not a HelperError: ${String(e)}`;
   }
   return 'resolved';
@@ -180,15 +184,43 @@ describe('IrohHelper', () => {
     await helper.close();
   });
 
-  it('a get returns the bytes of its data frames, and states nothing else about them', async () => {
-    const { helper } = setup((msg, child) => {
+  it('getFile returns bytes only under the sha256 they must have; anything else is poisoned', async () => {
+    const { helper, children } = setup((msg, child) => {
       child.send(encodeData(msg['id'] as number, new Uint8Array([1, 2])));
       child.send(encodeData(msg['id'] as number, new Uint8Array([3])));
       child.reply({ id: msg['id'], ok: true, size: 3 });
     });
     await helper.start();
-    const bytes = await helper.get(1, HASH, 3);
-    expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+    const good = sha(new Uint8Array([1, 2, 3]));
+    await expect(helper.getFile(1, HASH, { sha256: good, maxBytes: 3 })).resolves.toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+    // The peer's bytes, under the wrong name: refused, and never handed back.
+    expect(await rejection(helper.getFile(1, HASH, { sha256: 'ee'.repeat(32), maxBytes: 3 }))).toBe(
+      'poisoned',
+    );
+    // A poisoned file is the peer's fault, not the helper's: no kill.
+    expect(children[0]!.kills).toEqual([]);
+    expect(await rejection(helper.getFile(1, HASH, { sha256: 'NOT', maxBytes: 3 }))).toBe(
+      'bad-request',
+    );
+    await helper.close();
+  });
+
+  it('getSeq returns member hashes, refuses what is not a HashSeq, and can demand a count', async () => {
+    let body = new Uint8Array(64).fill(0xab);
+    const { helper } = setup((msg, child) => {
+      child.send(encodeData(msg['id'] as number, body));
+      child.reply({ id: msg['id'], ok: true, size: body.length });
+    });
+    await helper.start();
+    await expect(helper.getSeq(1, HASH, { maxMembers: 2 })).resolves.toEqual([NODE, NODE]);
+    expect(await rejection(helper.getSeq(1, HASH, { maxMembers: 3, exact: true }))).toBe(
+      'poisoned',
+    );
+    body = new Uint8Array(33);
+    expect(await rejection(helper.getSeq(1, HASH, { maxMembers: 2 }))).toBe('poisoned');
+    expect(await rejection(helper.getSeq(1, HASH, { maxMembers: 0 }))).toBe('bad-request');
     await helper.close();
   });
 
@@ -197,7 +229,9 @@ describe('IrohHelper', () => {
       if (msg['op'] === 'get') child.send(encodeData(msg['id'] as number, new Uint8Array(4)));
     });
     await helper.start();
-    expect(await rejection(helper.get(1, HASH, 3))).toBe('violation');
+    expect(await rejection(helper.getFile(1, HASH, { sha256: HASH, maxBytes: 3 }))).toBe(
+      'violation',
+    );
     expect(children[0]!.kills).toEqual(['SIGKILL']);
     expect(events.some((e) => e.type === 'violation')).toBe(true);
     await vi.waitFor(() => {
@@ -239,7 +273,9 @@ describe('IrohHelper', () => {
       child.reply({ id: msg['id'], ok: true, size: 1 });
     });
     await helper.start();
-    expect(await rejection(helper.get(1, HASH, 8))).toBe('violation');
+    expect(await rejection(helper.getFile(1, HASH, { sha256: HASH, maxBytes: 8 }))).toBe(
+      'violation',
+    );
     expect(children[0]!.kills).toEqual(['SIGKILL']);
     await helper.close();
   });
@@ -253,12 +289,12 @@ describe('IrohHelper', () => {
       { timeoutMs: 20 },
     );
     await helper.start();
-    expect(await rejection(helper.get(1, HASH, 4))).toBe('timeout');
+    expect(await rejection(helper.getFile(1, HASH, { sha256: HASH, maxBytes: 4 }))).toBe('timeout');
     children[0]!.send(encodeData(late!['id'] as number, new Uint8Array(4)));
     children[0]!.reply({ id: late!['id'], ok: true, size: 4 });
     expect(children[0]!.kills).toEqual([]);
     // Late bytes past what the get could still owe are a violation all the same.
-    expect(await rejection(helper.get(1, HASH, 2))).toBe('timeout');
+    expect(await rejection(helper.getFile(1, HASH, { sha256: HASH, maxBytes: 2 }))).toBe('timeout');
     children[0]!.send(encodeData(late!['id'] as number, new Uint8Array(3)));
     expect(children[0]!.kills).toEqual(['SIGKILL']);
     await helper.close();
@@ -274,8 +310,10 @@ describe('IrohHelper', () => {
     const first = helper.import('/a');
     expect(await rejection(helper.import('/b'))).toBe('busy');
     expect(await rejection(first)).toBe('timeout');
-    expect(await rejection(helper.get(1, HASH, 11))).toBe('busy');
-    expect(await rejection(helper.get(1, HASH, 64 * 1024 * 1024 + 1))).toBe('bad-request');
+    expect(await rejection(helper.getFile(1, HASH, { sha256: HASH, maxBytes: 11 }))).toBe('busy');
+    expect(
+      await rejection(helper.getFile(1, HASH, { sha256: HASH, maxBytes: 64 * 1024 * 1024 + 1 })),
+    ).toBe('bad-request');
     await helper.close();
   });
 
@@ -284,7 +322,12 @@ describe('IrohHelper', () => {
       child.reply({ id: msg['id'], ok: false, err: 'dial-failed', msg: 'no route' });
     });
     await helper.start();
-    expect(await rejection(helper.dial({ node: NODE, relays: [], addrs: [] }))).toBe('dial-failed');
+    const target = dialTarget(
+      { node: NODE, hash: HASH, format: 'hash_seq', relays: [], addrs: ['10.0.0.1:1'] },
+      NODE,
+      [],
+    );
+    expect(await rejection(helper.dial(target!))).toBe('dial-failed');
     await helper.close();
   });
 
@@ -301,7 +344,7 @@ describe('IrohHelper', () => {
       file: '/opt/helper',
       stateDir: '/tmp/state',
       init: { relays: [] },
-      restart: { minMs: 1, maxMs: 1 },
+      restart: { minMs: 50, maxMs: 50 },
     });
     expect(await rejection(helper.start())).toBe('io');
     expect(children[0]!.kills).toEqual(['SIGKILL']);
@@ -351,6 +394,67 @@ describe('IrohHelper', () => {
     const lines = events.flatMap((e) => (e.type === 'stderr' ? [e.line] : []));
     expect(lines[0]).toBe('nutflix-iroh-helper: one');
     expect(lines[1]!.length).toBeLessThanOrEqual(512);
+    await helper.close();
+  });
+});
+
+describe('IrohHelper options', () => {
+  const base = {
+    spawn: (): HelperChild => new FakeChild(responder()),
+    file: '/opt/helper',
+    stateDir: '/tmp/state',
+  };
+
+  it('keeps the secret out of its fields and every event, and sends it only in init', async () => {
+    const secret = '5e'.repeat(32);
+    const events: HelperEvent[] = [];
+    let child: FakeChild | undefined;
+    const helper = new IrohHelper({
+      ...base,
+      spawn: () => (child = new FakeChild(responder())),
+      init: { relays: [], secret },
+      onEvent: (e) => events.push(e),
+    });
+    await helper.start();
+    // The helper's own fields; `run` holds the child process handle, which is not its state.
+    const { run: _run, ...fields } = helper as unknown as Record<string, unknown>;
+    expect(JSON.stringify(fields)).not.toContain(secret);
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(child?.requests.filter((r) => JSON.stringify(r).includes(secret))).toEqual([
+      expect.objectContaining({ op: 'init' }),
+    ]);
+    await helper.close();
+  });
+
+  it('refuses a malformed secret without repeating it, and values that disable a bound', () => {
+    const bad = 'NOT-A-KEY-but-a-typo-of-one';
+    let message = '';
+    try {
+      new IrohHelper({ ...base, init: { relays: [], secret: bad } });
+    } catch (e) {
+      message = e instanceof Error ? e.message : '';
+    }
+    expect(message).toContain('secret');
+    expect(message).not.toContain(bad);
+    for (const over of [
+      { maxInflight: 0 },
+      { timeoutMs: -1 },
+      { maxGetBytesInflight: 0.5 },
+      { restart: { minMs: 0, maxMs: 0 } },
+      { restart: { minMs: 100, maxMs: 50 } },
+    ])
+      expect(() => new IrohHelper({ ...base, init: { relays: [] }, ...over })).toThrow(RangeError);
+  });
+
+  it('asks for the portmapper only when told to', async () => {
+    let child: FakeChild | undefined;
+    const helper = new IrohHelper({
+      ...base,
+      spawn: () => (child = new FakeChild(responder())),
+      init: { relays: [] },
+    });
+    await helper.start();
+    expect(child?.requests[0]).not.toHaveProperty('portmapper');
     await helper.close();
   });
 });

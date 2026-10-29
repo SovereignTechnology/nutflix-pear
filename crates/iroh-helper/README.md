@@ -31,6 +31,9 @@ Status: **spike S-D** (`docs/spikes/S-D-iroh-helper.md`). Built and tested only 
    §2), so a ticket cannot make this process contact a host of a peer's choosing.
 5. **No socket of its own** besides iroh's, no secret in argv or the environment (the iroh key,
    if any, arrives in `init`), and nothing printed but short diagnostics on stderr.
+6. **The worker's client makes the safe path the only one** (`worker/iroh/helper.ts`): `getFile`
+   needs the sha256 a file must have and returns its bytes only if they match; `getSeq` returns
+   member hashes, good only for asking; a dial goes through `dialTarget`.
 
 ## Running
 
@@ -67,7 +70,7 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 
 | op | fields | reply |
 |---|---|---|
-| `init` | `secret?` (64 hex), `relays` (http(s) URLs), `relay_only?` | `node`, `relay`, `addrs` |
+| `init` | `secret?` (64 hex), `relays` (http(s) URLs), `relay_only?`, `portmapper?` | `node`, `relay`, `addrs` |
 | `addr` | | `node`, `relay`, `addrs` |
 | `import` | `path` (absolute) | `hash` (BLAKE3, 64 hex), `size` |
 | `seq` | `members` (BLAKE3 hashes, each stored here), `tag` | `hash`, `ticket` (a HashSeq `BlobTicket` naming this node) |
@@ -79,7 +82,10 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 | `stats` | | `rss_hwm_kib`, `store_bytes` |
 
 - `init` waits up to 10 s for the home relay when relays are given. Without `secret` the node has
-  a fresh key, so its id changes at every start (as nfxd's does).
+  a fresh key, so its id changes at every start (as nfxd's does). Empty `relays` means no relay
+  at all, never n0's. The portmapper (UPnP, PCP, NAT-PMP) is off unless `portmapper` is true. A
+  malformed `init` is answered "malformed init" and nothing more, so no field's value (the secret)
+  comes back in an error.
 - `dial` keeps the given direct addresses (none with `relay_only`) and only the relays in its own
   map; with nothing left it fails `dial-failed`. Connections time out after 15 s.
 - `get` makes one ranged request for at most `ceil(max / 1024)` chunks, as nfx-node does: a blob

@@ -9,12 +9,20 @@
  *   kills the helper;
  * - what this side buffers is bounded: one partial frame, at most `maxInflight` requests, and the
  *   `max` of the `get`s in flight together at most `maxGetBytesInflight`;
- * - nothing the helper says means "verified": `get` returns bytes, and the caller checks their
- *   sha256 against the hash list (NFX-05 §4) before the bytes are used or stored.
+ * - nothing the helper says means "verified". There is no way to get a file's bytes without
+ *   naming the sha256 they must have (`getFile`, checked here through sodium, NFX-05 §4): bytes
+ *   that do not match are a `PoisonedError`, never returned. A collection's member list
+ *   (`getSeq`) is BLAKE3 hashes, good only for asking for those members;
+ * - a dial goes through `dialTarget` (a ticket naming another node is ignored, a relay the network
+ *   does not run is dropped; the helper drops it again);
+ * - the iroh secret, if any, is held in a private field and only ever sent in `init`.
  *
  * Unwired (spike S-D): the worker does not start a helper yet. `spawn` is injected, as
  * `bare-process-runner.ts`'s is: `bare-subprocess` under Bare, `node:child_process` in tests.
  */
+import { nfx } from '@sovit/core';
+
+import { toHex } from '../../ipc/codec.js';
 import { HelperFrameDecoder, encodeCtl } from './frames.js';
 import type { HelperFrame } from './frames.js';
 
@@ -43,9 +51,11 @@ export type HelperSpawn = (file: string, args: readonly string[]) => HelperChild
 export interface HelperInit {
   /** The network's iroh relays (NFX-06 §1): the only ones the helper will use. */
   readonly relays: readonly string[];
-  /** The iroh secret key, 64 hex. Without it the node id changes at every (re)start. */
+  /** The iroh secret key, 64 lowercase hex. Without it the node id changes at every (re)start. */
   readonly secret?: string;
   readonly relayOnly?: boolean;
+  /** Ask the local gateway (UPnP, PCP, NAT-PMP) for a port. Off unless the node seeds and asks. */
+  readonly portmapper?: boolean;
 }
 
 /** Where the helper's node can be reached, as a beacon's iroh endpoint carries it. */
@@ -64,10 +74,14 @@ export interface HelperTicket {
   readonly addrs: readonly string[];
 }
 
+declare const checked: unique symbol;
+
+/** Where to dial: only `dialTarget` makes one, so no dial skips its checks. */
 export interface HelperDialTarget {
   readonly node: string;
   readonly relays: readonly string[];
   readonly addrs: readonly string[];
+  readonly [checked]: true;
 }
 
 export interface HelperStats {
@@ -86,6 +100,17 @@ export class HelperError extends Error {
   constructor(code: string, message: string) {
     super(`${code}: ${message}`);
     this.code = code;
+  }
+}
+
+/**
+ * A peer sent what the signed hash list says it must not be: a file whose sha256 differs, or a
+ * collection that is not one. Drop that source (NFX-06 §2); the bytes were never returned.
+ */
+export class PoisonedError extends Error {
+  override readonly name = 'PoisonedError' as const;
+  constructor(readonly what: string) {
+    super(`poisoned: ${what}`);
   }
 }
 
@@ -143,6 +168,14 @@ interface Run {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
+/** The shortest restart backoff: a helper that dies at once must not spin. */
+const MIN_RESTART_MS = 50;
+
+function positive(v: number | undefined, fallback: number, what: string): number {
+  const n = v ?? fallback;
+  if (!Number.isSafeInteger(n) || n < 1) throw new RangeError(`${what} must be a positive integer`);
+  return n;
+}
 
 function str(v: unknown, what: string, max = 2048): string {
   if (typeof v !== 'string' || v.length > max) throw new TypeError(`${what} is not a string`);
@@ -200,11 +233,13 @@ export function dialTarget(
     node: ticket.node,
     relays: ticket.relays.filter((r) => networkRelays.includes(r)),
     addrs: [...ticket.addrs],
-  };
+  } as HelperDialTarget;
 }
 
 export class IrohHelper {
   private readonly o: IrohHelperOptions;
+  /** Never in `o`, never logged, never serialised: only the `init` frame carries it. */
+  readonly #secret: string | undefined;
   private readonly maxInflight: number;
   private readonly maxGetBytes: number;
   private readonly timeoutMs: number;
@@ -228,11 +263,30 @@ export class IrohHelper {
   restarts = 0;
 
   constructor(options: IrohHelperOptions) {
-    this.o = options;
-    this.maxInflight = options.maxInflight ?? 8;
-    this.maxGetBytes = options.maxGetBytesInflight ?? 128 * 1024 * 1024;
-    this.timeoutMs = options.timeoutMs ?? 60_000;
-    this.backoffMs = options.restart === false ? 0 : (options.restart?.minMs ?? 250);
+    const { secret, ...init } = options.init;
+    // The message never repeats the value.
+    if (secret !== undefined && !HEX64.test(secret))
+      throw new RangeError('init.secret must be 64 lowercase hex');
+    this.#secret = secret;
+    this.o = { ...options, init };
+    this.maxInflight = positive(options.maxInflight, 8, 'maxInflight');
+    this.maxGetBytes = positive(
+      options.maxGetBytesInflight,
+      128 * 1024 * 1024,
+      'maxGetBytesInflight',
+    );
+    this.timeoutMs = positive(options.timeoutMs, 60_000, 'timeoutMs');
+    const restart = options.restart;
+    if (
+      restart !== undefined &&
+      restart !== false &&
+      (!Number.isSafeInteger(restart.minMs) ||
+        restart.minMs < MIN_RESTART_MS ||
+        !Number.isSafeInteger(restart.maxMs) ||
+        restart.maxMs < restart.minMs)
+    )
+      throw new RangeError(`restart needs ${String(MIN_RESTART_MS)} <= minMs <= maxMs`);
+    this.backoffMs = restart === false ? 0 : (restart?.minMs ?? 250);
   }
 
   /** The reach of the running helper, as its last `init` or `addr` reported it. */
@@ -292,6 +346,21 @@ export class IrohHelper {
     }));
   }
 
+  /**
+   * Decode `ticket` (from a beacon's iroh endpoint `endpointNode`) and dial it through
+   * `dialTarget`: `null` when the ticket must be ignored. `hash` is the collection to `getSeq`.
+   */
+  async dialTicket(
+    ticket: string,
+    endpointNode: string,
+    networkRelays: readonly string[],
+  ): Promise<{ readonly conn: number; readonly hash: string } | null> {
+    const t = await this.ticket(ticket);
+    const target = dialTarget(t, endpointNode, networkRelays);
+    if (target === null) return null;
+    return { conn: await this.dial(target), hash: t.hash };
+  }
+
   async dial(target: HelperDialTarget): Promise<number> {
     const m = await this.request({
       op: 'dial',
@@ -303,10 +372,49 @@ export class IrohHelper {
   }
 
   /**
-   * At most `max` bytes of blob `hash` over `conn`. The bytes are whatever the peer sent and
-   * iroh accepted: check their sha256 before using or storing them.
+   * The member hashes (BLAKE3) of collection `hash`, fetched alone and capped at `maxMembers`
+   * (NFX-06 §2); with `exact`, the count must be `maxMembers`. They are the peer's say-so: good
+   * only for asking for each member with `getFile`, whose sha256 the hash list gives.
    */
-  async get(conn: number, hash: string, max: number): Promise<Uint8Array> {
+  async getSeq(
+    conn: number,
+    hash: string,
+    opts: { readonly maxMembers: number; readonly exact?: boolean },
+  ): Promise<string[]> {
+    const n = opts.maxMembers;
+    if (!Number.isSafeInteger(n) || n < 1 || n * 32 > MAX_GET_BYTES)
+      throw new HelperError('bad-request', 'maxMembers is out of range');
+    const bytes = await this.getRaw(conn, hash, n * 32);
+    if (bytes.length === 0 || bytes.length % 32 !== 0)
+      throw new PoisonedError('a collection that is not a HashSeq');
+    const members: string[] = [];
+    for (let i = 0; i < bytes.length; i += 32) members.push(toHex(bytes.subarray(i, i + 32)));
+    if (opts.exact === true && members.length !== n)
+      throw new PoisonedError(
+        `a collection of ${String(members.length)} members, not ${String(n)}`,
+      );
+    return members;
+  }
+
+  /**
+   * The bytes of blob `hash` over `conn` — at most `maxBytes`, and only if their sha256 is
+   * `sha256` (the hash list's entry, NFX-05 §4). Anything else is a `PoisonedError`.
+   */
+  async getFile(
+    conn: number,
+    hash: string,
+    expect: { readonly sha256: string; readonly maxBytes: number },
+  ): Promise<Uint8Array> {
+    if (!HEX64.test(expect.sha256))
+      throw new HelperError('bad-request', 'sha256 must be 64 lowercase hex');
+    const bytes = await this.getRaw(conn, hash, expect.maxBytes);
+    if (!nfx.verifyFile(expect.sha256, bytes).ok)
+      throw new PoisonedError(`a file whose sha256 is not ${expect.sha256.slice(0, 16)}…`);
+    return bytes;
+  }
+
+  /** At most `max` bytes of a blob, unchecked: private, so no caller can skip `getFile`. */
+  private async getRaw(conn: number, hash: string, max: number): Promise<Uint8Array> {
     if (!Number.isSafeInteger(max) || max < 1 || max > MAX_GET_BYTES)
       throw new HelperError('bad-request', 'max must be 1 to 64 MiB');
     if (this.getBytesInflight + max > this.maxGetBytes)
@@ -391,8 +499,9 @@ export class IrohHelper {
       this.onExit(run, code, signal);
     });
     const init: Record<string, unknown> = { op: 'init', relays: [...this.o.init.relays] };
-    if (this.o.init.secret !== undefined) init['secret'] = this.o.init.secret;
+    if (this.#secret !== undefined) init['secret'] = this.#secret;
     if (this.o.init.relayOnly === true) init['relay_only'] = true;
+    if (this.o.init.portmapper === true) init['portmapper'] = true;
     let reach: HelperReach;
     try {
       const m = await this.send(run, init, null);

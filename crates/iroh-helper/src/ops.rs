@@ -30,6 +30,9 @@ pub const MAX_CONNS: usize = 16;
 /// The largest `max` a `get` accepts: above any NFX file the packagers write (a segment is
 /// capped at 64 MiB, a hash list at 16 MiB).
 pub const MAX_GET_BYTES: u64 = 64 * 1024 * 1024;
+/// The `max` of every `get` in flight together, in MiB: what the helper may hold in memory for
+/// fetched blobs at once, whatever the worker asks (the worker bounds itself lower, 128 MiB).
+pub const GET_BUDGET_MIB: u32 = 256;
 /// Members in one `seq`.
 pub const MAX_SEQ_MEMBERS: usize = 100_000;
 /// Frames waiting for stdout. A worker that stops reading stalls the helper here, and so
@@ -48,6 +51,9 @@ enum Op {
         relays: Vec<String>,
         #[serde(default)]
         relay_only: bool,
+        /// Off unless asked: a viewer's node has no business opening ports on the gateway.
+        #[serde(default)]
+        portmapper: bool,
     },
     Addr,
     Import {
@@ -112,6 +118,8 @@ struct Shared {
     node: OnceCell<Node>,
     conns: Mutex<Conns>,
     inflight: Arc<Semaphore>,
+    /// [`GET_BUDGET_MIB`] permits, one per MiB of `max`.
+    get_budget: Arc<Semaphore>,
 }
 
 type Out = mpsc::Sender<Vec<u8>>;
@@ -180,6 +188,7 @@ impl Shared {
         secret: Option<String>,
         relays: Vec<String>,
         relay_only: bool,
+        portmapper: bool,
     ) -> OpResult {
         if self.node.initialized() {
             return Err(err("bad-request", "init was already done"));
@@ -197,7 +206,7 @@ impl Shared {
         if relay_only && relays.is_empty() {
             return Err(err("bad-request", "relay_only needs a relay"));
         }
-        let node = Node::spawn(&self.state, secret, relays, relay_only)
+        let node = Node::spawn(&self.state, secret, relays, relay_only, portmapper)
             .await
             .map_err(|e| err("io", e))?;
         let answer = reach(&node);
@@ -286,6 +295,13 @@ impl Shared {
                 if max == 0 || max > MAX_GET_BYTES {
                     return Err(err("bad-request", "max must be 1 to 64 MiB"));
                 }
+                // `max` is at most 64 MiB, so this is at most 64 permits.
+                let mib = u32::try_from(max.div_ceil(1024 * 1024)).unwrap_or(GET_BUDGET_MIB);
+                let _budget = self
+                    .get_budget
+                    .clone()
+                    .try_acquire_many_owned(mib)
+                    .map_err(|_| err("busy", "too many bytes in flight"))?;
                 let hash = node::parse_hash(&hash)
                     .ok_or_else(|| err("bad-request", "hash is not 64 hex"))?;
                 let connection = self
@@ -367,6 +383,7 @@ pub async fn serve(state: &Path) -> u8 {
             open: HashMap::new(),
         }),
         inflight: Arc::new(Semaphore::new(MAX_INFLIGHT)),
+        get_budget: Arc::new(Semaphore::new(GET_BUDGET_MIB as usize)),
     });
     let mut stdin = BufReader::new(tokio::io::stdin());
     let code = loop {
@@ -403,13 +420,17 @@ pub async fn serve(state: &Path) -> u8 {
             eprintln!("nutflix-iroh-helper: a request without an id");
             break EXIT_PROTOCOL;
         };
+        // serde's message can quote a field's value; for `init` that could be the secret.
+        let is_init = value.get("op").and_then(Value::as_str) == Some("init");
         let op: Op = match serde_json::from_value(value) {
             Ok(op) => op,
             Err(e) => {
-                if reply(&tx, id, Err(err("bad-request", e.to_string())))
-                    .await
-                    .is_err()
-                {
+                let msg = if is_init {
+                    "malformed init".to_owned()
+                } else {
+                    e.to_string()
+                };
+                if reply(&tx, id, Err(err("bad-request", msg))).await.is_err() {
                     break EXIT_IO;
                 }
                 continue;
@@ -419,10 +440,11 @@ pub async fn serve(state: &Path) -> u8 {
             secret,
             relays,
             relay_only,
+            portmapper,
         } = op
         {
             // In order: nothing else is served before it answers.
-            let result = shared.init(secret, relays, relay_only).await;
+            let result = shared.init(secret, relays, relay_only, portmapper).await;
             if reply(&tx, id, result).await.is_err() {
                 break EXIT_IO;
             }

@@ -187,7 +187,10 @@ jobs:
           bare=node_modules/bare-sidecar/prebuilds/linux-x64/bare
           [ -x "$bare" ] || chmod 0755 "$bare"
           work=$(mktemp -d)
-          timeout 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" | tee results/bare.json
+          head -c 307200 /dev/urandom > "$work/file.bin"
+          sha=$(sha256sum "$work/file.bin" | cut -d' ' -f1)
+          timeout 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" \
+            "$work/file.bin" "$sha" | tee results/bare.json
       - name: NAT matrix (root, network namespaces)
         id: nat
         continue-on-error: true
