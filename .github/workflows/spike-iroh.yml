@@ -181,7 +181,7 @@ jobs:
           set -euo pipefail
           dir=node_modules/.cache/spike-iroh-bare
           mkdir -p "$dir"
-          printf "import 'bare-encoding/global'\nimport('./smoke.mjs').catch((e) => { throw e })\n" > "$dir/boot.mjs"
+          cp spikes/iroh/bare-boot.mjs "$dir/boot.mjs"
           node_modules/.bin/esbuild spikes/iroh/bare-smoke.mjs --bundle --packages=external \
             --format=esm --platform=neutral --target=es2022 --outfile="$dir/smoke.mjs" --log-level=warning
           bare=node_modules/bare-sidecar/prebuilds/linux-x64/bare
@@ -189,9 +189,16 @@ jobs:
           work=$(mktemp -d)
           head -c 307200 /dev/urandom > "$work/file.bin"
           sha=$(sha256sum "$work/file.bin" | cut -d' ' -f1)
-          timeout 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" \
-            "$work/file.bin" "$sha" "$PWD/results/bare.json"
-          cat results/bare.json
+          set +e
+          timeout -k 5 120 "$bare" "$dir/boot.mjs" "$PWD/bins/nutflix-iroh-helper" "$work" \
+            "$work/file.bin" "$sha" "$PWD/results/bare.json" > results/bare.out 2> results/bare.err
+          status=$?
+          set -e
+          for f in bare.json bare.json.progress bare.out bare.err; do
+            echo "--- $f"; cat "results/$f" 2>/dev/null || echo "(none)"
+          done
+          echo "bare exited $status"
+          exit "$status"
       - name: NAT matrix (root, network namespaces)
         id: nat
         continue-on-error: true

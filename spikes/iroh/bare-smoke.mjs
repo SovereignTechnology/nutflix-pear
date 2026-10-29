@@ -12,7 +12,9 @@
 //   bare boot.mjs <helper binary> <work dir> <data file> <its sha256> <result file>
 //
 // The result is written to <result file> synchronously before exiting: Bare.exit does not wait
-// for stdout to drain into a pipe, so a console.log just before it can be lost.
+// for stdout to drain into a pipe, so a console.log just before it can be lost. Every step and
+// every helper event is appended to <result file>.progress as it happens, and a watchdog ends a
+// run that stalls with a result naming the last step reached.
 import fs from 'bare-fs';
 import { spawn } from 'bare-subprocess';
 
@@ -24,7 +26,21 @@ import {
 
 const [helperFile, work, dataFile, dataSha, resultFile] = Bare.argv.slice(-5);
 const result = { ok: false, steps: [] };
-const step = (name, detail = {}) => result.steps.push({ name, ...detail });
+const progress = (line) => fs.appendFileSync(`${resultFile}.progress`, `${Date.now()} ${line}\n`);
+const step = (name, detail = {}) => {
+  result.steps.push({ name, ...detail });
+  progress(`step ${name} ${JSON.stringify(detail)}`);
+};
+const finish = (code) => {
+  fs.writeFileSync(resultFile, `${JSON.stringify(result)}\n`);
+  progress(`exit ${code}`);
+  Bare.exit(code);
+};
+progress('smoke loaded');
+const watchdog = setTimeout(() => {
+  result.error = `watchdog: stalled after ${result.steps.at(-1)?.name ?? 'start'}`;
+  finish(2);
+}, 100_000);
 
 function helper(name, children, events) {
   const base = bareHelperSpawn(spawn);
@@ -38,7 +54,10 @@ function helper(name, children, events) {
     stateDir: `${work}/${name}`,
     init: { relays: [] },
     restart: { minMs: 50, maxMs: 200 },
-    onEvent: (e) => events.push({ helper: name, ...e }),
+    onEvent: (e) => {
+      events.push({ helper: name, ...e });
+      progress(`event ${name} ${JSON.stringify(e)}`);
+    },
   });
 }
 
@@ -106,6 +125,5 @@ try {
   await a.close().catch(() => undefined);
   await b.close().catch(() => undefined);
 }
-fs.writeFileSync(resultFile, `${JSON.stringify(result)}\n`);
-console.log(JSON.stringify(result));
-Bare.exit(result.ok ? 0 : 1);
+clearTimeout(watchdog);
+finish(result.ok ? 0 : 1);
