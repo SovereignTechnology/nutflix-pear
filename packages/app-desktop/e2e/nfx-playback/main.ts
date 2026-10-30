@@ -16,6 +16,10 @@ const base = process.env['NUTFLIX_NFX_PLAYBACK_BASE'] ?? '';
 const CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' nf-media: data:; media-src nf-media:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'";
 
+/** Every nf-media request and what came of it, for the test to read (`app.evaluate`). */
+const proxied: { url: string; range: string | null; status: number | string }[] = [];
+(globalThis as Record<string, unknown>)['__nfxProxied'] = proxied;
+
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, stream: true } },
   { scheme: 'nf-media', privileges: { standard: true, secure: true, stream: true } },
@@ -31,15 +35,25 @@ void app.whenReady().then(async () => {
   protocol.handle('nf-media', async (req) => {
     // As main/media.ts: `nf-media://play/<id>` only, one Range header passed on, nothing else.
     const m = /^nf-media:\/\/play\/([A-Za-z0-9_-]{1,32})$/.exec(req.url);
-    if (m === null || base === '') return new Response(null, { status: 404 });
-    const headers: Record<string, string> = {};
     const range = req.headers.get('range');
+    if (m === null || base === '') {
+      proxied.push({ url: req.url, range, status: base === '' ? 'no base' : 'no match' });
+      return new Response(null, { status: 404 });
+    }
+    const headers: Record<string, string> = {};
     if (range !== null) headers['range'] = range;
-    const up = await net.fetch(`${base}/${m[1] ?? ''}`, {
-      method: req.method,
-      headers,
-      redirect: 'error',
-    });
+    let up: Response;
+    try {
+      up = await net.fetch(`${base}/${m[1] ?? ''}`, { headers, redirect: 'error' });
+    } catch (e: unknown) {
+      proxied.push({
+        url: req.url,
+        range,
+        status: `fetch: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      return new Response(null, { status: 502 });
+    }
+    proxied.push({ url: req.url, range, status: up.status });
     const out = new Headers({ 'content-type': 'video/mp4', 'accept-ranges': 'bytes' });
     for (const h of ['content-length', 'content-range']) {
       const v = up.headers.get(h);

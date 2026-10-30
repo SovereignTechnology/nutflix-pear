@@ -100,6 +100,7 @@ void describe(
     const served: Served[] = [];
     const variants = new Map<string, Variant>();
     const findings: Record<string, unknown> = {};
+    const consoleLines: string[] = [];
     let expectedSec = 0;
     let read: (p: nfx.ProgressivePiece) => Promise<Uint8Array> = () =>
       Promise.reject(new Error('no store'));
@@ -324,6 +325,9 @@ void describe(
         app = launched.app;
         page = launched.page;
         await page.waitForSelector('#v', { timeout: 20_000 });
+        page.on('console', (m) => {
+          consoleLines.push(`${m.type()}: ${m.text()}`.slice(0, 300));
+        });
         step('Electron up');
       },
       { timeout: 10 * 60_000 },
@@ -360,6 +364,10 @@ void describe(
                   { once: true },
                 );
               });
+              // A fresh element for each layout: nothing carries over from the last one.
+              el.pause();
+              el.removeAttribute('src');
+              el.load();
               el.src = src;
               const metadata = await meta;
               await Promise.race([
@@ -377,6 +385,10 @@ void describe(
                 played: el.currentTime > 0.5,
                 videoWidth: el.videoWidth,
                 error: el.error?.code ?? null,
+                errorMessage: el.error?.message ?? null,
+                networkState: el.networkState,
+                readyState: el.readyState,
+                currentSrc: el.currentSrc,
               };
             }, `nf-media://play/${v.name}`),
             60_000,
@@ -460,8 +472,19 @@ void describe(
             seek.seeked &&
             seek.seekedTo >= SEEK_TO - 0.1 &&
             byRange;
+          const proxied = await within(
+            app?.evaluate(() => (globalThis as Record<string, unknown>)['__nfxProxied']) ??
+              Promise.resolve([]),
+            10_000,
+            'proxy log',
+          ).catch(() => 'unreadable');
+          const mine = served.filter((x) => x.variant === v.name);
           findings[v.name] = {
             passed: ok,
+            served: mine.slice(0, 12),
+            servedCount: mine.length,
+            proxied: Array.isArray(proxied) ? proxied.slice(-12) : proxied,
+            console: consoleLines.slice(-12),
             ...loaded,
             ...seek,
             seekRange: { byRange, window: [from, to], requests: seekRequests },
