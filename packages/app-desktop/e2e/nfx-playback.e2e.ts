@@ -56,13 +56,6 @@ const within = <T>(p: Promise<T>, ms: number, what: string): Promise<T> =>
     ),
   ]);
 const SEEK_TO = 60;
-/**
- * The most one response carries: an open-ended `bytes=N-` gets a partial 206 and the player
- * asks again. Unbounded responses each held a connection the player never drained, until a
- * new source queued behind them forever (run 3); a bounded server is also what the worker's
- * should be.
- */
-const MAX_RESPONSE = 1024 * 1024;
 const HTML = `<!doctype html><html><head><meta charset="utf-8"><title>nfx playback</title></head>
 <body><video id="v" muted playsinline></video></body></html>`;
 
@@ -103,7 +96,9 @@ void describe(
     let dir = '';
     let app: ElectronApplication | undefined;
     let page: Page;
-    let server: ReturnType<typeof createServer> | undefined;
+    /** One upstream per layout: the proxy's `net.fetch` pools connections per host:port, and
+     * a layout that leaves loaders open must not starve the next (run 3: B and C got none). */
+    const servers: ReturnType<typeof createServer>[] = [];
     const served: Served[] = [];
     const variants = new Map<string, Variant>();
     const findings: Record<string, unknown> = {};
@@ -253,11 +248,12 @@ void describe(
           sizes: Object.fromEntries([...variants].map(([k, v]) => [k, v.layout.size])),
         };
 
-        // The loopback Range server (the worker's blob server's job in the app).
-        server = createServer((req: IncomingMessage, res: ServerResponse) => {
+        // The loopback Range servers (the worker's blob server's job in the app). Each answers
+        // the whole range asked for, as that one does: Chromium reads a shorter 206 as the end
+        // of the file here (run 4: every layout "ended" after its first MiB).
+        const serve = (name: string) => (req: IncomingMessage, res: ServerResponse) => {
           void (async () => {
-            const name = (req.url ?? '').slice(1);
-            const v = variants.get(name);
+            const v = req.url === `/${name}` ? variants.get(name) : undefined;
             const header = req.headers.range;
             const log = (status: number, start: number | null): void => {
               served.push({ variant: name, range: header ?? '', status, start });
@@ -274,12 +270,9 @@ void describe(
               res.writeHead(416, { 'content-range': `bytes */${String(size)}` }).end();
               return;
             }
-            const asked = r === 'none' ? { start: 0, end: size - 1 } : r;
-            const start = asked.start;
-            const last = Math.min(asked.end, start + MAX_RESPONSE - 1);
+            const { start, end: last } = r === 'none' ? { start: 0, end: size - 1 } : r;
             const pieces = nfx.locate(v.layout, start, last - start + 1);
-            // Partial even without a Range header once capped: the player then ranges the rest.
-            const status = r === 'none' && last === size - 1 ? 200 : 206;
+            const status = r === 'none' ? 200 : 206;
             log(status, start);
             res.writeHead(status, {
               'content-type': 'video/mp4',
@@ -303,9 +296,14 @@ void describe(
             process.stderr.write(`S-E server: ${e instanceof Error ? e.message : String(e)}\n`);
             res.destroy();
           });
-        });
-        await new Promise<void>((ok) => server?.listen(0, '127.0.0.1', ok));
-        const port = (server.address() as { port: number }).port;
+        };
+        const bases: Record<string, string> = {};
+        for (const name of variants.keys()) {
+          const srv = createServer(serve(name));
+          servers.push(srv);
+          await new Promise<void>((ok) => srv.listen(0, '127.0.0.1', ok));
+          bases[name] = `http://127.0.0.1:${String((srv.address() as { port: number }).port)}`;
+        }
 
         const common = {
           bundle: true,
@@ -323,11 +321,11 @@ void describe(
         });
         writeFileSync(join(dir, 'index.html'), HTML);
         step(
-          `packaged, stored, serving on ${String(port)}: ${JSON.stringify(findings['content'])}`,
+          `packaged, stored, serving ${JSON.stringify(bases)}: ${JSON.stringify(findings['content'])}`,
         );
         const launched = await within(
           launch(join(dir, 'main.mjs'), [], {
-            NUTFLIX_NFX_PLAYBACK_BASE: `http://127.0.0.1:${String(port)}`,
+            NUTFLIX_NFX_PLAYBACK_BASES: JSON.stringify(bases),
           }),
           120_000,
           'Electron launch',
@@ -347,7 +345,7 @@ void describe(
       process.stdout.write(`\nS-E FINDINGS ${JSON.stringify(findings, null, 2)}\n`);
       if (app !== undefined)
         await within(app.close(), 20_000, 'Electron close').catch(() => undefined);
-      server?.close();
+      for (const srv of servers) srv.close();
       if (dir !== '') rmSync(dir, { recursive: true, force: true });
     });
 
@@ -361,6 +359,9 @@ void describe(
           const v = variants.get(name);
           if (v === undefined) continue;
           step(`variant ${v.name}`);
+          // A fresh page: the last layout's element and its loaders are gone.
+          await within(page.reload(), 30_000, 'page reload');
+          await page.waitForSelector('#v', { timeout: 20_000 });
           const loadMark = served.length;
           const loaded = await within(
             page.evaluate(async (src: string) => {

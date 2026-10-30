@@ -11,7 +11,11 @@ import { fileURLToPath } from 'node:url';
 import { BrowserWindow, app, net, protocol } from 'electron';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const base = process.env['NUTFLIX_NFX_PLAYBACK_BASE'] ?? '';
+/** Each layout's upstream (the test's servers, one per layout so their pools are separate). */
+const bases = JSON.parse(process.env['NUTFLIX_NFX_PLAYBACK_BASES'] ?? '{}') as Record<
+  string,
+  string
+>;
 // The app's CSP (main/csp.ts, pinned by app-protocol.test.ts), as fidelity/main.ts copies it.
 const CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' nf-media: data:; media-src nf-media:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'";
@@ -36,8 +40,9 @@ void app.whenReady().then(async () => {
     // As main/media.ts: `nf-media://play/<id>` only, one Range header passed on, nothing else.
     const m = /^nf-media:\/\/play\/([A-Za-z0-9_-]{1,32})$/.exec(req.url);
     const range = req.headers.get('range');
-    if (m === null || base === '') {
-      proxied.push({ url: req.url, range, status: base === '' ? 'no base' : 'no match' });
+    const base = m === null ? undefined : bases[m[1] ?? ''];
+    if (m === null || base === undefined) {
+      proxied.push({ url: req.url, range, status: m === null ? 'no match' : 'no base' });
       return new Response(null, { status: 404 });
     }
     const headers: Record<string, string> = {};
