@@ -4,7 +4,15 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { VideoAddr, checkPlaylist, verifyFile, verifyHashList } from '../../nfx/index.js';
+import {
+  VideoAddr,
+  checkPlaylist,
+  renditionMembers,
+  verifyFile,
+  verifyHashList,
+} from '../../nfx/index.js';
+import { parseTopLevelBoxes } from '../mp4-boxes.js';
+import { buildSidx, initTrack, segmentStart, stripSegmentIndex } from '../mp4-sidx.js';
 import { packageNfx, type NfxPackageDeps } from '../nfx-package.js';
 import {
   createNodeMediaPipeline,
@@ -110,13 +118,43 @@ describe.skipIf(bins === undefined)('NFX packaging with real ffmpeg', () => {
     const verified = verifyHashList(packaged.hashListBytes, packaged.root, video(), packaged.segs);
     expect(verified.ok).toBe(true);
     if (!verified.ok) return;
+    const stored = new Map<string, Uint8Array>();
     for (const f of packaged.files) {
       const bytes =
         f.source.kind === 'bytes' ? f.source.bytes : new Uint8Array(await readFile(f.source.path));
+      stored.set(f.entry.sha256, bytes);
       expect(verifyFile(f.entry.sha256, bytes).ok, f.entry.name).toBe(true);
       if (f.entry.role === 'playlist' || f.entry.role === 'playlist-master') {
         expect(checkPlaylist(verified.value, bytes).ok, f.entry.name).toBe(true);
       }
+    }
+
+    // Spike S-E: what a progressive view of each rendition needs, from the real packager's bytes.
+    for (const r of verified.value.renditions) {
+      const playlist = verified.value.files.find((f) => f.name === r.playlist)!;
+      const members = renditionMembers(verified.value, stored.get(playlist.sha256)!);
+      expect(members.ok, r.id).toBe(true);
+      if (!members.ok) continue;
+      expect(members.value.segments).toHaveLength(3);
+      const track = initTrack(stored.get(members.value.init.sha256)!);
+      expect(track.trackId).toBeGreaterThan(0);
+      expect(track.timescale).toBeGreaterThan(0);
+      const segs = members.value.segments.map((e) => stored.get(e.sha256)!);
+      const starts = segs.map((b) => segmentStart(b, track.trackId));
+      for (let i = 1; i < starts.length; i++) expect(starts[i]!).toBeGreaterThan(starts[i - 1]!);
+      // Every segment keeps its media once a per-segment index is dropped.
+      const stripped = segs.map((b) => stripSegmentIndex(b));
+      for (const b of stripped) expect(parseTopLevelBoxes(b)[0]?.type).toBe('moof');
+      const lastMs = Number(members.value.segments.at(-1)!.durMs ?? 0n);
+      const end = starts.at(-1)! + Math.round((lastMs * track.timescale) / 1000);
+      const sidx = buildSidx(
+        track,
+        stripped.map((b, i) => ({ size: b.length, start: starts[i]! })),
+        end,
+      );
+      expect(parseTopLevelBoxes(sidx)).toEqual([
+        { type: 'sidx', offset: 0, size: 40 + 12 * 3, headerSize: 8 },
+      ]);
     }
     for (const dir of packaged.workDirs) await rm(dir, { recursive: true, force: true });
   }, 180_000);

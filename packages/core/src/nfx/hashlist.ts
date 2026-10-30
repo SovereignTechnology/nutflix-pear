@@ -161,6 +161,51 @@ export function checkPlaylist(list: HashList, bytes: Uint8Array): NfxResult<void
   return ok(undefined);
 }
 
+/** One rendition's files, as its playlist orders them (NFX-06 §2's collection order). */
+export interface RenditionFiles {
+  readonly init: FileEntry;
+  readonly segments: readonly FileEntry[];
+}
+
+/**
+ * A rendition's init (its one `#EXT-X-MAP`) and its segments in playlist order (nfx-node
+ * `video.rs`): what NFX-06 collects and what a progressive view concatenates. Membership comes
+ * from the playlist, never from the hash list's file order, and every name must resolve to a
+ * listed file of the right role.
+ */
+export function renditionMembers(
+  list: HashList,
+  playlistBytes: Uint8Array,
+): NfxResult<RenditionFiles> {
+  const text = decodeUtf8(playlistBytes);
+  if (text === undefined) return fail('playlist', 'not UTF-8');
+  let init: FileEntry | undefined;
+  const segments: FileEntry[] = [];
+  for (const line of lines(text)) {
+    if (line.startsWith('#EXT-X-MAP:')) {
+      const uris = tagUris(line);
+      if (!uris.ok) return uris;
+      const [uri, extra] = uris.value;
+      if (uri === undefined || extra !== undefined)
+        return fail('playlist', '#EXT-X-MAP must carry one URI');
+      const f = resolveContentName(list, uri);
+      if (f?.role !== 'init')
+        return fail('playlist', `EXT-X-MAP ${JSON.stringify(uri)} is not a listed init`);
+      if (init !== undefined) return fail('playlist', 'more than one EXT-X-MAP');
+      init = f;
+    } else if (!line.startsWith('#') && rustTrim(line) !== '') {
+      // As `checkPlaylist` and nfx-node read it: the line is the name, untrimmed.
+      const f = resolveContentName(list, line);
+      if (f?.role !== 'segment')
+        return fail('playlist', `${JSON.stringify(line)} is not a listed segment`);
+      segments.push(f);
+    }
+  }
+  if (init === undefined) return fail('playlist', 'no EXT-X-MAP');
+  if (segments.length === 0) return fail('playlist', 'no segments');
+  return ok({ init, segments });
+}
+
 /** The Blossom rule (NFX-05 §4): `sha256(bytes) == expected`, checked before use or storage. */
 export function verifyFile(expectedSha256: string, bytes: Uint8Array): NfxResult<void> {
   if (!isLowerHex(expectedSha256, 64)) return bad('expected sha256 is not 64 lowercase hex');

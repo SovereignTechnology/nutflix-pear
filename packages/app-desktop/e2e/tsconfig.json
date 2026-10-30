@@ -15,5 +15,8 @@
     "lib": ["ES2023", "DOM"],
     "types": ["node"]
   },
-  "include": ["./**/*.ts"]
+  "include": ["./**/*.ts"],
+  // nfx-playback.e2e.ts imports @sovit/core and @sovit/seeder: the language service resolves
+  // them to the packages' sources through these, so lint type-checks them before a build.
+  "references": [{ "path": "../../core" }, { "path": "../../seeder" }]
 }

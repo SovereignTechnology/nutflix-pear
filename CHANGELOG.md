@@ -9,6 +9,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- Spike S-E: an NFX rendition as one progressive fMP4 (`nfx.renditionMembers`,
+  `nfx.progressiveLayout`, `nfx.locate`; `media.buildSidx` and friends for a global `sidx`),
+  played by Electron's Chromium through the app's own `nf-media:` proxy and CSP in a new e2e
+  suite: the init, one global `sidx` and the segments without their own index play with their
+  exact duration and seek by Range; the files as written never start, because the player walks
+  every segment first (`docs/spikes/S-E-nfx-progressive-playback.md`). Nothing in the app plays
+  NFX yet.
 - `@sovit/core` reads and writes the NFX wire formats (`nfx/`, ADR 0020): namespaces, kind-38504
   manifests and their deletions, kind-20464 beacons including the NFX-12 `hyperdht` endpoint and
   its `bind`, hash lists and playlists, canonical JSON, and the `nfx/files/1` and `nfx/pay/1`
