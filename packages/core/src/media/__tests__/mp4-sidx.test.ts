@@ -14,6 +14,12 @@ const u32 = (n: number): Uint8Array => {
 };
 const u64 = (n: number): Uint8Array =>
   new Uint8Array([...u32(Math.floor(n / 2 ** 32)), ...u32(n % 2 ** 32)]);
+/** The bytes of an ASCII string (box types, brands). */
+function codes(s: string): Uint8Array {
+  const b = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+  return b;
+}
 const cat = (...parts: Uint8Array[]): Uint8Array => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0;
@@ -25,10 +31,10 @@ const cat = (...parts: Uint8Array[]): Uint8Array => {
 };
 const box = (type: string, ...body: Uint8Array[]): Uint8Array => {
   const inner = cat(...body);
-  return cat(u32(8 + inner.length), new Uint8Array([...type].map((c) => c.charCodeAt(0))), inner);
+  return cat(u32(8 + inner.length), codes(type), inner);
 };
 const full = (version: number): Uint8Array => new Uint8Array([version, 0, 0, 0]);
-const text = (s: string): Uint8Array => new Uint8Array([...s].map((c) => c.charCodeAt(0)));
+const text = (s: string): Uint8Array => codes(s);
 
 /** A track: tkhd v0 (times, then track_ID), mdia/mdhd v0 (times, then timescale), hdlr. */
 const trak = (id: number, scale: number, kind: string): Uint8Array =>
