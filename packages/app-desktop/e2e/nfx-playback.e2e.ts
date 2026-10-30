@@ -439,7 +439,10 @@ void describe(
             `${v.name} seek`,
           );
           const k = Math.floor(SEEK_TO / 2);
-          const from = v.layout.parts[v.firstSegment + Math.max(0, k - 1)]?.offset ?? Infinity;
+          // Chromium asks for ranges aligned to 32 KiB blocks (run 5: 261 bytes before the
+          // segment), so the window opens one 64 KiB block early.
+          const from =
+            (v.layout.parts[v.firstSegment + Math.max(0, k - 1)]?.offset ?? Infinity) - 64 * 1024;
           const target = v.layout.parts[v.firstSegment + k];
           const to = target === undefined ? -1 : target.offset + target.size;
           const seekRequests = served.slice(mark).filter((s) => s.variant === v.name);
