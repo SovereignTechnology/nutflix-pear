@@ -18,3 +18,4 @@ export * from './hashlist.js';
 export { JsonNumber, JsonObject, parseJson, type JsonValue } from './json.js';
 export * from './manifest.js';
 export * from './namespace.js';
+export * from './progressive.js';

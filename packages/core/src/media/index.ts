@@ -50,6 +50,14 @@ export {
   type Mp4Box,
 } from './mp4-boxes.js';
 export { childBoxes, initCodecs, type Mp4Child } from './mp4-codecs.js';
+export {
+  buildSidx,
+  initTrack,
+  segmentStart,
+  stripSegmentIndex,
+  type Mp4Track,
+  type SidxSegment,
+} from './mp4-sidx.js';
 export { packageNfx } from './nfx-package.js';
 export type {
   NfxPackageDeps,

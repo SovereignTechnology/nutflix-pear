@@ -22,7 +22,7 @@
     "lint": "eslint src",
     "bundle": "node scripts/bundle.ts",
     "start": "npm run bundle && electron dist/main/main.js --dev-mocks --dev-fixtures",
-    "test:e2e": "NUTFLIX_E2E=1 node --test --test-concurrency=1 e2e/fidelity.e2e.ts e2e/stage1.e2e.ts e2e/signer.e2e.ts",
+    "test:e2e": "NUTFLIX_E2E=1 node --test --test-concurrency=1 e2e/fidelity.e2e.ts e2e/stage1.e2e.ts e2e/signer.e2e.ts e2e/nfx-playback.e2e.ts",
     "stage": "node packaging/cli.ts stage",
     "package": "node packaging/cli.ts package",
     "make": "node packaging/cli.ts make"
