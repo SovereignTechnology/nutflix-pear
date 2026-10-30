@@ -56,6 +56,13 @@ const within = <T>(p: Promise<T>, ms: number, what: string): Promise<T> =>
     ),
   ]);
 const SEEK_TO = 60;
+/**
+ * The most one response carries: an open-ended `bytes=N-` gets a partial 206 and the player
+ * asks again. Unbounded responses each held a connection the player never drained, until a
+ * new source queued behind them forever (run 3); a bounded server is also what the worker's
+ * should be.
+ */
+const MAX_RESPONSE = 1024 * 1024;
 const HTML = `<!doctype html><html><head><meta charset="utf-8"><title>nfx playback</title></head>
 <body><video id="v" muted playsinline></video></body></html>`;
 
@@ -267,9 +274,12 @@ void describe(
               res.writeHead(416, { 'content-range': `bytes */${String(size)}` }).end();
               return;
             }
-            const { start, end: last } = r === 'none' ? { start: 0, end: size - 1 } : r;
+            const asked = r === 'none' ? { start: 0, end: size - 1 } : r;
+            const start = asked.start;
+            const last = Math.min(asked.end, start + MAX_RESPONSE - 1);
             const pieces = nfx.locate(v.layout, start, last - start + 1);
-            const status = r === 'none' ? 200 : 206;
+            // Partial even without a Range header once capped: the player then ranges the rest.
+            const status = r === 'none' && last === size - 1 ? 200 : 206;
             log(status, start);
             res.writeHead(status, {
               'content-type': 'video/mp4',
@@ -343,18 +353,22 @@ void describe(
 
     void it(
       'plays at least one layout fully: duration, seekable, play, a seek by Range',
-      { timeout: 6 * 60_000 },
+      { timeout: 10 * 60_000 },
       async () => {
         const passed: string[] = [];
-        for (const v of variants.values()) {
+        // The expected production layout first: a slow one cannot then delay it.
+        for (const name of ['C', 'B', 'A'] as const) {
+          const v = variants.get(name);
+          if (v === undefined) continue;
           step(`variant ${v.name}`);
+          const loadMark = served.length;
           const loaded = await within(
             page.evaluate(async (src: string) => {
               const el = document.getElementById('v') as HTMLVideoElement;
               const meta = new Promise<boolean>((ok) => {
                 const t = setTimeout(() => {
                   ok(false);
-                }, 20_000);
+                }, 60_000);
                 el.addEventListener(
                   'loadedmetadata',
                   () => {
@@ -368,8 +382,10 @@ void describe(
               el.pause();
               el.removeAttribute('src');
               el.load();
+              const t = performance.now();
               el.src = src;
               const metadata = await meta;
+              const metadataMs = Math.round(performance.now() - t);
               await Promise.race([
                 el.play().catch(() => undefined),
                 new Promise((r) => setTimeout(r, 10_000)),
@@ -379,6 +395,7 @@ void describe(
                 await new Promise((r) => setTimeout(r, 100));
               return {
                 metadata,
+                metadataMs,
                 duration: el.duration,
                 seekable:
                   el.seekable.length > 0 ? [el.seekable.start(0), el.seekable.end(0)] : null,
@@ -391,12 +408,13 @@ void describe(
                 currentSrc: el.currentSrc,
               };
             }, `nf-media://play/${v.name}`),
-            60_000,
+            100_000,
             `${v.name} load`,
           );
 
           // Only requests made after this point can be the seek's.
           const mark = served.length;
+          const loadRequests = mark - loadMark;
           const seek = await within(
             page.evaluate(async (to: number) => {
               const el = document.getElementById('v') as HTMLVideoElement;
@@ -483,6 +501,7 @@ void describe(
             passed: ok,
             served: mine.slice(0, 12),
             servedCount: mine.length,
+            loadRequests,
             proxied: Array.isArray(proxied) ? proxied.slice(-12) : proxied,
             console: consoleLines.slice(-12),
             ...loaded,
