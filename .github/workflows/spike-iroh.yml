@@ -225,8 +225,12 @@ jobs:
           smoke traced strace -f -tt -o results/bare-strace.txt \
             -e trace=close,close_range,dup2,dup3,epoll_create1,clone,clone3,vfork,execve,exit_group,kill,tgkill || traced=$?
           [ -f results/bare-strace.txt ] && { head -c 3000000 results/bare-strace.txt > results/bare-strace.head; rm results/bare-strace.txt; }
-          echo "shipped=$shipped uring_off=$uring_off traced=$traced" | tee results/bare-outcomes.txt
-          [ "$shipped" = 0 ] || [ "$uring_off" = 0 ]
+          # A pass is a result file saying ok: Bare also exits 0 when it tears down mid-run (runs 7
+          # and 8 counted that as a pass; it is not one).
+          ok_of() { python3 -c 'import json,sys; print("yes" if json.load(open(sys.argv[1])).get("ok") is True else "no")' "$1" 2>/dev/null || echo no; }
+          s=$(ok_of results/bare-shipped.json); u=$(ok_of results/bare-uring-off.json)
+          echo "shipped=$shipped/$s uring_off=$uring_off/$u traced=$traced" | tee results/bare-outcomes.txt
+          [ "$s" = yes ] || [ "$u" = yes ]
       - name: NAT matrix (root, network namespaces)
         id: nat
         continue-on-error: true
@@ -256,6 +260,10 @@ jobs:
           e = os.environ
           print("## Spike S-D: the iroh helper")
           print(f"fmt {e['FMT']} · clippy {e['CLIPPY']} · tests {e['TEST']} · cargo deny {e['DENY']} · Bare {e['BARE']} · NAT matrix {e['NAT']}")
+          try:
+              print(f"\nBare runs (exit/ok): `{open('results/bare-outcomes.txt').read().strip()}`")
+          except FileNotFoundError:
+              pass
           try:
               s = json.load(open("results/build/size.json"))
               print(f"\nhelper: release {s['release_bytes']:,} B · release-small {s['release_small_bytes']:,} B · gzip -9 {s['release_gzip_bytes']:,} B · {s['lock_crates']} crates in the lock")

@@ -14,8 +14,10 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   the worker's client for it (`worker/iroh/`) frames requests over stdio with a maximum frame
   length, validates every reply, bounds what it buffers, and kills and restarts a helper that
   breaks the protocol. The helper never says bytes are "verified": every NFX file is still checked
-  against its sha256 in JavaScript. The `spike-iroh` workflow builds it, runs it under the real
-  Bare runtime, and judges it against nfxd in both directions through S5′'s NAT matrix
+  against its sha256 in JavaScript. The `spike-iroh` workflow builds it (11.3 MB) and judges it
+  against nfxd in both directions through S5′'s NAT matrix: every cell passes, and with a TLS relay
+  offering address discovery two NATed helpers holepunch. Driving it from the real Bare runtime
+  through `bare-subprocess` fails (Bare tears itself down mid-run), and is open for slice 5
   (`docs/spikes/S-D-iroh-helper.md`). Nothing in the app starts the helper yet.
 - `@sovit/core` reads and writes the NFX wire formats (`nfx/`, ADR 0020): namespaces, kind-38504
   manifests and their deletions, kind-20464 beacons including the NFX-12 `hyperdht` endpoint and

@@ -5,15 +5,18 @@ Rust 1.98.0), its worker client `packages/app-desktop/src/worker/iroh/`, against
 `29019d2` · Host: GitHub Actions `ubuntu-24.04` (workflow `spike-iroh`), linux-x64 only ·
 Decision: [ADR 0021](../decisions/0021-speak-iroh-through-a-helper.md), nfx ADR 0103 §3 step 1
 
-**Verdict: PASS for what ADR 0103 §3 step 1 asks — the helper fetches a video from nfxd and serves
-one to it over iroh-blobs, both directions, through every cell of S5′'s NAT matrix, at 11.3 MB and
-about 20 MB of memory. BARE_VERDICT_PLACEHOLDER**
+**Verdict: PARTIAL.** Everything ADR 0103 §3 step 1 asks **passes**: the helper fetches a video from
+nfxd and serves one to it over iroh-blobs, both directions, through every cell of S5′'s NAT matrix,
+at 11.3 MB and about 20 MB of memory. The one check this spike added, **the client driving the
+helper under the real Bare runtime through `bare-subprocess`, fails** and is open for slice 5
+(finding 10): the Bare process tears itself down mid-run.
 
 Runs: the matrix and its numbers are run
 [40971458433](https://github.com/SovereignTechnology/nutflix-pear/actions/runs/40971458433)
 (24 of 24 checks), the build gates and sizes run
 [40959492555](https://github.com/SovereignTechnology/nutflix-pear/actions/runs/40959492555);
-earlier runs agree. BARE_RUN_PLACEHOLDER
+earlier runs agree. The Bare check: runs 3–8, traced in
+[40976375382](https://github.com/SovereignTechnology/nutflix-pear/actions/runs/40976375382).
 
 ## Question
 
@@ -87,7 +90,24 @@ used? How large is it, how much memory does it use, and does a file need two sto
    collector), `cargo deny check` (advisories, bans, licences, sources: all ok, with nfx's two
    iroh "unmaintained" ignores). First compile in CI built ~800 crates in about 12 minutes; cached
    runs take minutes.
-10. BARE_FINDING_PLACEHOLDER
+10. **Under Bare, the process tears itself down mid-run (FAIL, open).** Bare 1.31 (bare-sidecar
+    0.5.4's prebuilt `bare`), `bare-subprocess` 6.1.0 spawning the helper with three pipes, the
+    client bundled as the worker would load it, no other handle open:
+    - The first exchanges work: `init`, then `import`/`seq` or `ticket`, replies read off the pipe
+      and validated. Then, 0.2–0.7 s in, with requests pending and no error printed, the main
+      thread starts the exit teardown: it SIGTERMs both helpers and closes handles, among them
+      fd 3, the epoll descriptor of another of its threads' event loops (strace, run 8).
+    - The process then either exits 0 without finishing (no result, no `exit` line) or deadlocks:
+      that thread spins on `epoll_pwait(3) = EBADF` and the main thread waits on it. Its timers
+      never fire (a 5 s heartbeat never ticked; a 100 s watchdog never ran). Six runs, both
+      outcomes; libuv's io_uring off (`UV_USE_IO_URING=0`) changes nothing.
+    - The same client and helper, spawned by Node, ran the whole matrix (24 checks, thousands of
+      exchanges) without a fault, so the protocol and the supervisor are not the cause.
+    - What looks like the cause: Bare saw its event loop as empty while the subprocess's pipes and
+      several timers were live. Not proven. The real worker always holds a referenced IPC socket
+      (bare-sidecar's, on fd 3), which this test does not, so production may or may not show it.
+    - Three earlier "passes" were not: run 2 (0.4 s, exit 0, nothing printed) and runs 7 and 8
+      counted Bare's exit 0 as a pass. The check now passes only on a result that says `ok`.
 
 ## Decision
 
@@ -97,8 +117,12 @@ used? How large is it, how much memory does it use, and does a file need two sto
   (or nfx gains a relay CA option) to cover holepunching between the implementations; on a private
   HTTP relay they are relay-only.
 - Slice 5 takes over the client as built here (`getFile`/`getSeq`/`dialTicket`, bounded
-  buffering, kill and restart on a violation), the helper store as a cache (≈1 MB plus transient
-  fetches), and BARE_DECISION_PLACEHOLDER
+  buffering, kill and restart on a violation) and the helper store as a cache (≈1 MB plus
+  transient fetches). **Before it wires the helper into the worker** it reproduces finding 10 in
+  the real worker (started by bare-sidecar, with its IPC socket) and in a minimal Bare script
+  (`bare-subprocess` ping-pong with `cat`), and takes it upstream if it is Bare's. If the worker
+  cannot hold a long-lived child, the fallback is for the host (Node, which runs this client
+  without fault) to spawn the helper and hand the worker a pipe.
 
 ## Open questions
 
@@ -108,4 +132,4 @@ used? How large is it, how much memory does it use, and does a file need two sto
 - What the helper serves to whom (admission, rate limits), and loopback / link-local direct
   addresses from tickets (spec-level; nfx dials them too): slice 5 with the review notes.
 - A soak, IPv6, and packaging as a `prebuilds/` package (slice 5).
-- BARE_OPEN_PLACEHOLDER
+- Finding 10: why Bare tears down with a live subprocess, and whether the real worker does.

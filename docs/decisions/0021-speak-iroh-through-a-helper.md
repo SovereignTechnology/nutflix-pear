@@ -78,6 +78,12 @@ relay-only. A small Rust program the worker spawns can use n0's crates as they a
   interface to the worker, and the worker trusts nothing it says.
 - **Beacons carry an iroh endpoint** whose `node` is the helper's; without a persistent key it
   changes at every restart, so the beacon publisher (slice 4) re-issues tickets when it does.
+- **Spike S-D (2026-10-29):** both directions against nfxd pass through every cell of S5′'s NAT
+  matrix; the helper is 11.3 MB and uses about 20 MB of memory; its store is a cache (≈ 1 MB, plus
+  what is being fetched until the collector runs). Holepunching needs a relay with QUIC address
+  discovery, which nfxd can use only with a publicly trusted certificate. Driving the helper from
+  Bare through `bare-subprocess` failed (finding 10): slice 5 reproduces that in the real worker
+  before it depends on it, with the host spawning the helper as the fallback.
 - **Not decided here:** an in-process Rust addon (once `bare-rust` is proven), Windows on `pear://`
   (ADR 0017 open question 3), and whether the helper's store is a cache handed off and evicted or
   counted in the disk cap (the spike's finding settles it).
