@@ -29,11 +29,12 @@ supersedes it.
 | [0017](0017-packaging.md)                            | Packaging: Electron Forge, fuses, asar and Nostr-signed releases          | Accepted; shipped as desktop 0.1.0 (.deb and AppImage)    |
 | [0018](0018-one-peer-routing.md)                     | One seeder per block, credit per seeder window                            | Accepted                                                  |
 | [0019](0019-scope-pear-desktop-only.md)              | Scope: Pear/desktop only; the web portal is out                           | Accepted; scope amended by 0020                           |
-| [0020](0020-speak-nfx.md)                            | Speak NFX beside the legacy protocol                                      | Accepted                                                  |
+| [0020](0020-speak-nfx.md)                            | Speak NFX beside the legacy protocol                                      | Accepted; "does not speak iroh" amended by 0021           |
+| [0021](0021-speak-iroh-through-a-helper.md)          | Speak iroh as well, through a thin helper process                         | Accepted                                                  |
 
 ## Numbering
 
-The next free number is **0020**. Numbers **0006** and **0008** are not
+The next free number is **0022**. Numbers **0006** and **0008** are not
 missing: the sibling [nfx](https://github.com/SovereignTechnology/nfx) repository uses them
 ([0006, the standardisation suite](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0006-standardization-suite-nfx.md)
 and

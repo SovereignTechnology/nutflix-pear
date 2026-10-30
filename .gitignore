@@ -57,6 +57,8 @@ htmlcov/
 
 # --- Rust / Go --------------------------------------------------------------
 /target/
+# Each crate under crates/ is its own Cargo workspace (ADR 0021): its build output stays local.
+/crates/*/target/
 *.rs.bk
 vendor/
 # docs/vendor/ holds the pinned upstream specs every lane must read (execution plan §0 rule 6)

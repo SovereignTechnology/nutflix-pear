@@ -17,6 +17,8 @@ export default tseslint.config(
       '.worktrees/**',
       // Deliberately non-compliant inputs for scripts/electron-security-lint.mjs and csp-sri.mjs.
       'scripts/__fixtures__/**',
+      // Cargo build output of the Rust crates (ADR 0021).
+      'crates/**/target/**',
     ],
   },
   js.configs.recommended,
@@ -70,8 +72,37 @@ export default tseslint.config(
     },
   },
   {
-    files: ['eslint.config.js', 'vitest.config.ts', 'scripts/**/*.{js,mjs}'],
+    files: [
+      'eslint.config.js',
+      'vitest.config.ts',
+      'scripts/**/*.{js,mjs}',
+      'spikes/**/*.{js,mjs}',
+    ],
     ...tseslint.configs.disableTypeChecked,
+  },
+  {
+    // Spike harnesses (spikes/, e.g. S-D's iroh helper checks): plain ESM that CI runs under Node
+    // or Bare, never shipped and never imported by a package; they print their results.
+    files: ['spikes/**/*.{js,mjs}'],
+    languageOptions: {
+      globals: {
+        Bare: 'readonly',
+        Buffer: 'readonly',
+        TextDecoder: 'readonly',
+        WebSocket: 'readonly',
+        clearInterval: 'readonly',
+        clearTimeout: 'readonly',
+        console: 'readonly',
+        performance: 'readonly',
+        process: 'readonly',
+        setInterval: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
+    rules: {
+      'no-console': 'off',
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+    },
   },
   {
     // Storybook config + stories (L4/L5): excluded from the package tsconfigs (not emitted to

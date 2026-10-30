@@ -165,3 +165,8 @@ Hashing, signatures, blinding, DLEQ, key derivation and secure memory come from
 `@cashu/cashu-ts`, `sodium-native` / `sodium-universal`, `nostr-tools` and `hypercore`.
 No code in this project, whether a person or an AI model wrote it, implements a cryptographic
 primitive. A contributor who finds that a change needs one stops and opens an issue.
+
+The iroh helper (`crates/iroh-helper/`, ADR 0021) adds n0's `iroh` (QUIC and its TLS) and
+`iroh-blobs` (BLAKE3) as sources, in a separate process. Neither is a trust anchor for content:
+the helper never says bytes are "verified", and every NFX file is checked against its sha256,
+through sodium, in the worker before it is used or stored (NFX-05 §4).

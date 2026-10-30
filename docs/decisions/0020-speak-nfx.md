@@ -6,6 +6,8 @@ Date: 2026-10-21
 
 Accepted (Cameron, 2026-10-19). Amends ADR 0019's scope. The matching record on the nfx side is
 its [ADR 0101](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0101-nutflix-pear-interop.md).
+Amended 2026-10-29 by [ADR 0021](0021-speak-iroh-through-a-helper.md): the app also speaks iroh
+(NFX-06), through a thin helper process, because nfx will not speak HyperDHT.
 
 ## Context
 
@@ -32,7 +34,9 @@ ADR 0019 kept this repository to the Hypercore stack and left the multi-network 
   public key and requests whole files by sha256 over `nfx/files/1`; NFX-07 rides the same
   connection as `nfx/pay/1`. There is no Hypercore or Hyperdrive in that path. The app does not
   speak iroh: it reaches nfx seeders that advertise `hyperdht`, and an nfx seeder that speaks both
-  carries its videos onward to iroh.
+  carries its videos onward to iroh. *(Amended 2026-10-29, ADR 0021: nfx speaks no HyperDHT after
+  its spike S5′, so the app also speaks iroh, NFX-06, through a helper; NFX-12 stays the profile
+  between this app's own peers.)*
 - **NFX files have a store of their own**, keyed by sha256 and counted in the disk cap. They never
   go into the shared `blobs` core, which is priced and joined to the legacy swarm.
 - **Phase 1 is free videos only.** Only videos their creator marks free are published to NFX, so

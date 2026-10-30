@@ -1,0 +1,304 @@
+# Spike S-D (ADR 0021; nfx ADR 0103 §3 step 1): the thin Rust iroh helper on linux-x64, both
+# directions against nfxd over iroh-blobs (NFX-06), through S5′'s NAT matrix, with its size and
+# memory measured. Record: docs/spikes/S-D-iroh-helper.md. Nothing in the app runs the helper.
+#
+# Supply-chain policy as ci.yml (threat T12): first-party actions pinned by commit SHA, every
+# download checked against a pinned sha256, Cargo.lock honoured (--locked), least-privilege
+# token. nfx is checked out read-only at a pinned commit and only built here.
+#
+# The checks (helper fmt/clippy/tests, cargo deny, the Bare smoke run, the NAT matrix) each
+# record an outcome and do not stop the others; the `verdict` job fails the run if any judged
+# one failed. Runs on pull requests that touch the spike, and by hand; never on a push to main.
+name: spike-iroh
+
+on:
+  pull_request:
+    paths:
+      - 'crates/iroh-helper/**'
+      - 'spikes/iroh/**'
+      - 'packages/app-desktop/src/worker/iroh/**'
+      - '.github/workflows/spike-iroh.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-iroh-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: '1.98.0'
+  CARGO_DENY_VERSION: '0.20.2'
+  CARGO_DENY_SHA256: '9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f'
+  # The nfx commit whose nfxd the helper is judged against (ADR 0103 accepted there).
+  NFX_SHA: '29019d250b59268c61fb569aafffa984389abf93'
+  IROH_RELAY_VERSION: '1.2.0'
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+  NODE_OPTIONS: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      fmt: ${{ steps.fmt.outcome }}
+      clippy: ${{ steps.clippy.outcome }}
+      test: ${{ steps.test.outcome }}
+      deny: ${{ steps.deny.outcome }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: SovereignTechnology/nfx
+          ref: ${{ env.NFX_SHA }}
+          path: nfx
+          persist-credentials: false
+      - name: toolchain and cargo-deny (each download checked against its pinned sha256)
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
+          curl -sSfLo /tmp/deny.tgz "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${CARGO_DENY_SHA256}  /tmp/deny.tgz" | sha256sum -c -
+          tar -xzf /tmp/deny.tgz -C /tmp
+          sudo install -m 0755 "/tmp/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny" /usr/local/bin/
+          mkdir -p bins results
+      - name: cache (cargo registry, nfx and iroh-relay builds)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            crates/iroh-helper/target
+            nfx/crates/target
+            ${{ runner.temp }}/iroh-relay
+          key: spike-iroh-${{ env.RUST_VERSION }}-${{ env.NFX_SHA }}-relay-${{ env.IROH_RELAY_VERSION }}-${{ hashFiles('crates/iroh-helper/Cargo.lock') }}
+          restore-keys: |
+            spike-iroh-${{ env.RUST_VERSION }}-${{ env.NFX_SHA }}-relay-${{ env.IROH_RELAY_VERSION }}-
+      - name: helper — fmt
+        id: fmt
+        continue-on-error: true
+        working-directory: crates/iroh-helper
+        run: cargo fmt --check
+      - name: helper — clippy
+        id: clippy
+        continue-on-error: true
+        working-directory: crates/iroh-helper
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: helper — unit tests
+        id: test
+        continue-on-error: true
+        working-directory: crates/iroh-helper
+        run: cargo test --locked
+      - name: helper — cargo deny (RustSec, licences, sources)
+        id: deny
+        continue-on-error: true
+        working-directory: crates/iroh-helper
+        run: |
+          set -o pipefail
+          cargo deny check 2>&1 | tee ../../results/deny.txt
+      - name: helper — release builds and their sizes
+        working-directory: crates/iroh-helper
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          cargo build --profile release-small --locked
+          install -m 0755 target/release/nutflix-iroh-helper ../../bins/
+          release=$(stat -c %s target/release/nutflix-iroh-helper)
+          small=$(stat -c %s target/release-small/nutflix-iroh-helper)
+          gz=$(gzip -9c target/release/nutflix-iroh-helper | wc -c)
+          crates=$(grep -c '^name = ' Cargo.lock)
+          printf '{"release_bytes":%s,"release_small_bytes":%s,"release_gzip_bytes":%s,"lock_crates":%s}\n' \
+            "$release" "$small" "$gz" "$crates" | tee ../../results/size.json
+          file target/release/nutflix-iroh-helper | tee -a ../../results/size.txt
+          ldd target/release/nutflix-iroh-helper | tee -a ../../results/size.txt || true
+      - name: nfxd and nfx-package (nfx at the pinned commit)
+        working-directory: nfx/crates
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_VERSION" build --release --locked -p nfxd -p nfx-media --bins
+          install -m 0755 target/release/nfxd target/release/nfx-package ../../bins/
+          stat -c '%n %s' target/release/nfxd | tee -a ../../results/size.txt
+      - name: iroh-relay (the stock binary, from its published Cargo.lock)
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/iroh-relay"
+          [ -x "$root/bin/iroh-relay" ] || cargo "+$RUST_VERSION" install "iroh-relay@${IROH_RELAY_VERSION}" --locked --features server --root "$root"
+          install -m 0755 "$root/bin/iroh-relay" bins/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-iroh-bins
+          path: bins/
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: spike-iroh-build-results
+          path: results/
+          retention-days: 30
+
+  matrix:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      bare: ${{ steps.bare.outcome }}
+      nat: ${{ steps.nat.outcome }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: system packages (ffmpeg for nfx-package, nftables for the routers)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          command -v nft >/dev/null || sudo apt-get install -y -qq nftables
+      - run: npm ci --ignore-scripts
+      # The harness imports the built packages (core, seeder) and the worker's helper client.
+      - run: npm run build
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: spike-iroh-bins
+          path: bins
+      - name: binaries (artifacts drop the executable bit)
+        run: chmod 0755 bins/* && ls -l bins && mkdir -p results
+      - name: the helper under the real Bare runtime (bare-subprocess, stdin pipe)
+        id: bare
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          dir=node_modules/.cache/spike-iroh-bare
+          mkdir -p "$dir"
+          cp spikes/iroh/bare-boot.mjs "$dir/boot.mjs"
+          node_modules/.bin/esbuild spikes/iroh/bare-smoke.mjs --bundle --packages=external \
+            --format=esm --platform=neutral --target=es2022 --outfile="$dir/smoke.mjs" --log-level=warning
+          bare=node_modules/bare-sidecar/prebuilds/linux-x64/bare
+          [ -x "$bare" ] || chmod 0755 "$bare"
+          work=$(mktemp -d)
+          head -c 307200 /dev/urandom > "$work/file.bin"
+          sha=$(sha256sum "$work/file.bin" | cut -d' ' -f1)
+          # Three runs (spike S-D: the event loop stalled under Bare in runs 3-6): as shipped, with
+          # a process-state sample after 10 s; with libuv's io_uring off (Node's default since
+          # 20.3); and as shipped under strace. The check passes on the first run, or on the second
+          # with that setting recorded as a finding.
+          smoke() { # tag, then any prefix command
+            local tag=$1 pid status p
+            shift
+            set +e
+            NUTFLIX_IROH_HELPER_TRACE=1 timeout -k 5 40 "$@" "$bare" "$dir/boot.mjs" \
+              "$PWD/bins/nutflix-iroh-helper" "$work/$tag" "$work/file.bin" "$sha" \
+              "$PWD/results/bare-$tag.json" > "results/bare-$tag.out" 2> "results/bare-$tag.err" &
+            pid=$!
+            sleep 10
+            ps -eo pid,ppid,pgid,stat,wchan:32,pcpu,etimes,args | grep -E '[p]rebuilds/linux-x64/bare|[n]utflix-iroh-helper' > "results/bare-$tag.ps"
+            for p in $(pgrep -f '[n]utflix-iroh-helper|[p]rebuilds/linux-x64/bare'); do
+              echo "== $p"; grep -E '^(State|Threads|SigPnd|ShdPnd|SigBlk|SigIgn)' "/proc/$p/status"
+            done >> "results/bare-$tag.ps" 2>/dev/null
+            wait "$pid"
+            status=$?
+            set -e
+            for f in "bare-$tag.json" "bare-$tag.json.progress" "bare-$tag.ps" "bare-$tag.err"; do
+              echo "--- $f"; head -c 4000 "results/$f" 2>/dev/null || echo "(none)"
+            done
+            echo "bare ($tag) exited $status"
+            return "$status"
+          }
+          sudo apt-get install -y -qq strace >/dev/null
+          shipped=0; uring_off=0; traced=0
+          smoke shipped || shipped=$?
+          smoke uring-off env UV_USE_IO_URING=0 || uring_off=$?
+          # Who closes the event loop's epoll fd (run 7: a thread spun on epoll_pwait(3) = EBADF):
+          # every close/dup/epoll_create/clone/exec, kept from the start.
+          smoke traced strace -f -tt -o results/bare-strace.txt \
+            -e trace=close,close_range,dup2,dup3,epoll_create1,clone,clone3,vfork,execve,exit_group,kill,tgkill || traced=$?
+          [ -f results/bare-strace.txt ] && { head -c 3000000 results/bare-strace.txt > results/bare-strace.head; rm results/bare-strace.txt; }
+          # A pass is a result file saying ok: Bare also exits 0 when it tears down mid-run (runs 7
+          # and 8 counted that as a pass; it is not one).
+          ok_of() { python3 -c 'import json,sys; print("yes" if json.load(open(sys.argv[1])).get("ok") is True else "no")' "$1" 2>/dev/null || echo no; }
+          s=$(ok_of results/bare-shipped.json); u=$(ok_of results/bare-uring-off.json)
+          echo "shipped=$shipped/$s uring_off=$uring_off/$u traced=$traced" | tee results/bare-outcomes.txt
+          [ "$s" = yes ] || [ "$u" = yes ]
+      - name: NAT matrix (root, network namespaces)
+        id: nat
+        continue-on-error: true
+        run: |
+          sudo env "PATH=$PATH" OUT="$PWD/results" WORK="$RUNNER_TEMP/spike-iroh" \
+            HELPER="$PWD/bins/nutflix-iroh-helper" NFXD="$PWD/bins/nfxd" \
+            NFX_PACKAGE="$PWD/bins/nfx-package" IROH_RELAY="$PWD/bins/iroh-relay" \
+            ./spikes/iroh/nat/run.sh
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: always()
+        with:
+          name: spike-iroh-build-results
+          path: results/build
+      - name: summary
+        if: always()
+        env:
+          BARE: ${{ steps.bare.outcome }}
+          NAT: ${{ steps.nat.outcome }}
+          FMT: ${{ needs.build.outputs.fmt }}
+          CLIPPY: ${{ needs.build.outputs.clippy }}
+          TEST: ${{ needs.build.outputs.test }}
+          DENY: ${{ needs.build.outputs.deny }}
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" results
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          e = os.environ
+          print("## Spike S-D: the iroh helper")
+          print(f"fmt {e['FMT']} · clippy {e['CLIPPY']} · tests {e['TEST']} · cargo deny {e['DENY']} · Bare {e['BARE']} · NAT matrix {e['NAT']}")
+          try:
+              print(f"\nBare runs (exit/ok): `{open('results/bare-outcomes.txt').read().strip()}`")
+          except FileNotFoundError:
+              pass
+          try:
+              s = json.load(open("results/build/size.json"))
+              print(f"\nhelper: release {s['release_bytes']:,} B · release-small {s['release_small_bytes']:,} B · gzip -9 {s['release_gzip_bytes']:,} B · {s['lock_crates']} crates in the lock")
+          except Exception as x:
+              print(f"\nsizes: unavailable ({x})")
+          print("\n| check | passed | path | direct B | relayed B | Mbit/s | wall ms | detail |")
+          print("|---|---|---|---|---|---|---|---|")
+          try:
+              for line in open("results/nat.jsonl"):
+                  d = json.loads(line)
+                  if "passed" not in d:
+                      continue
+                  keep = {k: d[k] for k in ("error", "what", "server_ready", "server_rss_kib", "client_rss_kib", "helper_rss_kib", "helper_store_bytes_after_fetch") if k in d}
+                  print(f"| {d['check']} | {'✓' if d['passed'] else '✗'}{'' if d['judged'] else ' (info)'} | {d.get('path')} | {d.get('direct_bytes')} | {d.get('relayed_bytes')} | {d.get('mbit_s', '')} | {d.get('wall_ms', '')} | `{json.dumps(keep)}` |")
+          except FileNotFoundError:
+              print("| (no NAT results) | | | | | | | |")
+          EOF
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: spike-iroh-results
+          path: results/
+          retention-days: 30
+
+  verdict:
+    needs: [build, matrix]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: every judged check passed
+        env:
+          OUTCOMES: >-
+            fmt=${{ needs.build.outputs.fmt }} clippy=${{ needs.build.outputs.clippy }}
+            test=${{ needs.build.outputs.test }} deny=${{ needs.build.outputs.deny }}
+            bare=${{ needs.matrix.outputs.bare }} nat=${{ needs.matrix.outputs.nat }}
+        run: |
+          echo "$OUTCOMES"
+          for kv in $OUTCOMES; do [ "${kv#*=}" = success ] || { echo "not passed: $kv"; exit 1; }; done
