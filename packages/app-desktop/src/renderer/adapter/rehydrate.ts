@@ -18,7 +18,12 @@ import type { IpcError } from '../../ipc/errors.js';
 import { INTERNAL_MESSAGE, fromWireError } from '../../ipc/errors.js';
 import { isErrorCode } from '../../ipc/guards.js';
 import { rehydrate } from '../../ipc/wiremap.js';
-import type { BridgePlaySession, BridgeUploadInput, NutflixBridge } from '../bridge-types.js';
+import type {
+  BridgeNfxPlaySession,
+  BridgePlaySession,
+  BridgeUploadInput,
+  NutflixBridge,
+} from '../bridge-types.js';
 
 const PREFIX = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*):/;
 
@@ -141,6 +146,18 @@ export function adapterFromBridge(b: NutflixBridge): NetworkAdapter {
           rendition === undefined ? b.play(id) : b.play(id, rendition),
         ),
       ),
+    playNfx: async (addr, rendition) => {
+      const s = await settle<BridgeNfxPlaySession>(
+        rendition === undefined ? b.playNfx(addr) : b.playNfx(addr, rendition),
+      );
+      return {
+        videoId: s.videoId,
+        rendition: s.rendition,
+        renditions: s.renditions,
+        source: { kind: 'url', url: s.source.url },
+        close: () => settle<undefined>(s.close()),
+      };
+    },
     image: (url, sha) => settle(sha === undefined ? b.image(url) : b.image(url, sha)),
     wallet,
     studio: {

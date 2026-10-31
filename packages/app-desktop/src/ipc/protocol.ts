@@ -27,6 +27,7 @@ import type {
   NetworkAdapter,
   NfxAddress,
   NfxNetwork,
+  NfxRenditionInfo,
   NfxVideo,
   Notification,
   NostrEventId,
@@ -201,6 +202,18 @@ export interface PlaySessionWire {
   readonly rendition: string;
   readonly source: { readonly kind: 'url'; readonly url: NfMediaPlayUrl };
   readonly policy: PricePolicy;
+}
+
+/**
+ * Contracts v11: a free NFX session as it crosses. `close()` is `session.close` by `sid`; nothing
+ * else is on it (no money, no peers).
+ */
+export interface NfxPlaySessionWire {
+  readonly sid: SessionId;
+  readonly videoId: NfxAddress;
+  readonly rendition: string;
+  readonly renditions: readonly NfxRenditionInfo[];
+  readonly source: { readonly kind: 'url'; readonly url: NfMediaPlayUrl };
 }
 
 /** Custom thumbnail as it crosses the bridge: the preload reads the renderer's Blob. */
@@ -582,6 +595,8 @@ export interface MethodTable {
   'library.liked': [args: [], result: readonly VideoManifest[]];
   // playback
   play: [args: [videoId: NostrEventId, rendition?: string | undefined], result: PlaySessionWire];
+  /** Contracts v11 (ADR 0020 slice 5d): a free NFX session; closed with `session.close`. */
+  playNfx: [args: [addr: NfxAddress, rendition?: string | undefined], result: NfxPlaySessionWire];
   image: [
     args: [url: string, sha256?: Sha256Hex | undefined, size?: number | undefined],
     result: NfMediaImgUrl,
@@ -946,11 +961,16 @@ export type Rehydrated<T> =
           : T;
 
 type AdapterArgChecked = Extract<Exclude<Method, ShellMethod | 'studio.upload'>, AdapterMethod>;
-type AdapterResultChecked = Extract<Exclude<Method, ShellMethod | 'play' | 'image'>, AdapterMethod>;
+type AdapterResultChecked = Extract<
+  Exclude<Method, ShellMethod | 'play' | 'playNfx' | 'image'>,
+  AdapterMethod
+>;
 type CallbackArg<M extends TopicMethod> =
   AdapterFn<M> extends (cb: (x: infer X) => void) => unknown ? X : never;
 type PlaySession = ContractResult<'play'>;
 type PlayData = 'videoId' | 'rendition' | 'policy';
+type NfxPlaySession = ContractResult<'playNfx'>;
+type NfxPlayData = 'videoId' | 'rendition' | 'renditions';
 type SessionWireMethod =
   Extract<Method, `session.${string}`> extends `session.${infer K}` ? K : never;
 
@@ -964,6 +984,11 @@ interface Checks {
   playKeys: IsNever<Exclude<NonMethodKeys<PlaySession>, keyof PlaySessionWire>>;
   playData: Mutual<Pick<PlaySessionWire, PlayData>, Pick<PlaySession, PlayData>>;
   playSource: PlaySessionWire['source'] extends PlaySession['source'] ? true : false;
+  /** Contracts v11: the same for a free NFX session; its one method is `session.close`. */
+  nfxPlayKeys: IsNever<Exclude<NonMethodKeys<NfxPlaySession>, keyof NfxPlaySessionWire>>;
+  nfxPlayData: Mutual<Pick<NfxPlaySessionWire, NfxPlayData>, Pick<NfxPlaySession, NfxPlayData>>;
+  nfxPlaySource: NfxPlaySessionWire['source'] extends NfxPlaySession['source'] ? true : false;
+  nfxSessionMethods: IsNever<Exclude<MethodKeys<NfxPlaySession>, SessionWireMethod>>;
   /** PlaySession's methods are all on the wire, as `session.*` or as a topic. */
   sessionMethods: IsNever<
     Exclude<MethodKeys<PlaySession>, SessionWireMethod | 'onPeers' | 'onSpend'>

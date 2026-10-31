@@ -123,6 +123,28 @@ export interface PlaySession {
   close(): Promise<void>;
 }
 
+/** v11 (ADR 0020 slice 5d): one rendition of an NFX video, as its hash list lists it. */
+export interface NfxRenditionInfo {
+  readonly id: string;
+  /** Bits per second, from the hash list. */
+  readonly bandwidth: number;
+  /** `<width>x<height>`, when listed. */
+  readonly resolution?: string;
+}
+
+/**
+ * v11 (ADR 0020 slice 5d): a free NFX play session. Nothing is paid, so it carries no price,
+ * spend or peers, and nothing on it reaches the money plane. Switching rendition is closing it
+ * and opening another.
+ */
+export interface NfxPlaySession {
+  readonly videoId: NfxAddress;
+  readonly rendition: string;
+  readonly renditions: readonly NfxRenditionInfo[];
+  readonly source: PlaySource;
+  close(): Promise<void>;
+}
+
 export interface PeerSpend {
   readonly pubkey: NostrPubkey;
   readonly sats: Sats;
@@ -284,6 +306,11 @@ export interface NetworkAdapter {
   video(id: NostrEventId): Promise<VideoManifest | null>;
   /** v9 (ADR 0020): the current revision of an NFX manifest, unless deleted or not free. */
   nfxVideo(addr: NfxAddress): Promise<NfxVideo | null>;
+  /**
+   * v11 (ADR 0020 slice 5d): play a free NFX video from the seeders its beacons name, every file
+   * checked against the hash list. `rendition` is a hash-list rendition id (default: the best).
+   */
+  playNfx(addr: NfxAddress, rendition?: string): Promise<NfxPlaySession>;
   stats(id: NostrEventId): Promise<VideoStats>;
   related(id: NostrEventId, limit?: number): Promise<readonly VideoManifest[]>;
   search(q: {

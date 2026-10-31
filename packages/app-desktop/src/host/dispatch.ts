@@ -55,6 +55,8 @@ export function handlers(a: DesktopNetworkAdapter): HandlerTable {
     'library.savePlaylist': (_c, [p]) => a.library.savePlaylist(p),
     'library.liked': () => a.library.liked(),
     play: async (c, [id, rendition]) => (await a.openSession(c.wc, id, rendition)).toWire(),
+    playNfx: async (c, [addr, rendition]) =>
+      (await a.openNfxSession(c.wc, addr, rendition)).toWire(),
     image: (_c, [url, sha, size]) => a.image(url, sha, size),
     'session.pause': (c, [sid]) => session(c, sid).pauseAsync(),
     'session.resume': (c, [sid]) => session(c, sid).resumeAsync(),
@@ -64,6 +66,8 @@ export function handlers(a: DesktopNetworkAdapter): HandlerTable {
     // Idempotent: closing an unknown/closed/foreign sid is a no-op, never another wc's session.
     'session.close': async (c, [sid]) => {
       await a.sessions.get(c.wc, sid)?.closeAsync();
+      // Contracts v11: an NFX session closes the same way (one sid space).
+      await a.closeNfxSession(c.wc, sid);
     },
     'wallet.mints': () => a.wallet.mints(),
     'wallet.balance': (_c, [mint]) => a.wallet.balance(mint),
