@@ -9,6 +9,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- Contracts version 9: an NFX video's identity (ADR 0020). `NfxAddress` (`38504:<author>:<d>`)
+  names an NFX manifest across its revisions. `NfxVideo` is a free kind-38504 manifest for
+  listing, with no price and no Hyperblob renditions. `feed` and `search` return `CatalogVideo`,
+  either kind of video, and a new `nfxVideo(addr)` fetches one by address. The screens narrow on
+  `kind`, so an NFX video never reaches the player, the price panel, zaps, reactions, comments or
+  the library. Its card says "Free" and offers no preview. Its page, `NfxWatch`, says it cannot
+  play yet. Nothing lists NFX videos yet: the catalog source is slice 4b-2, and stays off until
+  an NFX network is chosen.
 - A free upload packaged for NFX is announced with its kind-38504 manifest (NFX-02). The creator
   signs it with the same signer as the legacy event, and it goes to the write relays and the NFX
   network's scoped relays. It carries the hash list's `root`, the thumbnail, and an `e` tag back

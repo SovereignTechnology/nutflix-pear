@@ -59,6 +59,7 @@ export interface NutflixBridge {
   setProfilePicture: Call<'setProfilePicture'>;
   feed: Call<'feed'>;
   video: Call<'video'>;
+  nfxVideo: Call<'nfxVideo'>;
   stats: Call<'stats'>;
   related: Call<'related'>;
   search: Call<'search'>;

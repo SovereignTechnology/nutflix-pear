@@ -19,6 +19,7 @@ import type {
   MeltQuote,
   MintQuote,
   MintUrl,
+  NfxAddress,
   NostrEvent,
   NostrEventId,
   NostrPubkey,
@@ -257,6 +258,22 @@ export const isCoreKey = branded<CoreKeyHex>(isHex64);
 export const isCashuP2pk = branded<CashuP2pkPubkey>(matches(/^0[23][0-9a-f]{64}$/, 66));
 export const isSessionId = safe(branded<SessionId>(matches(HEX32, 32)));
 export const isUploadId = safe(branded<UploadId>(matches(HEX32, 32)));
+/**
+ * Contracts v9: an NFX manifest address, `38504:<author>:nfx:<network>:<specver>:<video-id>`
+ * (NFX-01 §2, NFX-02 §2), canonical: lower-case, `specver` a u64 without leading zeros. The
+ * grammar of core's `nfx.parseATag`, written out here because `src/ipc` may not load core at
+ * runtime; `guards.test.ts` holds the two together.
+ */
+const NFX_ADDRESS =
+  /^38504:[0-9a-f]{64}:nfx:[a-z0-9-]{2,32}:(0|[1-9][0-9]{0,19}):[a-z0-9][a-z0-9-]{6,62}$/;
+/** `38504:` + 64 + `:nfx:` + 32 + `:` + 20 + `:` + 63. */
+export const MAX_NFX_ADDRESS = 192;
+const U64_MAX = 0xffff_ffff_ffff_ffffn;
+export const isNfxAddress: Guard<NfxAddress> = safe((x): x is NfxAddress => {
+  if (typeof x !== 'string' || x.length > MAX_NFX_ADDRESS) return false;
+  const specver = NFX_ADDRESS.exec(x)?.[1];
+  return specver !== undefined && BigInt(specver) <= U64_MAX;
+});
 export const isFileToken = safe(
   matches(/^nf-file:[0-9a-f]{32}$/, 40) as Guard<FileToken>,
 ) satisfies Guard<FileToken>;
@@ -470,6 +487,7 @@ export const validateArgs: { readonly [M in Method]: Guard<MethodTable[M][0]> } 
   setProfilePicture: tuple([isThumbnailBytes]),
   feed: tuple([isFeedQuery]),
   video: tuple([isEventId]),
+  nfxVideo: tuple([isNfxAddress]),
   stats: tuple([isEventId]),
   related: tuple([isEventId], [isPageLimit]),
   search: tuple([isSearchQuery]),

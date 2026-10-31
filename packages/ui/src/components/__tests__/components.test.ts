@@ -203,6 +203,23 @@ describe('VideoCard', () => {
     r.unmount();
   });
 
+  it('contracts v9: an NFX video is free, has no price, no thumbnail fetch and no play affordance', () => {
+    const nfx = mocks.NFX_VIDEOS[0]!;
+    const onOpen = vi.fn();
+    const r = render(el({ video: nfx, thumbnailSrc: undefined, stats: undefined, onOpen }));
+    expect(r.get('.nf-card__title').textContent).toBe(nfx.title);
+    expect(r.get('.nf-card__free').textContent).toBe('Free');
+    expect(r.get('.nf-card__thumb').getAttribute('aria-label')).toBe(`${nfx.title}, free`);
+    expect(r.container.querySelector('.nf-card__price')).toBeNull();
+    expect(r.container.querySelector('.nf-card__placeholder')).toBeNull();
+    expect(r.container.querySelector('.nf-card__img')).toBeNull();
+    expect(r.container.querySelector('.nf-card__hover')).toBeNull();
+    expect(r.get('.nf-card__duration').textContent).toBe(formatDuration(nfx.durationSec ?? 0));
+    click(r.get('.nf-card__thumb'));
+    expect(onOpen).toHaveBeenCalledWith(nfx);
+    r.unmount();
+  });
+
   it('progress bar, list layout, hidden channel row, and the skeleton', () => {
     const r = render(el({ progress: 0.5, layout: 'list', hideChannel: true }));
     expect(Number.parseFloat(r.get('.nf-card__progress-bar').style.width)).toBeCloseTo(50);
@@ -665,5 +682,25 @@ describe('Toast', () => {
     click(r.get('.nf-toast__action'));
     expect(onClick).toHaveBeenCalled();
     r.unmount();
+  });
+});
+
+describe('catalog narrowing (contracts v9)', () => {
+  const nip71 = mocks.VIDEOS[0]!;
+  const nfx = mocks.NFX_VIDEOS[0]!;
+
+  it('tells an NFX video and address from a NIP-71 one', () => {
+    expect(components.isNfxVideo(nfx)).toBe(true);
+    expect(components.isNfxVideo(nip71)).toBe(false);
+    expect(components.isNip71Video(nip71)).toBe(true);
+    expect(components.isNip71Video(nfx)).toBe(false);
+    expect(components.isNfxAddress(nfx.id)).toBe(true);
+    expect(components.isNfxAddress(nip71.id)).toBe(false);
+  });
+
+  it('nip71Only keeps the NIP-71 videos in order', () => {
+    const v1 = mocks.VIDEOS[1]!;
+    expect(components.nip71Only([nip71, nfx, v1])).toEqual([nip71, v1]);
+    expect(components.nip71Only([nfx])).toEqual([]);
   });
 });

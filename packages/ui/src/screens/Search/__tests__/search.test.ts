@@ -7,7 +7,7 @@
 import { act, createElement, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
-import type { NetworkAdapter, Page, VideoManifest } from '@sovit/core';
+import type { CatalogVideo, NetworkAdapter, Page, VideoManifest } from '@sovit/core';
 import { click, keydown, render, type Rendered } from '../../../components/testing/render.js';
 import type { Route } from '../../shared/route.js';
 import {
@@ -82,7 +82,7 @@ function adapterWith(opts: Opts = {}): mocks.MockNetworkAdapter {
 
 function withSearch(
   base: NetworkAdapter,
-  search: (q: SearchQuery) => Promise<Page<VideoManifest>>,
+  search: (q: SearchQuery) => Promise<Page<CatalogVideo>>,
 ): NetworkAdapter {
   return new Proxy(base, {
     get(target, prop, receiver): unknown {
@@ -243,10 +243,10 @@ describe('Search — debounce, staleness and the adapter contract', () => {
   });
 
   it('a slow answer to an OLDER query never overwrites the newer query’s results', async () => {
-    const pending = new Map<string, Deferred<Page<VideoManifest>>>();
+    const pending = new Map<string, Deferred<Page<CatalogVideo>>>();
     const base = adapterWith();
     const adapter = withSearch(base, (q) => {
-      const d = deferred<Page<VideoManifest>>();
+      const d = deferred<Page<CatalogVideo>>();
       pending.set(q.text, d);
       return d.promise;
     });
@@ -267,10 +267,10 @@ describe('Search — debounce, staleness and the adapter contract', () => {
   });
 
   it('a stale failure for an older query does not replace newer results with an error', async () => {
-    const pending = new Map<string, Deferred<Page<VideoManifest>>>();
+    const pending = new Map<string, Deferred<Page<CatalogVideo>>>();
     const base = adapterWith();
     const adapter = withSearch(base, (q) => {
-      const d = deferred<Page<VideoManifest>>();
+      const d = deferred<Page<CatalogVideo>>();
       pending.set(q.text, d);
       return d.promise;
     });
@@ -287,10 +287,10 @@ describe('Search — debounce, staleness and the adapter contract', () => {
   it('a next page of an older query is dropped, even while the newer query loads its own', async () => {
     const first: Record<string, VideoManifest> = { a: VIDEOS[0]!, b: VIDEOS[2]! };
     const second: Record<string, VideoManifest> = { a: VIDEOS[3]!, b: VIDEOS[6]! };
-    const page2 = new Map<string, Deferred<Page<VideoManifest>>>();
+    const page2 = new Map<string, Deferred<Page<CatalogVideo>>>();
     const adapter = withSearch(adapterWith(), (q) => {
       if (q.cursor === undefined) return Promise.resolve({ items: [first[q.text]!], next: 'p2' });
-      const d = deferred<Page<VideoManifest>>();
+      const d = deferred<Page<CatalogVideo>>();
       page2.set(q.text, d);
       return d.promise;
     });
@@ -342,7 +342,9 @@ describe('Search — result rows and price-before-play', () => {
     const image = vi.spyOn(adapter, 'image');
     const { r } = mount(adapter, { q: 'space' });
     await flush();
-    const expected = (await adapter.search({ text: 'space' })).items.filter((v) => v.kind === 21);
+    const expected = (await adapter.search({ text: 'space' })).items.filter(
+      (v): v is VideoManifest => v.kind === 21,
+    );
     const rows = r.all('.nf-search__item');
     expect(rows).toHaveLength(expected.length);
     const first = expected[0]!;
@@ -692,7 +694,7 @@ describe('Search — pagination', () => {
   it('pages reuse the first page’s request (same `since`) even after `now` moves', async () => {
     const base = adapterWith();
     const video = VIDEOS.find((v) => v.kind === 21)!;
-    const search = vi.fn((q: SearchQuery): Promise<Page<VideoManifest>> =>
+    const search = vi.fn((q: SearchQuery): Promise<Page<CatalogVideo>> =>
       Promise.resolve(q.cursor === undefined ? { items: [video], next: 'p2' } : { items: [] }),
     );
     const adapter = withSearch(base, search);

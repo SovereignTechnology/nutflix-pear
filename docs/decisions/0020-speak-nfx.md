@@ -9,7 +9,8 @@ its [ADR 0101](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisio
 Amended 2026-10-29 by [ADR 0021](0021-speak-iroh-through-a-helper.md): the app also speaks iroh
 (NFX-06), through a thin helper process, because nfx will not speak HyperDHT. Amended 2026-10-30
 (Phase 1 slice 4a): the identity change is contracts version 9; a manifest links back to its legacy
-event with an `e` tag; the beacon publisher and its seeder key live in the host.
+event with an `e` tag; the beacon publisher and its seeder key live in the host. Amended 2026-10-31
+(Phase 1 slice 4b): how NFX videos are listed, below.
 
 ## Context
 
@@ -70,3 +71,36 @@ ADR 0019 kept this repository to the Hypercore stack and left the multi-network 
   network's scoped relays.
 - A video published both ways is stored twice, in two containers.
 - The README's "How it works" describes the legacy protocol; NFX is added to it as it ships.
+
+## Amendment 2026-10-31: listing NFX videos (slice 4b)
+
+Cameron delegated these choices to "the best options for the core values of the project, a p2p
+video streaming platform": interop on open standards, honesty about what plays, and users'
+data surviving.
+
+1. **A union, not optional fields.** `VideoManifest` stays the NIP-71 type. `NfxVideo` and
+   `CatalogVideo = VideoManifest | NfxVideo` are used only where NFX videos can appear: `feed`
+   and `search`. The compiler then finds every consumer, so an NFX video cannot reach pricing,
+   payment or the player by accident.
+2. **The identity is the NIP-01 address** `38504:<author>:<d>`. It is stable across revisions
+   and is the coordinate other Nostr clients use. It has a method of its own, `nfxVideo(addr)`.
+   Comments, reactions, zaps, reports and library sets stay keyed by event id until NFX play.
+   They need `a`/`A` tags, and builds before that change drop `a` items from NIP-51 sets on read
+   and erase them on the next save, so that change needs its own upgrade path.
+3. **Phase 1 lists free NFX videos only:** `license open`, with `price_hint` absent or `0`.
+   This app cannot pay on NFX yet, so a priced video would be listed and unplayable.
+4. **Twins:** when a manifest's `e` names a NIP-71 event by the same author, the NIP-71 entry
+   is shown and the NFX one dropped, because the NIP-71 one plays today. A link to another
+   author's event is ignored.
+5. **Dormant until a network is chosen.** The NFX catalog source runs only when the host is
+   given a namespace. Today's NFX videos are on `nfx:testnet:1` and none can play before slice
+   5, so production lists none.
+6. **Merged feeds:** subscriptions, tags, author and search. Trending ranks by nutzaps, which
+   NFX has none of; shorts has no NFX kind; related, notifications and Studio stay NIP-71.
+7. **No new image fetches.** An NFX thumbnail is a file in the NFX store, reachable once a
+   transport is (slice 5); until then the card shows its placeholder, and nothing is fetched
+   by URL.
+
+Readers follow NFX-02 §4 (the current revision; one more than 15 minutes ahead is ignored),
+NFX-02 §6 (a valid deletion by the author withdraws the manifest), and NFX-04 §4 (public relays
+first, scoped relays as the fallback).

@@ -34,6 +34,7 @@ export function handlers(a: DesktopNetworkAdapter): HandlerTable {
     setProfilePicture: (_c, [image]) => a.setProfilePicture(image),
     feed: (_c, [q]) => a.feed(q),
     video: (_c, [id]) => a.video(id),
+    nfxVideo: (_c, [addr]) => a.nfxVideo(addr),
     stats: (_c, [id]) => a.stats(id),
     related: (_c, [id, limit]) => a.related(id, limit),
     search: (_c, [q]) => a.search(q),

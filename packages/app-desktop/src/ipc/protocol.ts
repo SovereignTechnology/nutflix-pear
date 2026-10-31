@@ -17,12 +17,15 @@
 import type {
   AUTO_TOP_UP_MAX_SATS,
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
+  CatalogVideo,
   Comment,
   FeedQuery,
   MeltQuote,
   MintQuote,
   MintUrl,
   NetworkAdapter,
+  NfxAddress,
+  NfxVideo,
   Notification,
   NostrEventId,
   NostrPubkey,
@@ -536,11 +539,13 @@ export interface MethodTable {
     result: Profile,
   ];
   // catalog
-  feed: [args: [q: FeedQuery], result: Page<VideoManifest>];
+  feed: [args: [q: FeedQuery], result: Page<CatalogVideo>];
   video: [args: [id: NostrEventId], result: VideoManifest | null];
+  /** Contracts v9 (ADR 0020): an NFX manifest by its address. */
+  nfxVideo: [args: [addr: NfxAddress], result: NfxVideo | null];
   stats: [args: [id: NostrEventId], result: VideoStats];
   related: [args: [id: NostrEventId, limit?: number | undefined], result: readonly VideoManifest[]];
-  search: [args: [q: SearchQuery], result: Page<VideoManifest>];
+  search: [args: [q: SearchQuery], result: Page<CatalogVideo>];
   // social
   comments: [
     args: [videoId: NostrEventId, sort: 'new' | 'top', cursor?: string | undefined],

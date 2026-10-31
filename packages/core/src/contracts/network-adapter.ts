@@ -1,8 +1,9 @@
-import type { VideoManifest, PricePolicy } from './manifest.js';
+import type { CatalogVideo, NfxVideo, PricePolicy, VideoManifest } from './manifest.js';
 import type { NostrEvent, Profile, RelayConfig } from './nostr.js';
 import type { PeerWindow } from './payment.js';
 import type {
   MintUrl,
+  NfxAddress,
   NostrEventId,
   NostrPubkey,
   Sats,
@@ -249,15 +250,18 @@ export interface NetworkAdapter {
   setProfilePicture(image: { readonly bytes: Uint8Array; readonly type: string }): Promise<Profile>;
 
   // ---- catalog -------------------------------------------------------------------
-  feed(q: FeedQuery): Promise<Page<VideoManifest>>;
+  /** v9: may hold NFX videos (subscriptions, tags, author); trending and shorts are NIP-71 only. */
+  feed(q: FeedQuery): Promise<Page<CatalogVideo>>;
   video(id: NostrEventId): Promise<VideoManifest | null>;
+  /** v9 (ADR 0020): the current revision of an NFX manifest, unless deleted or not free. */
+  nfxVideo(addr: NfxAddress): Promise<NfxVideo | null>;
   stats(id: NostrEventId): Promise<VideoStats>;
   related(id: NostrEventId, limit?: number): Promise<readonly VideoManifest[]>;
   search(q: {
     readonly text: string;
     readonly cursor?: string;
     readonly filters?: SearchFilters;
-  }): Promise<Page<VideoManifest>>;
+  }): Promise<Page<CatalogVideo>>;
 
   // ---- social --------------------------------------------------------------------
   comments(videoId: NostrEventId, sort: 'new' | 'top', cursor?: string): Promise<Page<Comment>>;

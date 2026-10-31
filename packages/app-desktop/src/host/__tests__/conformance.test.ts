@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type {
   NetworkAdapter,
+  NfxAddress,
   NostrEventId,
   NostrPubkey,
   Sha256Hex,
@@ -446,6 +447,11 @@ const HAPPY: Happy[] = [
     name: 'video (unknown)',
     guard: literal(null),
     run: (s) => s.a.video('9'.repeat(64) as NostrEventId),
+  },
+  {
+    name: 'nfxVideo (unknown)',
+    guard: literal(null),
+    run: (s) => s.a.nfxVideo(`38504:${'9'.repeat(64)}:nfx:testnet:1:unknown-video` as NfxAddress),
   },
   { name: 'stats', guard: isStats, run: (s) => s.a.stats(U(0)(s)) },
   { name: 'related', guard: isVideos, run: (s) => s.a.related(U(0)(s)) },

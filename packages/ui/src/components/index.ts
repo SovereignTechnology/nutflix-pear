@@ -64,6 +64,7 @@ export {
   stepRate,
 } from './Player/keyboard.js';
 export type { KeyLike, KeyboardState, PlayerAction } from './Player/keyboard.js';
+export { isNfxAddress, isNfxVideo, isNip71Video, nip71Only } from './shared/catalog-video.js';
 export { Icon, ICON_NAMES } from './shared/Icon.js';
 export type { IconName, IconProps } from './shared/Icon.js';
 export {

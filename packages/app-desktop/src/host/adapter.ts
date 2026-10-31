@@ -27,6 +27,8 @@ import type {
   FeedQuery,
   MintUrl,
   NetworkAdapter,
+  NfxAddress,
+  NfxVideo,
   Notification,
   NostrEventId,
   NostrPubkey,
@@ -394,6 +396,11 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   video(id: NostrEventId): Promise<VideoManifest | null> {
     return this.fromCatalog((cat) => cat.video(id));
+  }
+
+  /** Contracts v9: no NFX catalog source yet (slice 4b-2), so no NFX video is known. */
+  nfxVideo(_addr: NfxAddress): Promise<NfxVideo | null> {
+    return Promise.resolve(null);
   }
 
   async stats(id: NostrEventId): Promise<VideoStats> {

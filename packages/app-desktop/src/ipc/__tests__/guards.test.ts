@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
@@ -6,6 +10,7 @@ import {
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
   MAX_MIN_PAY_SATS,
   mocks,
+  nfx,
 } from '@sovit/core';
 
 import {
@@ -15,7 +20,9 @@ import {
   isGrantFileMsg,
   isHostIn,
   isHostOut,
+  MAX_NFX_ADDRESS,
   isMintUrl,
+  isNfxAddress,
   isRelayUrl,
   isReplyMsg,
   isSessionId,
@@ -30,7 +37,7 @@ import type { Guard } from '../guards.js';
 import { EXCLUDED_METHODS, IPC_V, LIMITS, MAX_SECRET_BYTES, TOPIC_METHODS } from '../protocol.js';
 import type { Method } from '../protocol.js';
 import { dehydrate } from '../wiremap.js';
-import { INVALID, SID, TOKEN, UPLOAD_ID, VALID } from './samples.js';
+import { INVALID, NFX_ADDR, SID, TOKEN, UPLOAD_ID, VALID } from './samples.js';
 
 const methods = Object.keys(VALID) as Method[];
 
@@ -79,8 +86,8 @@ describe('validateArgs — coverage', () => {
     // 49 + the five `desktop.signer.*` shell methods (ADR 0013) + `setProfilePicture` (v6, ADR 0015)
     // + `wallet.inputFeePpk` (v6: mint fees shown in the price) + the four
     // `desktop.wallet.recovery.*` shell methods (ADR 0016) + `desktop.wallet.topUp.holds` and
-    // `.resume` (R5-R1).
-    expect(METHODS.length).toBe(62);
+    // `.resume` (R5-R1) + `nfxVideo` (contracts v9, ADR 0020).
+    expect(METHODS.length).toBe(63);
   });
 
   it('D3: wallet.send / wallet.receive (and the engine-internal wallet calls) are not methods', () => {
@@ -601,5 +608,76 @@ describe('issue #2: auto top-up amount and the first-funding question', () => {
     expect(promptAnswerFits(form, yes)).toBe(true);
     expect(promptAnswerFits(form, { kind: 'create-wallet', create: true })).toBe(false);
     expect(promptAnswerFits({ kind: 'create-wallet' }, yes)).toBe(false);
+  });
+});
+
+describe('isNfxAddress (contracts v9) agrees with core', () => {
+  const VECTORS = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    '..',
+    '..',
+    '..',
+    '..',
+    'docs',
+    'vendor',
+    'nfx-test-vectors',
+  );
+  const deletion = JSON.parse(readFileSync(path.join(VECTORS, 'deletion.json'), 'utf8')) as {
+    readonly manifest_a: string;
+    readonly cases: readonly { readonly event?: { readonly tags?: readonly string[][] } }[];
+  };
+  const vectorAddresses = [
+    deletion.manifest_a,
+    ...deletion.cases.flatMap((c) =>
+      (c.event?.tags ?? []).filter((t) => t[0] === 'a').map((t) => t[1] ?? ''),
+    ),
+  ];
+  const pk = mocks.ME;
+  const candidates = [
+    ...vectorAddresses,
+    NFX_ADDR,
+    ...mocks.NFX_VIDEOS.map((v) => v.id),
+    ...(INVALID.nfxVideo ?? []).map((args) => args[0]).filter((a) => typeof a === 'string'),
+    `38504:${pk}:nfx:testnet:18446744073709551615:lagrange-points`,
+    `38504:${pk}:nfx:${'n'.repeat(32)}:18446744073709551615:${'v'.repeat(63)}`,
+    `38504:${pk}:nfx:${'n'.repeat(33)}:1:lagrange-points`,
+    `38504:${pk}:nfx:testnet:1:${'v'.repeat(64)}`,
+    `38504:${pk}:nfx:testnet:1:-leading-dash`,
+    `38504:${pk}:nfx:t:1:lagrange-points`,
+    `38504:${pk}:nfx:testnet:1:lagrange-points\n`,
+    `38504:${pk.slice(1)}:nfx:testnet:1:lagrange-points`,
+    '',
+  ];
+
+  it('accepts exactly the addresses core parses, in their canonical form', () => {
+    for (const a of candidates) {
+      const parsed = nfx.parseATag(a);
+      const core =
+        parsed.ok && `38504:${parsed.value.creator}:${parsed.value.addr.toString()}` === a;
+      expect(isNfxAddress(a), a).toBe(core);
+    }
+  });
+
+  it('accepts the vectors and the fixtures, at most MAX_NFX_ADDRESS long', () => {
+    for (const a of [deletion.manifest_a, ...mocks.NFX_VIDEOS.map((v) => v.id)]) {
+      expect(isNfxAddress(a), a).toBe(true);
+    }
+    const longest = `38504:${pk}:nfx:${'n'.repeat(32)}:18446744073709551615:${'v'.repeat(63)}`;
+    expect(longest.length).toBe(MAX_NFX_ADDRESS);
+    expect(isNfxAddress(longest)).toBe(true);
+  });
+
+  it('fuzz: never throws, and never accepts what core refuses', () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 220 }), (s) => {
+        const a = `38504:${pk}:nfx:${s}`;
+        const parsed = nfx.parseATag(a);
+        const core =
+          parsed.ok && `38504:${parsed.value.creator}:${parsed.value.addr.toString()}` === a;
+        expect(isNfxAddress(a)).toBe(core);
+      }),
+      { numRuns: 500 },
+    );
   });
 });

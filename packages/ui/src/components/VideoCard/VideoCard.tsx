@@ -1,8 +1,9 @@
 import { useState, type ReactElement } from 'react';
-import type { Profile, UnixSeconds, VideoManifest, VideoStats } from '@sovit/core';
+import type { CatalogVideo, Profile, UnixSeconds, VideoStats } from '@sovit/core';
 import { ProfileAvatar } from '../Avatar/Avatar.js';
 import { SatsBadge } from '../SatsBadge/SatsBadge.js';
 import { Skeleton } from '../Skeleton/Skeleton.js';
+import { isNfxVideo } from '../shared/catalog-video.js';
 import { Icon } from '../shared/Icon.js';
 import {
   cx,
@@ -15,8 +16,13 @@ import {
 
 export type VideoCardLayout = 'grid' | 'list';
 
-export interface VideoCardProps {
-  readonly video: VideoManifest;
+/**
+ * Generic over the video so a screen that lists NIP-71 videos only keeps `onOpen` typed as such,
+ * and one that lists NFX videos too must handle both.
+ */
+export interface VideoCardProps<V extends CatalogVideo = CatalogVideo> {
+  /** Contracts v9: a NIP-71 video, or a free NFX one (no price, no thumbnail yet, not playable). */
+  readonly video: V;
   /** Channel profile for the row under the title (resolved by the screen). */
   readonly channel?: Profile | undefined;
   /** Resolved, hash-verified thumbnail URL (`NetworkAdapter.image`). Omit while loading. */
@@ -32,8 +38,8 @@ export interface VideoCardProps {
   readonly hideChannel?: boolean;
   /** Watched progress 0–1 for the red bar under the thumbnail (from NIP-51 history). */
   readonly progress?: number | undefined;
-  readonly onOpen?: ((video: VideoManifest) => void) | undefined;
-  readonly onOpenChannel?: ((pubkey: VideoManifest['author']) => void) | undefined;
+  readonly onOpen?: ((video: V) => void) | undefined;
+  readonly onOpenChannel?: ((pubkey: V['author']) => void) | undefined;
   readonly className?: string;
 }
 
@@ -45,7 +51,7 @@ export interface VideoCardProps {
  * (the manifest's first — what `play(id)` streams and Watch/Shorts charge), never "from" the
  * cheapest (ADR 0007 c), and it is part of the thumbnail button's accessible name.
  */
-export function VideoCard({
+export function VideoCard<V extends CatalogVideo>({
   video,
   channel,
   thumbnailSrc,
@@ -58,11 +64,14 @@ export function VideoCard({
   onOpen,
   onOpenChannel,
   className,
-}: VideoCardProps): ReactElement {
+}: VideoCardProps<V>): ReactElement {
   const [loaded, setLoaded] = useState(false);
-  const rendition = video.renditions[0];
-  const placeholder = rendition?.placeholder;
-  const price = defaultRenditionSats(video.renditions, video.price);
+  // Narrowing works on the union, not on the type parameter.
+  const shown: CatalogVideo = video;
+  // An NFX video has no renditions and no price: its files are fetched over NFX (slice 5).
+  const nfx = isNfxVideo(shown);
+  const placeholder = isNfxVideo(shown) ? undefined : shown.renditions[0]?.placeholder;
+  const price = isNfxVideo(shown) ? undefined : defaultRenditionSats(shown.renditions, shown.price);
   const channelName = channel?.displayName ?? channel?.name ?? '';
   const isShort = video.kind === 22;
 
@@ -79,7 +88,13 @@ export function VideoCard({
         type="button"
         className="nf-card__thumb"
         onClick={open}
-        aria-label={price === undefined ? video.title : `${video.title}, ${formatSats(price)}`}
+        aria-label={
+          nfx
+            ? `${video.title}, free`
+            : price === undefined
+              ? video.title
+              : `${video.title}, ${formatSats(price)}`
+        }
       >
         {placeholder ? (
           <img className="nf-card__placeholder" src={placeholder} alt="" aria-hidden="true" />
@@ -96,11 +111,18 @@ export function VideoCard({
             }}
           />
         ) : null}
-        <span className="nf-card__hover" aria-hidden="true">
-          <Icon name="play" size={40} />
-        </span>
+        {nfx ? null : (
+          <span className="nf-card__hover" aria-hidden="true">
+            <Icon name="play" size={40} />
+          </span>
+        )}
         {video.durationSec !== undefined ? (
           <span className="nf-card__duration">{formatDuration(video.durationSec)}</span>
+        ) : null}
+        {nfx ? (
+          <span className="nf-card__free" aria-hidden="true">
+            Free
+          </span>
         ) : null}
         {price !== undefined ? (
           <SatsBadge

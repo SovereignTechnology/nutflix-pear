@@ -42,6 +42,7 @@ import {
   Channel,
   Home,
   Library,
+  NfxWatch,
   Search,
   Settings,
   Shorts,
@@ -50,6 +51,7 @@ import {
   Wallet,
   Watch,
   applyTheme,
+  isNfxAddress,
   isTextEntryTarget,
 } from '@sovit/ui';
 import type {
@@ -362,6 +364,11 @@ export function Shell({
       screen = <Home {...common} tab={route.tab} hoverPreview={settings?.hoverPreview} />;
       break;
     case 'watch': {
+      // Contracts v9: an NFX address opens the NFX page, which plays nothing yet (ADR 0020).
+      if (isNfxAddress(route.videoId)) {
+        screen = <NfxWatch {...common} videoId={route.videoId} />;
+        break;
+      }
       const handed = extras.resumeSession;
       const resume =
         handed?.videoId === route.videoId && coordinator.canResume(handed.session)

@@ -21,6 +21,7 @@ import {
   type ReactElement,
 } from 'react';
 import type {
+  CatalogVideo,
   FeedQuery,
   NostrEventId,
   NostrPubkey,
@@ -28,6 +29,7 @@ import type {
   Rendition,
   Sats,
   UnixSeconds,
+  VideoId,
   VideoManifest,
   VideoStats,
 } from '@sovit/core';
@@ -42,6 +44,7 @@ import {
   VideoCard,
   VideoCardSkeleton,
   cx,
+  isNfxVideo,
   renditionPriceSats,
 } from '../../components/index.js';
 import type { Route, ScreenProps } from '../shared/route.js';
@@ -87,7 +90,8 @@ type FeedStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 interface FeedState {
   readonly status: FeedStatus;
-  readonly items: readonly VideoManifest[];
+  /** Contracts v9: NIP-71 videos and, once an NFX network is chosen, free NFX ones. */
+  readonly items: readonly CatalogVideo[];
   readonly next: string | undefined;
   readonly error: unknown;
   readonly more: 'idle' | 'loading' | 'error';
@@ -184,9 +188,9 @@ function needsIdentity(tab: HomeTab): boolean {
 }
 
 function dedupe(
-  existing: readonly VideoManifest[],
-  incoming: readonly VideoManifest[],
-): readonly VideoManifest[] {
+  existing: readonly CatalogVideo[],
+  incoming: readonly CatalogVideo[],
+): readonly CatalogVideo[] {
   const seen = new Set(existing.map((v) => v.id));
   const out = [...existing];
   for (const v of incoming) {
@@ -415,6 +419,11 @@ export function Home({
   const activeItems = feeds[activeTab].items;
   useEffect(() => {
     for (const video of activeItems) {
+      if (isNfxVideo(video)) {
+        // No thumbnail to fetch before an NFX transport exists, and no NIP-71 stats (v9).
+        resolveProfile(video.author);
+        continue;
+      }
       const req = requested.current;
       if (!req.thumbs.has(video.id)) {
         req.thumbs.add(video.id);
@@ -541,7 +550,7 @@ export function Home({
   }, [canObserve, feed.more, hasMore, loadMore]);
 
   // ---- hover preview affordance --------------------------------------------------------
-  const [previewId, setPreviewId] = useState<NostrEventId | null>(null);
+  const [previewId, setPreviewId] = useState<VideoId | null>(null);
   const leaveItem = (e: FocusEvent<HTMLElement>): void => {
     if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
     setPreviewId(null);
@@ -565,12 +574,13 @@ export function Home({
   };
 
   // ---- render ----------------------------------------------------------------------
-  const openVideo = (video: VideoManifest): void => {
+  const openVideo = (video: CatalogVideo): void => {
     navigate({ name: 'watch', videoId: video.id });
   };
   /** Kind 22 opens the vertical Shorts feed at that video (build-plan §6.1 "Shorts"). */
-  const openShort = (video: VideoManifest): void => {
-    navigate({ name: 'shorts', videoId: video.id });
+  const openShort = (video: CatalogVideo): void => {
+    if (isNfxVideo(video)) openVideo(video);
+    else navigate({ name: 'shorts', videoId: video.id });
   };
   const openChannel = (pubkey: NostrPubkey): void => {
     navigate({ name: 'channel', pubkey });
@@ -676,10 +686,11 @@ export function Home({
     );
   };
 
-  const renderItem = (video: VideoManifest, short: boolean): ReactElement => {
+  const renderItem = (video: CatalogVideo, short: boolean): ReactElement => {
     const profile = profiles[video.author] ?? undefined;
-    const showPreview = hoverPreview && previewId === video.id;
-    const cost = showPreview ? previewCostSats(video) : undefined;
+    // An NFX video does not play yet (slice 5), so it has no preview affordance.
+    const showPreview = hoverPreview && previewId === video.id && !isNfxVideo(video);
+    const cost = !showPreview || isNfxVideo(video) ? undefined : previewCostSats(video);
     return (
       <li
         key={video.id}
@@ -700,7 +711,7 @@ export function Home({
           channel={profile}
           thumbnailSrc={thumbs[video.id]}
           avatarSrc={avatars[video.author]}
-          stats={stats[video.id]}
+          stats={isNfxVideo(video) ? undefined : stats[video.id]}
           now={nowSec}
           onOpen={short ? openShort : openVideo}
           onOpenChannel={openChannel}
@@ -770,7 +781,8 @@ export function Home({
         break;
     }
     if (feed.items.length === 0) return renderEmpty();
-    const longs = feed.items.filter((v) => v.kind === 21);
+    // Long-form: kind 21 and free NFX videos (contracts v9); kind 22 goes to the shorts shelf.
+    const longs = feed.items.filter((v) => v.kind !== 22);
     const shorts = feed.items.filter((v) => v.kind === 22);
     return (
       <>
