@@ -96,10 +96,11 @@ export interface WorkerRuntime {
   readonly monotonicNow: () => number;
   /**
    * Slice 5d: an HTTP/1 server for the worker's own loopback endpoints (the NFX range server):
-   * bare-http1 under Bare (`adapters/bare.ts`), node:http in tests. The legacy playback server
-   * gets its HTTP from `hypercore-blob-server`'s own `imports` map instead.
+   * bare-http1 under Bare (`adapters/bare.ts`, loaded on the first call: its native addons cannot
+   * load under Node, where tests import that module), node:http in tests. The legacy playback
+   * server gets its HTTP from `hypercore-blob-server`'s own `imports` map instead.
    */
-  readonly createHttpServer: (onRequest: HttpRequestHandler) => HttpServerLike;
+  readonly createHttpServer: (onRequest: HttpRequestHandler) => Promise<HttpServerLike>;
   /**
    * Start the DLEQ thread (issue #8 d: F5's checks off this event loop). Bare's is `Bare.Thread`
    * (`adapters/bare.ts`); absent, the checks run inline in small chunks.

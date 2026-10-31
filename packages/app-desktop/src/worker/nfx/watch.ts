@@ -27,11 +27,24 @@ import { isNfxRenditionWire } from '../../ipc/worker-guards.js';
 import type { NfxRenditionWire } from '../../ipc/worker-protocol.js';
 import { MAX_NFX_RENDITIONS } from '../../ipc/worker-protocol.js';
 
+/**
+ * How an `NfxFetcher` gives up: one short constant per source it tried (`missing`, `unreachable`,
+ * …), never peer data, so a failed open says why.
+ */
+export class NfxFetchError extends Error {
+  readonly reasons: readonly string[];
+  constructor(reasons: readonly string[]) {
+    super(`nfx: no source served the file (${reasons.join(', ') || 'none left to ask'})`);
+    this.reasons = reasons;
+  }
+}
+
 /** Where a session's files come from. */
 export interface NfxFetcher {
   /**
    * File `sha`: exactly `size` bytes, or with `exact: false` at most `size` (the hash list), whose
-   * sha256 the transport checked against `sha`. Rejects when no source serves it.
+   * sha256 the transport checked against `sha`. Rejects when no source serves it (with an
+   * `NfxFetchError`, which says why).
    */
   fetch(sha: string, size: number, exact: boolean): Promise<Uint8Array>;
   /** Abandon every fetch in flight (they reject) and close what this fetcher opened. */
@@ -302,9 +315,10 @@ export class NfxWatchSession {
     let bytes: Uint8Array;
     try {
       bytes = await this.fetchOnce(sha, size, exact);
-    } catch {
+    } catch (err) {
       this.alive();
-      throw coded('no-seeders', `no seeder served ${what}`);
+      const why = err instanceof NfxFetchError ? ` (${err.reasons.join(', ')})` : '';
+      throw coded('no-seeders', `no seeder served ${what}${why}`);
     }
     this.alive();
     return bytes;
@@ -360,8 +374,9 @@ export class NfxWatchSession {
     let bytes: Uint8Array;
     try {
       bytes = await this.fetchOnce(seg.sha256, seg.size, true);
-    } catch {
-      this.fail(`no seeder served segment ${String(i)}`);
+    } catch (err) {
+      const why = err instanceof NfxFetchError ? ` (${err.reasons.join(', ')})` : '';
+      this.fail(`no seeder served segment ${String(i)}${why}`);
       return;
     }
     if (this.isClosed()) return;

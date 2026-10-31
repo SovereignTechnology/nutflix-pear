@@ -144,11 +144,17 @@ export class NfxRangeServer {
   /** Listen on 127.0.0.1 (once); resolves with the port. */
   listen(): Promise<number> {
     if (this.closing !== null) return Promise.reject(new Error('nfx: the range server is closed'));
-    this.listening ??= new Promise<number>((resolve, reject) => {
-      const server = this.o.createHttpServer((req, res) => {
-        this.onRequest(req, res);
-      });
-      this.server = server;
+    this.listening ??= this.start();
+    return this.listening;
+  }
+
+  private async start(): Promise<number> {
+    const server = await this.o.createHttpServer((req, res) => {
+      this.onRequest(req, res);
+    });
+    if (this.closing !== null) throw new Error('nfx: the range server is closed');
+    this.server = server;
+    return new Promise<number>((resolve, reject) => {
       server.on('error', (err) => {
         // Before `listening`: the listen failed. After it, nothing to settle.
         reject(err);
@@ -171,7 +177,6 @@ export class NfxRangeServer {
         resolve(port);
       });
     });
-    return this.listening;
   }
 
   /** Admit a session; returns the only link that reads it. */
@@ -197,10 +202,11 @@ export class NfxRangeServer {
   close(): Promise<void> {
     this.closing ??= (async () => {
       for (const sid of [...this.bySid.keys()]) this.unregister(sid);
+      // A server still being created is either assigned by then or never listens.
+      await this.listening?.catch(() => undefined);
       const server = this.server;
       this.server = null;
       if (server === null) return;
-      await this.listening?.catch(() => undefined);
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, CLOSE_WAIT_MS);

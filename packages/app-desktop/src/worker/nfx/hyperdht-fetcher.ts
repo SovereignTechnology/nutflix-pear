@@ -29,12 +29,16 @@ import type {
 import { dialNfx, toHex } from '@sovit/seeder';
 
 import type { NfxFetcher } from './watch.js';
+import { NfxFetchError } from './watch.js';
 
 /** How long one dial may take before the next seeder is tried. */
 export const NFX_DIAL_TIMEOUT_MS = 20_000;
 
-/** Why a transfer failed; `unreachable`: the seeder could not be dialed. */
-export type NfxFetchFailure = FetchFailure | 'unreachable';
+/**
+ * Why a transfer failed: `nfx/files/1`'s reasons, or the dial's — `unreachable` (no connection),
+ * `dial-timeout`, `wrong-key` (the remote key was not the one dialed).
+ */
+export type NfxFetchFailure = FetchFailure | 'unreachable' | 'dial-timeout' | 'wrong-key';
 
 export type NfxFetchOutcome =
   | { readonly ok: true; readonly bytes: Uint8Array }
@@ -66,8 +70,9 @@ interface Channel {
 interface Entry {
   readonly key: string;
   refs: number;
-  /** The dial; `null`: the seeder could not be reached. */
+  /** The dial; `null`: the seeder could not be reached, for `failure`. */
   connection: Promise<NfxConnection | null>;
+  failure: NfxFetchFailure;
   /** Transfers in flight by `<video> <sha>`. */
   readonly transfers: Map<string, Promise<NfxFetchOutcome>>;
   readonly channels: Map<string, Channel>;
@@ -138,6 +143,7 @@ export class NfxPeerPool {
       key,
       refs: 0,
       connection: Promise.resolve(null),
+      failure: 'unreachable',
       transfers: new Map(),
       channels: new Map(),
     };
@@ -167,6 +173,12 @@ export class NfxPeerPool {
         },
       });
       if (!r.ok) {
+        entry.failure =
+          r.reason === 'timeout'
+            ? 'dial-timeout'
+            : r.reason === 'wrong-key'
+              ? 'wrong-key'
+              : 'unreachable';
         this.o.logger.info('nfx: a seeder could not be dialed', { reason: r.reason });
         return null;
       }
@@ -212,7 +224,7 @@ export class NfxPeerPool {
     exact: boolean,
   ): Promise<NfxFetchOutcome> {
     const connection = await e.connection;
-    if (connection === null) return { ok: false, reason: 'unreachable' };
+    if (connection === null) return { ok: false, reason: e.failure };
     const release = await this.slot(e, video.toString());
     try {
       // Closed while this one queued.
@@ -306,22 +318,29 @@ export class HyperdhtFetcher implements NfxFetcher {
 
   async fetch(sha: string, size: number, exact: boolean): Promise<Uint8Array> {
     const namespace = this.o.video.namespace.toString();
-    for (const peer of this.peers) {
+    /** Per seeder, in order: why it did not serve this file. */
+    const reasons: string[] = [];
+    for (const [index, peer] of this.peers.entries()) {
       if (this.isClosed()) break;
-      if (peer.dropped) continue;
+      if (peer.dropped) {
+        reasons.push('dropped');
+        continue;
+      }
       peer.lease ??= this.o.pool.acquire(namespace, peer.key);
       const r = await Promise.race([
         peer.lease.fetch(this.o.video, sha, size, exact),
         this.aborted,
       ]);
       if (this.isClosed()) break;
-      if (r.ok) {
-        // A transfer shared with another session was asked for with that one's bounds.
-        if (exact ? r.bytes.byteLength === size : r.bytes.byteLength <= size) return r.bytes;
-        this.drop(peer, 'mismatch');
-      } else if (!KEEP.has(r.reason)) this.drop(peer, r.reason);
+      // A transfer shared with another session was asked for with that one's bounds.
+      if (r.ok && (exact ? r.bytes.byteLength === size : r.bytes.byteLength <= size))
+        return r.bytes;
+      const reason = r.ok ? 'mismatch' : r.reason;
+      reasons.push(reason);
+      this.o.logger.debug('nfx: a seeder did not serve a file', { seeder: index, reason });
+      if (r.ok || !KEEP.has(r.reason)) this.drop(peer, reason);
     }
-    throw new Error(this.isClosed() ? 'nfx: the fetcher closed' : 'nfx: no seeder served the file');
+    throw new NfxFetchError(this.isClosed() ? ['closed'] : reasons);
   }
 
   close(): Promise<void> {

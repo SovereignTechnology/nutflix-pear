@@ -9,7 +9,6 @@ import type { FsAdapter } from '@sovit/core';
 import type { FileStat, SeederFs } from '@sovit/seeder';
 import fs from 'bare-fs';
 import hrtime from 'bare-hrtime';
-import http from 'bare-http1';
 import os from 'bare-os';
 import path from 'bare-path';
 import { spawn } from 'bare-subprocess';
@@ -17,14 +16,7 @@ import { spawn } from 'bare-subprocess';
 import type { OsName } from '../ffmpeg.js';
 import { utf8 } from '../../ipc/codec.js';
 import type { SpawnDleqThread } from '../pay/dleq-thread.js';
-import type {
-  HttpRequestHandler,
-  HttpRequestLike,
-  HttpResponseLike,
-  HttpServerLike,
-  StateFs,
-  WorkerRuntime,
-} from '../runtime.js';
+import type { HttpRequestHandler, HttpServerLike, StateFs, WorkerRuntime } from '../runtime.js';
 import type { BareSpawn } from '../transcode/index.js';
 import { createBareProcessRunner } from '../transcode/index.js';
 import { DLEQ_THREAD_ENTRY } from '../worker-root.js';
@@ -241,15 +233,16 @@ export function bareDleqThread(entry: URL = DLEQ_THREAD_ENTRY): SpawnDleqThread 
 }
 
 /**
- * `WorkerRuntime.createHttpServer` on bare-http1 (slice 5d). Its server, request and response
- * mirror node:http's, the shapes `../runtime.ts` names; its own types are narrower unions (status
- * codes, methods), hence the casts at this one boundary.
+ * `WorkerRuntime.createHttpServer` on bare-http1 (slice 5d), whose server, request and response
+ * mirror node:http's — the shapes `../runtime.ts` names. Imported on the first call, not at the
+ * top: it loads bare-tcp and bare-dns, native addons that cannot load under Node, which imports
+ * this module in tests (`bare-state-fs.test.ts`).
  */
-function bareHttpServer(onRequest: HttpRequestHandler): HttpServerLike {
-  const server = http.createServer({}, (req, res) => {
-    onRequest(req as unknown as HttpRequestLike, res as unknown as HttpResponseLike);
+async function bareHttpServer(onRequest: HttpRequestHandler): Promise<HttpServerLike> {
+  const http = (await import('bare-http1')).default;
+  return http.createServer({}, (req, res) => {
+    onRequest(req, res);
   });
-  return server as unknown as HttpServerLike;
 }
 
 export function bareRuntime(): WorkerRuntime {

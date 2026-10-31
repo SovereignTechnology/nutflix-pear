@@ -108,7 +108,10 @@ async function until(cond: () => boolean, what: string): Promise<void> {
   if (!cond()) throw new Error(`timed out waiting for ${what}`);
 }
 
-/** One request; how it ended — `complete` false when the connection was cut mid-body. */
+/**
+ * One request; how it ended — `complete` false when the connection was cut mid-body, status 0 when
+ * it was cut before any header arrived.
+ */
 function request(
   url: string,
   o: { readonly method?: string; readonly headers?: Record<string, string> } = {},
@@ -131,7 +134,11 @@ function request(
         });
       },
     );
-    req.on('error', reject);
+    req.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'ECONNRESET')
+        resolve({ status: 0, headers: {}, body: Buffer.alloc(0), complete: false });
+      else reject(err);
+    });
     req.end();
   });
 }
@@ -245,11 +252,8 @@ describe('NfxWatchSession', () => {
     // A seek to segment 5: fetched for the read, and nothing between.
     const [inSeg5] = nfx.locate(opened.layout, v.segmentAt[5]!, 6);
     const bytes = await s.read(inSeg5!);
-    expect(
-      Buffer.from(bytes).equals(
-        Buffer.from(v.expected.subarray(v.segmentAt[5]!, v.segmentAt[5]! + 6)),
-      ),
-    ).toBe(true);
+    const at5 = v.segmentAt[5] ?? -1;
+    expect(Buffer.from(bytes).equals(Buffer.from(v.expected.subarray(at5, at5 + 6)))).toBe(true);
     expect(fetcher.asked).toContain(s5);
     expect(fetcher.asked).not.toContain(s3);
     expect(fetcher.asked).not.toContain(s4);
@@ -288,10 +292,15 @@ describe('NfxRangeServer', () => {
     ]);
     return {
       layout,
-      read: (p) => {
-        if (fail(p)) return Promise.reject(new Error('not here'));
-        if (p.part.kind !== 'bytes') return Promise.reject(new Error('no files here'));
-        return Promise.resolve(p.part.bytes.subarray(p.offset, p.offset + p.length));
+      read: async (p) => {
+        // As a real failure (a wait that ran out) is: later, not in the same tick as the write
+        // before it — Node sends a response's first bytes only once its socket is uncorked.
+        if (fail(p)) {
+          await sleep(20);
+          throw new Error('not here');
+        }
+        if (p.part.kind !== 'bytes') throw new Error('no files here');
+        return p.part.bytes.subarray(p.offset, p.offset + p.length);
       },
     };
   };

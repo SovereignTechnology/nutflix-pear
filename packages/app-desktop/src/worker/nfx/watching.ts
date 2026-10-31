@@ -6,8 +6,10 @@
  * Payment-independent: free NFX play needs no payment providers. With them the worker has a
  * legacy swarm, and sessions dial from its DHT node; without them (no swarm, no seeder) a DHT
  * node of this module's own is created on the first open — with the bootstrap the worker would
- * give its swarm, bound to 127.0.0.1 when that bootstrap is loopback only — and destroyed by
- * `shutdown`.
+ * give its swarm, and like the swarm of a worker with real payments never bound to loopback (only
+ * `--dev-mocks` providers fence the swarm to 127.0.0.1, and those always have a swarm): a
+ * loopback-bound node cannot reach a peer's LAN addresses, which HyperDHT tries for peers behind
+ * the same address — and destroyed by `shutdown`.
  *
  * The watcher key pair is per network and never the seeder's or the legacy swarm's (NFX-12 §1):
  * with a seeder, `Corestore.createKeyPair('nfx:<namespace>:watcher')`, stable across runs (the
@@ -195,10 +197,7 @@ export class NfxWatching {
 
   private async startOwnDht(): Promise<DHT> {
     const bootstrap = this.d.bootstrap;
-    const loopback = bootstrap !== null && bootstrap.every((b) => b.host === '127.0.0.1');
-    const dht = new DHT(
-      bootstrap === null ? {} : loopback ? { bootstrap, host: '127.0.0.1' } : { bootstrap },
-    );
+    const dht = new DHT(bootstrap === null ? {} : { bootstrap });
     this.ownDht = dht;
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
@@ -208,7 +207,9 @@ export class NfxWatching {
       }),
     ]);
     clearTimeout(timer);
-    this.d.logger.info('nfx: a watcher DHT node of its own (no legacy swarm)', { loopback });
+    this.d.logger.info('nfx: a watcher DHT node of its own (no legacy swarm)', {
+      bootstrap: bootstrap === null ? 'public' : 'configured',
+    });
     return dht;
   }
 
