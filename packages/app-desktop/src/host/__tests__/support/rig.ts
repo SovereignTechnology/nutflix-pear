@@ -63,6 +63,8 @@ export interface RigOptions {
   readonly recoveryCore?: HostOptions['recoveryCore'];
   /** Slice 4a: a namespace's NFX-04 scoped relays. */
   readonly nfxScopedRelays?: HostOptions['nfxScopedRelays'];
+  /** Slice 4b: the NFX network the catalogue lists. */
+  readonly nfxCatalogNamespace?: HostOptions['nfxCatalogNamespace'];
 }
 
 /** Polls `check` every few ms until it returns a value, or fails with `what` after `ms`. */
@@ -112,6 +114,7 @@ export async function rig(o: RigOptions = {}): Promise<Rig> {
     ...(o.topUp === undefined ? {} : { topUp: o.topUp }),
     ...(o.recoveryCore === undefined ? {} : { recoveryCore: o.recoveryCore }),
     ...(o.nfxScopedRelays === undefined ? {} : { nfxScopedRelays: o.nfxScopedRelays }),
+    ...(o.nfxCatalogNamespace === undefined ? {} : { nfxCatalogNamespace: o.nfxCatalogNamespace }),
     imageTransport: o.imageTransport ?? (() => Promise.reject(new Error('no network in tests'))),
   });
   late.host = host;

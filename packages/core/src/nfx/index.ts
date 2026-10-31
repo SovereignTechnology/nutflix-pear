@@ -10,6 +10,7 @@
  */
 export * from './beacon.js';
 export * from './canon.js';
+export * from './catalog.js';
 export * from './deletion.js';
 export type { NfxError, NfxErrorKind, NfxResult, Verified } from './errors.js';
 export * from './event.js';

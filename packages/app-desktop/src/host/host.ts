@@ -104,6 +104,8 @@ export interface HostOptions {
   readonly recoveryCore?: RecoveryCore | null;
   /** Slice 4a, tests: a namespace's NFX-04 scoped relays (none in production until slice 5). */
   readonly nfxScopedRelays?: DesktopAdapterOptions['nfxScopedRelays'];
+  /** Slice 4b, tests: the NFX network the catalogue lists (none in production until slice 5). */
+  readonly nfxCatalogNamespace?: DesktopAdapterOptions['nfxCatalogNamespace'];
 }
 
 /**
@@ -651,6 +653,7 @@ export async function createHost(o: HostOptions): Promise<Host> {
     ...(o.random === undefined ? {} : { random: o.random }),
     ...(o.now === undefined ? {} : { now: o.now }),
     ...(o.nfxScopedRelays === undefined ? {} : { nfxScopedRelays: o.nfxScopedRelays }),
+    ...(o.nfxCatalogNamespace === undefined ? {} : { nfxCatalogNamespace: o.nfxCatalogNamespace }),
   });
   const host = new Host({
     adapter,

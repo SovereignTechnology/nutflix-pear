@@ -13,7 +13,10 @@
  * set and does not wait.
  */
 import type {
+  CatalogVideo,
   FeedQuery,
+  NfxAddress,
+  NfxVideo,
   NostrEventId,
   NostrPubkey,
   Page,
@@ -121,25 +124,30 @@ export class FixtureCatalog implements CatalogSource {
     return [...this.live, ...mocks.VIDEOS.filter((v) => !seen.has(v.id))];
   }
 
-  feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<VideoManifest>> {
+  /** Contracts v9: the mock NFX videos join the feeds a merged catalogue lists them in. */
+  private withNfx(): CatalogVideo[] {
+    return [...this.all(), ...mocks.NFX_VIDEOS];
+  }
+
+  feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<CatalogVideo>> {
     return this.afterWait(() => this.feedNow(q, viewer));
   }
 
-  private feedNow(q: FeedQuery, viewer: NostrPubkey | null): Page<VideoManifest> {
-    let items = this.all();
+  private feedNow(q: FeedQuery, viewer: NostrPubkey | null): Page<CatalogVideo> {
+    let items: CatalogVideo[] = this.all();
     switch (q.source) {
       case 'subscriptions':
-        items = viewer === null ? [] : items.filter((v) => v.kind === 21);
+        items = viewer === null ? [] : this.withNfx().filter((v) => v.kind !== 22);
         break;
       case 'trending':
         // Live (playable) first, then the mock fixtures in their own order.
         items = items.filter((v) => v.kind === 21);
         break;
       case 'tags':
-        items = items.filter((v) => v.tags.some((t) => q.tags?.includes(t)));
+        items = this.withNfx().filter((v) => v.tags.some((t) => q.tags?.includes(t)));
         break;
       case 'author':
-        items = items.filter((v) => v.author === q.author);
+        items = this.withNfx().filter((v) => v.author === q.author);
         break;
       case 'shorts':
         items = items.filter((v) => v.kind === 22);
@@ -150,6 +158,10 @@ export class FixtureCatalog implements CatalogSource {
 
   video(id: NostrEventId): Promise<VideoManifest | null> {
     return this.afterWait(() => this.all().find((v) => v.id === id) ?? null);
+  }
+
+  nfxVideo(addr: NfxAddress): Promise<NfxVideo | null> {
+    return Promise.resolve(mocks.NFX_VIDEOS.find((v) => v.id === addr) ?? null);
   }
 
   videos(ids: readonly NostrEventId[]): Promise<VideoManifest[]> {
@@ -176,13 +188,13 @@ export class FixtureCatalog implements CatalogSource {
     });
   }
 
-  search(q: SearchQuery): Promise<Page<VideoManifest>> {
+  search(q: SearchQuery): Promise<Page<CatalogVideo>> {
     return this.afterWait(() => {
       const needle = q.text.trim().toLowerCase();
       const items =
         needle === ''
           ? []
-          : this.all().filter(
+          : this.withNfx().filter(
               (v) =>
                 v.title.toLowerCase().includes(needle) || v.tags.some((t) => t.includes(needle)),
             );
