@@ -9,7 +9,7 @@
  * Free videos only: the guards refuse `nfx` on a priced upload, and this module checks again.
  * Every failure is a typed `NfxUploadStatusWire`, never a throw into the legacy upload.
  */
-import type { FsAdapter, ProcessRunner, TranscodeOutput, nfx } from '@sovit/core';
+import type { FsAdapter, ProcessRunner, Sha256Hex, TranscodeOutput, nfx } from '@sovit/core';
 import { media } from '@sovit/core';
 import type { Logger, NfxStore } from '@sovit/seeder';
 
@@ -106,7 +106,8 @@ export async function packageUploadForNfx(
       segs: put.record.segs,
       deduplicated: put.deduplicated,
     });
-    // The manifest's `thumb` (NFX-02): the JPEG the packager listed with role `thumb`.
+    // The manifest's `thumb` (NFX-02): the JPEG the packager listed with role `thumb`. Its hash
+    // is the packager's own sha256, 64 lowercase hex (re-checked by the guard on the hop).
     const thumb = packaged.hashList.files.find((f) => f.role === 'thumb');
     return {
       state: 'stored',
@@ -115,7 +116,9 @@ export async function packageUploadForNfx(
       segs: put.record.segs,
       renditions: packaged.hashList.renditions.length,
       bytes,
-      ...(thumb !== undefined ? { thumb: { sha256: thumb.sha256, mime: 'image/jpeg' } } : {}),
+      ...(thumb !== undefined
+        ? { thumb: { sha256: thumb.sha256 as Sha256Hex, mime: 'image/jpeg' } }
+        : {}),
     };
   } catch {
     return failed('store-failed');

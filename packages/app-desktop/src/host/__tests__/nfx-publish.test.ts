@@ -172,7 +172,7 @@ describe('isSignedManifest', () => {
     const other = await kit.sign(signer, { ...draft.event, content: 'something else' });
     expect(isSignedManifest(other, draft, signer.pubkey)).toBe(false);
     expect(
-      isSignedManifest(kit.tamper(event, { sig: '00'.repeat(64) as never }), draft, signer.pubkey),
+      isSignedManifest(kit.tamper(event, { sig: '00'.repeat(64) }), draft, signer.pubkey),
     ).toBe(false);
   });
 });
