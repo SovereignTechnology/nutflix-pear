@@ -332,7 +332,7 @@ export const isRelayUrl = safe(branded<RelayUrl>(matches(RELAY_RE, LIMITS.maxSer
  * serves without TLS. A `ws://` relay anywhere else would carry beacons in cleartext.
  */
 const LOOPBACK_WS_RE = new RegExp(
-  `^[Ww][Ss]://(?:127\.0\.0\.1|\[::1\]|localhost)${PORT}${PATH_NO_TRAILING}$`,
+  `^[Ww][Ss]://(?:127\\.0\\.0\\.1|\\[::1\\]|localhost)${PORT}${PATH_NO_TRAILING}$`,
 );
 export const isScopedRelayUrl = safe(
   branded<RelayUrl>(

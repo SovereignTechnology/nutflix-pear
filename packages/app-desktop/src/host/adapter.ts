@@ -247,7 +247,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
    */
   private relayCatalog(): CatalogSource {
     const nfx = this.o.settings.get().nfx;
-    if (nfx === undefined || !nfx.enabled) return this.nip71Catalog;
+    if (nfx?.enabled !== true) return this.nip71Catalog;
     if (this.merged?.nfx !== nfx) {
       const source = new NfxCatalog(
         () => this.client(),

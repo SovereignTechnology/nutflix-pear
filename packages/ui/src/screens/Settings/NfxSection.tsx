@@ -29,7 +29,7 @@ function nfxOf(base: Settings): NfxSettings {
   return (
     base.nfx ?? {
       enabled: false,
-      network: UI_NFX_NETWORK as NfxSettings['network'],
+      network: UI_NFX_NETWORK,
       scopedRelays: [],
     }
   );
