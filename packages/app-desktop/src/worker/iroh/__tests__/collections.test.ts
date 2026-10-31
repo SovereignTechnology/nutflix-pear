@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { nfx } from '@sovit/core';
+import type { nfx } from '@sovit/core';
 import { describe, expect, it } from 'vitest';
 
 import { META_COLLECTION, metaMembers, nfxCollections, renditionMembers } from '../collections.js';
