@@ -3,7 +3,8 @@
  *
  *   `nf-media://play/<token>`  → the worker's loopback blob-server link the HOST registered for
  *                                that token (`HostOut media-link`); `Range` is forwarded through
- *                                `net.fetch` and the 200/206/416 streamed back. The renderer never
+ *                                `net.fetch` and the 200/206/416 streamed back; a request the
+ *                                player drops aborts its upstream fetch. The renderer never
  *                                learns the port or the worker's own token; CSP stays static.
  *   `nf-media://img/<id>`      → the host's image bytes (`HostIn image` / `HostOut image`); the
  *                                host fetched and hash-checked them (T16).
@@ -131,8 +132,17 @@ export type MediaFetch = (
     readonly method: 'GET' | 'HEAD';
     readonly headers: Readonly<Record<string, string>>;
     readonly redirect: 'error';
+    /** Aborted once the player drops the request (spike S-E, finding 6). */
+    readonly signal: AbortSignal;
   },
 ) => Promise<Response>;
+
+/** `net.fetch` as a `MediaFetch`: what `main.ts` injects (and the proxy-abort e2e, the same). */
+export function netMediaFetch(
+  fetch: (url: string, init: RequestInit) => Promise<Response>,
+): MediaFetch {
+  return (url, init) => fetch(url, { ...init, headers: { ...init.headers } });
+}
 
 export interface MediaProtocolDeps {
   readonly links: MediaLinks;
@@ -200,11 +210,27 @@ async function proxyPlay(
     headers['range'] = range.trim();
   }
   const method = req.method === 'HEAD' ? 'HEAD' : 'GET';
+  // The upstream fetch lives no longer than the player's request. An orphan would hold one of
+  // the 6 connections main's `net.fetch` pools per host:port, starving the next source, and
+  // keep the worker's gated stream for the video open (spike S-E, finding 6). Electron may say
+  // so by aborting `req.signal` or by cancelling the body we return: either aborts it.
+  const upstreamAbort = new AbortController();
+  const dropped = (): void => {
+    upstreamAbort.abort();
+  };
+  if (req.signal.aborted) dropped();
+  else req.signal.addEventListener('abort', dropped, { once: true });
   let upstream: Response;
   try {
-    upstream = await deps.fetch(link, { method, headers, redirect: 'error' });
+    upstream = await deps.fetch(link, {
+      method,
+      headers,
+      redirect: 'error',
+      signal: upstreamAbort.signal,
+    });
   } catch {
-    log('warn', 'media.proxy-failed', { fetch: true });
+    // A request the player dropped is not a failure worth a line.
+    if (!upstreamAbort.signal.aborted) log('warn', 'media.proxy-failed', { fetch: true });
     return plain(502);
   }
   const status = upstream.status;
@@ -226,5 +252,39 @@ async function proxyPlay(
     await upstream.body?.cancel().catch(() => undefined);
     return new Response(null, { status, headers: out });
   }
-  return new Response(upstream.body, { status, headers: out });
+  const body = upstream.body === null ? null : passThrough(upstream.body, upstreamAbort);
+  return new Response(body, { status, headers: out });
+}
+
+/**
+ * `body` byte for byte, read from upstream only as the player reads (`highWaterMark: 0`: no
+ * buffer of its own). Cancelling it, which Electron does when the player drops the request,
+ * cancels the upstream body and aborts its fetch; an upstream error does the same.
+ */
+function passThrough(
+  body: ReadableStream<Uint8Array>,
+  upstreamAbort: AbortController,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const chunk = await reader.read();
+          if (chunk.done) controller.close();
+          else controller.enqueue(chunk.value);
+        } catch (e: unknown) {
+          // An upstream error, or a read that lost a race with cancel (then a no-op).
+          upstreamAbort.abort();
+          controller.error(e);
+        }
+      },
+      async cancel(reason: unknown) {
+        const cancelled = reader.cancel(reason).catch(() => undefined);
+        upstreamAbort.abort();
+        await cancelled;
+      },
+    },
+    { highWaterMark: 0 },
+  );
 }

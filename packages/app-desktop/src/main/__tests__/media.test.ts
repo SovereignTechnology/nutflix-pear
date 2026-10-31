@@ -10,6 +10,7 @@ import {
   MAX_MEDIA_LINKS,
   MediaLinks,
   createMediaProtocolHandler,
+  netMediaFetch,
   parseMediaUrl,
   type MediaFetch,
 } from '../media.js';
@@ -107,7 +108,12 @@ describe('nf-media://play/<token> proxy', () => {
     expect(s.calls).toEqual([
       {
         url: LINK,
-        init: { method: 'GET', headers: { range: 'bytes=100-199' }, redirect: 'error' },
+        init: {
+          method: 'GET',
+          headers: { range: 'bytes=100-199' },
+          redirect: 'error',
+          signal: expect.any(AbortSignal) as AbortSignal,
+        },
       },
     ]);
     expect(res.status).toBe(206);
@@ -119,6 +125,89 @@ describe('nf-media://play/<token> proxy', () => {
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes(100));
+    // Read to the end: nothing was dropped, so nothing was aborted.
+    expect(s.calls[0]?.init.signal.aborted).toBe(false);
+  });
+
+  it('a body the player drops cancels the upstream body and aborts its fetch', async () => {
+    let cancelled: unknown = 'never';
+    // One chunk, then a stall: what a player that stopped reading leaves behind.
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(bytes(10));
+      },
+      cancel(reason) {
+        cancelled = reason;
+      },
+    });
+    const s = setup(
+      () =>
+        new Response(upstream, {
+          status: 206,
+          headers: { 'content-range': 'bytes 0-9/5000', 'content-length': '10' },
+        }),
+    );
+    const res = await s.handle(
+      new Request(`nf-media://play/${TOKEN}`, { headers: { range: 'bytes=0-' } }),
+    );
+    const signal = s.calls[0]?.init.signal;
+    expect(signal?.aborted).toBe(false);
+    const reader = res.body?.getReader();
+    expect((await reader?.read())?.value).toEqual(bytes(10));
+    await reader?.cancel('dropped');
+    expect(cancelled).toBe('dropped');
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('a request the player aborts aborts its upstream fetch, even before the headers', async () => {
+    const player = new AbortController();
+    const s = setup(
+      (c) =>
+        new Promise<Response>((_ok, no) => {
+          c.init.signal.addEventListener('abort', () => {
+            no(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    );
+    const pending = s.handle(new Request(`nf-media://play/${TOKEN}`, { signal: player.signal }));
+    const signal = s.calls[0]?.init.signal;
+    expect(signal?.aborted).toBe(false);
+    player.abort();
+    expect((await pending).status).toBe(502);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('an upstream body that fails fails the response body and aborts the fetch', async () => {
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(bytes(4));
+      },
+      pull(c) {
+        c.error(new TypeError('connection reset'));
+      },
+    });
+    const s = setup(() => new Response(upstream, { status: 200 }));
+    const res = await s.handle(new Request(`nf-media://play/${TOKEN}`));
+    // (undici may report it as its own TypeError: the abort is what matters here.)
+    await expect(res.arrayBuffer()).rejects.toThrow();
+    expect(s.calls[0]?.init.signal.aborted).toBe(true);
+  });
+
+  it('netMediaFetch hands net.fetch the whole init, the signal included', async () => {
+    const seen: { url: string; init: RequestInit }[] = [];
+    const f = netMediaFetch((url, init) => {
+      seen.push({ url, init });
+      return Promise.resolve(new Response(null));
+    });
+    const signal = new AbortController().signal;
+    const headers = { range: 'bytes=0-' };
+    await f(LINK, { method: 'GET', headers, redirect: 'error', signal });
+    expect(seen).toEqual([
+      { url: LINK, init: { method: 'GET', headers, redirect: 'error', signal } },
+    ]);
+    expect(seen[0]?.init.signal).toBe(signal);
+    // A copy: net.fetch never holds the proxy's own headers object.
+    expect(seen[0]?.init.headers).not.toBe(headers);
   });
 
   it('a request without Range is forwarded without one (200)', async () => {

@@ -1,9 +1,9 @@
 /**
  * proxy-abort — Electron main (bundled to `main.mjs` by `e2e/proxy-abort.e2e.ts`; ESM, `electron`
  * external). The app's own `nf-media:` handler (`src/main/media.ts`), schemes and CSP, with
- * `net.fetch` injected exactly as `main.ts` injects it, in front of the test's loopback server.
- * The test registers links through `__proxyAbort.link` (`app.evaluate`) and drives the `<video>`
- * elements of a sandboxed window.
+ * `net.fetch` injected through the same `netMediaFetch` as `main.ts`, in front of the test's
+ * loopback server. The test registers links through `__proxyAbort.link` (`app.evaluate`) and
+ * drives the `<video>` elements of a sandboxed window.
  */
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -11,7 +11,12 @@ import { fileURLToPath } from 'node:url';
 import { BrowserWindow, app, net, protocol } from 'electron';
 
 import { APP_RESPONSE_HEADERS } from '../../src/main/csp.ts';
-import { ImageRequests, MediaLinks, createMediaProtocolHandler } from '../../src/main/media.ts';
+import {
+  ImageRequests,
+  MediaLinks,
+  createMediaProtocolHandler,
+  netMediaFetch,
+} from '../../src/main/media.ts';
 import { APP_SCHEME, APP_URL, MEDIA_SCHEME, privilegedSchemes } from '../../src/main/schemes.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,7 +34,7 @@ void app.whenReady().then(async () => {
   const media = createMediaProtocolHandler({
     links,
     images: new ImageRequests(() => false),
-    fetch: (url, init) => net.fetch(url, { ...init, headers: { ...init.headers } }),
+    fetch: netMediaFetch((url, init) => net.fetch(url, init)),
   });
   protocol.handle(APP_SCHEME, async (req) => {
     if (new URL(req.url).pathname !== '/index.html') return new Response(null, { status: 404 });
