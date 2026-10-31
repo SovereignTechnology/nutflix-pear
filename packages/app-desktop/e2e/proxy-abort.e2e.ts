@@ -145,7 +145,7 @@ void describe(
         const launched = await within(launch(join(dir, 'main.mjs'), []), 120_000, 'launch');
         app = launched.app;
         page = launched.page;
-        await page.waitForSelector('#box', { timeout: 20_000 });
+        await page.waitForSelector('#box', { state: 'attached', timeout: 20_000 });
         step(`Electron up, upstream ${base}`);
       },
       { timeout: 5 * 60_000 },
@@ -175,7 +175,7 @@ void describe(
 
         const reloadAt = Date.now();
         await within(page.reload(), 30_000, 'reload');
-        await page.waitForSelector('#box', { timeout: 20_000 });
+        await page.waitForSelector('#box', { state: 'attached', timeout: 20_000 });
         const old = (): Upstream[] => upstream.filter((u) => u.token !== 'fresh');
         const closedMs = await until(() => old().every((u) => u.closedAt !== null), PROMPT_MS);
 
