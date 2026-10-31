@@ -2,7 +2,7 @@
  * Slice 4b-2 (ADR 0020, contracts v9): the NFX catalogue beside the NIP-71 one. Real signed
  * events in `FakeRelayPool`s, read through L1 as from relays.
  *
- * - Dormant: without `nfxCatalogNamespace` the host never asks for an NFX event.
+ * - Dormant: without `Settings.nfx` enabled the host never asks for an NFX event.
  * - Merged feeds: newest first under one time cursor, nothing lost or repeated across pages.
  * - Twins: a same-author NFX copy of a NIP-71 video is dropped, also across pages.
  * - NFX-04 §4: the read relays first, the scoped relays only as the fallback.
@@ -33,6 +33,7 @@ import { rig } from './support/rig.js';
 
 const kit = await coreTestKit();
 const NS = 'nfx:testnet:1';
+const NFX_ON = { enabled: true, network: NS, scopedRelays: [] } as const;
 const HOUR = 3600;
 
 let r: Rig | undefined;
@@ -97,10 +98,16 @@ async function allPages(a: NetworkAdapter, q: FeedQuery, max = 10): Promise<Cata
 const filtersOf = (spy: { mock: { calls: unknown[][] } }): NostrFilter[] =>
   spy.mock.calls.map((c) => c[1] as NostrFilter);
 
-describe('dormant without a namespace (production until slice 5)', () => {
-  it('never asks for kind 38504, an `n` or an `a`, and knows no NFX video', async () => {
+describe('dormant until Settings.nfx is enabled (contracts v10)', () => {
+  it.each([
+    ['absent', undefined],
+    ['present but off', { ...NFX_ON, enabled: false }],
+  ] as const)('%s: never asks for kind 38504, an `n` or an `a`', async (_name, nfx) => {
     const creator = new kit.TestSigner();
-    r = await rig({ identity: new SignerIdentity(creator) });
+    r = await rig({
+      identity: new SignerIdentity(creator),
+      ...(nfx === undefined ? {} : { nfx }),
+    });
     await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
     await storeNfx(r.pool, creator, 'lagrange-points', 1);
     const query = vi.spyOn(r.pool, 'query');
@@ -116,12 +123,27 @@ describe('dormant without a namespace (production until slice 5)', () => {
       expect(f['#a']).toBeUndefined();
     }
   });
+
+  it('switching NFX on and off takes effect on the next read', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator) });
+    await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
+    await storeNfx(r.pool, creator, 'lagrange-points', 1);
+    const a = r.host.adapter;
+    const kinds = async (): Promise<number[]> =>
+      (await a.feed({ source: 'tags', tags: ['space'] })).items.map((v) => v.kind);
+    expect(await kinds()).toEqual([21]);
+    await a.updateSettings({ nfx: NFX_ON });
+    expect(await kinds()).toEqual([38504, 21]);
+    await a.updateSettings({ nfx: { ...NFX_ON, enabled: false } });
+    expect(await kinds()).toEqual([21]);
+  });
 });
 
-describe('merged feeds (nfxCatalogNamespace set)', () => {
+describe('merged feeds (Settings.nfx enabled)', () => {
   it('pages NIP-71 and NFX videos newest first, nothing lost or repeated', async () => {
     const creator = new kit.TestSigner();
-    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    r = await rig({ identity: new SignerIdentity(creator), nfx: NFX_ON });
     // NIP-71 'space': hohmann (3 h), short-launch (12 h), orbit-decay (100 h).
     const legacy = await seedVideos(kit, r.pool, creator, [
       fixture('hohmann'),
@@ -143,7 +165,7 @@ describe('merged feeds (nfxCatalogNamespace set)', () => {
 
   it('nfxVideo finds a manifest by address, and nothing outside the network', async () => {
     const creator = new kit.TestSigner();
-    r = await rig({ nfxCatalogNamespace: NS });
+    r = await rig({ nfx: NFX_ON });
     const ev = await storeNfx(r.pool, creator, 'lagrange-points', 1);
     const a = r.host.adapter;
     expect((await a.nfxVideo(addr(creator.pubkey, 'lagrange-points')))?.eventId).toBe(ev.id);
@@ -153,7 +175,7 @@ describe('merged feeds (nfxCatalogNamespace set)', () => {
 
   it('Studio lists the creator’s NIP-71 uploads only', async () => {
     const creator = new kit.TestSigner();
-    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    r = await rig({ identity: new SignerIdentity(creator), nfx: NFX_ON });
     await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
     await storeNfx(r.pool, creator, 'lagrange-points', 1);
     const mine = await r.host.adapter.studio.myVideos();
@@ -164,7 +186,7 @@ describe('merged feeds (nfxCatalogNamespace set)', () => {
 describe('twins (ADR 0020: same author only)', () => {
   it('drops an NFX copy whose NIP-71 event exists, also when that event is on a later page', async () => {
     const creator = new kit.TestSigner();
-    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    r = await rig({ identity: new SignerIdentity(creator), nfx: NFX_ON });
     const [hohmann, raku] = await seedVideos(kit, r.pool, creator, [
       fixture('hohmann'),
       fixture('raku'),
@@ -182,7 +204,7 @@ describe('twins (ADR 0020: same author only)', () => {
   it('keeps an NFX video linking to another author’s event', async () => {
     const creator = new kit.TestSigner();
     const other = new kit.TestSigner();
-    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    r = await rig({ identity: new SignerIdentity(creator), nfx: NFX_ON });
     const [raku] = await seedVideos(kit, r.pool, creator, [fixture('raku')]);
     await storeNfx(r.pool, other, 'not-a-twin', 1, [['e', raku!.event.id]]);
     const got = await allPages(r.host.adapter, { source: 'tags', tags: ['space', 'ceramics'] });

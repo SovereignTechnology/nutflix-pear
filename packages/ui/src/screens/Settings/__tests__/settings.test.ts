@@ -816,3 +816,53 @@ describe('Settings — errors and cancellation', () => {
     expect(off).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Settings — NFX network (contracts v10)', () => {
+  const OFF = { enabled: false, network: 'nfx:testnet:1', scopedRelays: [] } as const;
+
+  it('is off by default; switching it on saves the one network', async () => {
+    const adapter = adapterWith();
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    expect(section(r, 'NFX network').textContent).toContain('Take part in the NFX testnet');
+    const toggle = input(r, '-nfx-enabled');
+    expect(toggle.checked).toBe(false);
+    click(toggle);
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: { ...OFF, enabled: true } });
+    expect(input(r, '-nfx-enabled').checked).toBe(true);
+  });
+
+  it('adds a scoped relay, ws:// only to this computer, and removes it', async () => {
+    const adapter = adapterWith();
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    const field = input(r, '-nfx-add');
+    type(field, 'ws://relay.example');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(update).not.toHaveBeenCalled();
+    type(field, 'ws://127.0.0.1:7777');
+    submit(field);
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({
+      nfx: { ...OFF, scopedRelays: ['ws://127.0.0.1:7777'] },
+    });
+    expect(field.value).toBe('');
+    click(r.get('[aria-label="Remove ws://127.0.0.1:7777"]'));
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: OFF });
+  });
+
+  it('stops at eight scoped relays', async () => {
+    const eight = Array.from({ length: 8 }, (_, i) => `wss://r${String(i)}.example`);
+    const adapter = adapterWith({}, { nfx: { ...OFF, scopedRelays: eight } } as never);
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    const field = input(r, '-nfx-add');
+    type(field, 'wss://r9.example');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(update).not.toHaveBeenCalled();
+  });
+});

@@ -70,6 +70,7 @@ import {
   MAX_REISSUE_PLANS,
   MAX_RESTORE_MINTS,
   MAX_SECRET_BYTES,
+  NFX_NETWORK_IDS,
   RECOVERY_CONFIRM_WORDS,
   RECOVERY_WORDS,
 } from './protocol.js';
@@ -324,6 +325,25 @@ const AUTH_URL_RE = new RegExp(
 );
 
 export const isRelayUrl = safe(branded<RelayUrl>(matches(RELAY_RE, LIMITS.maxServerUrl)));
+
+/**
+ * Contracts v10: an NFX-04 scoped relay. `wss://` as `isRelayUrl`, or `ws://` to a loopback
+ * address only (`127.0.0.1`, `[::1]`, `localhost`): a local node's embedded relay, which nfxd
+ * serves without TLS. A `ws://` relay anywhere else would carry beacons in cleartext.
+ */
+const LOOPBACK_WS_RE = new RegExp(
+  `^[Ww][Ss]://(?:127\\.0\\.0\\.1|\\[::1\\]|localhost)${PORT}${PATH_NO_TRAILING}$`,
+);
+export const isScopedRelayUrl = safe(
+  branded<RelayUrl>(
+    (x): x is string =>
+      isRelayUrl(x) ||
+      (typeof x === 'string' && x.length <= LIMITS.maxServerUrl && LOOPBACK_WS_RE.test(x)),
+  ),
+);
+/** Unique scoped relays, at most `LIMITS.maxNfxScopedRelays`. */
+const isScopedRelays: Guard<readonly RelayUrl[]> = (x): x is readonly RelayUrl[] =>
+  arrayOf(isScopedRelayUrl, LIMITS.maxNfxScopedRelays)(x) && new Set(x).size === x.length;
 export const isMintUrl = safe(branded<MintUrl>(matches(HTTPS_SERVER_RE, LIMITS.maxServerUrl)));
 export const isNfMediaImgUrl = matches(NF_IMG_RE, 150) as Guard<NfMediaImgUrl>;
 export const isImageSource: Guard<string> = safe(
@@ -458,6 +478,8 @@ const isSettingsPatch = obj(
     hoverPreview: bool,
     loadRemoteImages: bool,
     theme: oneOf(['dark', 'light', 'system'] as const),
+    // Contracts v10 (ADR 0020): one network, its scoped relays; `enabled: false` is "off".
+    nfx: obj({ enabled: bool, network: oneOf(NFX_NETWORK_IDS), scopedRelays: isScopedRelays }),
     // SE-4: `belowSats: 0` is the v4 "off" sentinel; the host treats `<= 0` as disabled.
     // Issue #2: `amountSats` is a whole number of sats in 1 … `AUTO_TOP_UP_MAX_SATS` (absent =
     // the max) — anything else refuses the whole patch (and a stored file, which then reads as

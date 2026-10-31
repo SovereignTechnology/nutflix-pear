@@ -9,6 +9,15 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- Settings › NFX network (contracts version 10, ADR 0020 slice 5a): taking part in nfx's testnet
+  is now a setting, off by default.
+  - When on, the catalogue lists the network's free videos beside the Nostr ones. A free upload's
+    NFX announcement also goes to the network's scoped relays (NFX-04), which the section lists.
+  - Scoped relays are `wss://`, or `ws://` to this computer only (a local node's embedded relay).
+    There are at most 8, and no duplicates.
+  - A stored NFX setting this build does not understand turns NFX off and leaves every other
+    setting standing.
+  - This replaces the host options the earlier slices used in tests.
 - The NFX catalogue (ADR 0020, slice 4b-2). Given an NFX network, the host lists that network's
   free videos beside the NIP-71 ones. They appear in the subscriptions, tags and author feeds and
   in search, newest first under one cursor. `nfxVideo(addr)` finds one by address.

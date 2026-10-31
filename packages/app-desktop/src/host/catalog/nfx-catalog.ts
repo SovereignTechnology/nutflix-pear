@@ -5,8 +5,7 @@
  * `NostrClient` → `verifyIncoming`, then NFX-02's parser, revisions and deletions
  * (`nostr.nfxVideoPage`).
  *
- * Built only when the host is given a namespace (`nfxCatalogNamespace`): none in production
- * until slice 5's settings choose a network.
+ * Built only while `Settings.nfx` is enabled (contracts v10); off by default.
  */
 import type { FeedQuery, NfxAddress, NfxVideo, NostrPubkey, Page, RelayUrl } from '@sovit/core';
 import { nfx, nostr } from '@sovit/core';

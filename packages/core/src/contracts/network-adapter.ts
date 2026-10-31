@@ -6,6 +6,7 @@ import type {
   NfxAddress,
   NostrEventId,
   NostrPubkey,
+  RelayUrl,
   Sats,
   Sha256Hex,
   UnixSeconds,
@@ -186,6 +187,32 @@ export interface SeederStatus {
   }[];
 }
 
+/**
+ * v10 (ADR 0020, slice 5a): the NFX networks this build speaks (NFX-01 namespaces). Phase 1 is
+ * nfx's testnet only; a namespace outside this list is refused at every boundary.
+ */
+export const NFX_NETWORKS = ['nfx:testnet:1'] as const;
+export type NfxNetwork = (typeof NFX_NETWORKS)[number];
+
+/** v10: the most NFX-04 scoped relays one network may list. */
+export const MAX_NFX_SCOPED_RELAYS = 8 as const;
+
+/**
+ * v10 (ADR 0020): taking part in an NFX network. Off unless `enabled`: no NFX query, listing,
+ * seeding or beacon happens without it.
+ */
+export interface NfxSettings {
+  readonly enabled: boolean;
+  readonly network: NfxNetwork;
+  /**
+   * The network's NFX-04 scoped relays: `wss://`, or `ws://` to a loopback address only (a
+   * local node's embedded relay); unique; at most `MAX_NFX_SCOPED_RELAYS`. Beacons go here and
+   * nowhere else (NFX-03 §7); the catalogue reads them only when the read relays have nothing
+   * (NFX-04 §4).
+   */
+  readonly scopedRelays: readonly RelayUrl[];
+}
+
 export interface Settings {
   readonly relays: readonly RelayConfig[];
   readonly defaultMints: readonly MintUrl[];
@@ -208,6 +235,8 @@ export interface Settings {
    */
   readonly loadRemoteImages: boolean;
   readonly theme: 'dark' | 'light' | 'system';
+  /** v10 (ADR 0020): absent = off. */
+  readonly nfx?: NfxSettings;
   /**
    * v5 (L5-Settings/Wallet, L6-B, SE-4) — normative: `belowSats <= 0` means DISABLED (a patch
    * cannot remove the key, so "off" is written as 0). `belowSats` is compared with the balance

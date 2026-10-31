@@ -83,5 +83,9 @@
  *       BREAKING for listing: `feed` and `search` return `Page<CatalogVideo>`, so a consumer
  *       narrows on `kind` before it prices, plays or reacts. New `NetworkAdapter.nfxVideo(addr)`.
  *       Everything keyed by event id (`video`, stats, social, library, play) is unchanged.
+ *  10 — 2026-10-31 (ADR 0020, Phase 1 slice 5a). Additive: `Settings.nfx?: NfxSettings`
+ *       (`enabled`, `network`, `scopedRelays`), `NFX_NETWORKS` (`nfx:testnet:1` only) and
+ *       `MAX_NFX_SCOPED_RELAYS` (8). Absent or not `enabled` = no NFX activity. Every v9 consumer
+ *       compiles.
  */
-export const CONTRACTS_VERSION = 9 as const;
+export const CONTRACTS_VERSION = 10 as const;

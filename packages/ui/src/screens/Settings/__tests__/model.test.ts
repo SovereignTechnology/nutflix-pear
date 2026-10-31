@@ -1,6 +1,11 @@
 /** Pure helpers behind the Settings forms: URL validation, units, bounds, error copy. */
 import { describe, expect, it } from 'vitest';
-import { AUTO_TOP_UP_MAX_SATS as CORE_TOP_UP_MAX, AUTO_TOP_UP_MAX_SATS_PER_DAY } from '@sovit/core';
+import {
+  AUTO_TOP_UP_MAX_SATS as CORE_TOP_UP_MAX,
+  AUTO_TOP_UP_MAX_SATS_PER_DAY,
+  MAX_NFX_SCOPED_RELAYS,
+  NFX_NETWORKS,
+} from '@sovit/core';
 import {
   AUTO_TOP_UP_AMOUNT_MAX_SATS,
   AUTO_TOP_UP_PER_DAY_SATS,
@@ -17,8 +22,42 @@ import {
   parseTopUpAmountSats,
   signerTitle,
   validateMintUrl,
+  UI_MAX_NFX_SCOPED_RELAYS,
+  UI_NFX_NETWORK,
   validateRelayUrl,
+  validateScopedRelayUrl,
 } from '../model.js';
+
+describe('validateScopedRelayUrl (contracts v10)', () => {
+  it('mirrors core: one network, the same relay cap', () => {
+    expect(NFX_NETWORKS).toEqual([UI_NFX_NETWORK]);
+    expect(UI_MAX_NFX_SCOPED_RELAYS).toBe(MAX_NFX_SCOPED_RELAYS);
+  });
+
+  it('accepts wss anywhere and ws to this computer only, normalised', () => {
+    expect(validateScopedRelayUrl(' wss://Scoped.Example/ ')).toEqual({
+      ok: true,
+      value: 'wss://scoped.example',
+    });
+    for (const [raw, value] of [
+      ['ws://127.0.0.1:7777', 'ws://127.0.0.1:7777'],
+      ['ws://[::1]:7777/', 'ws://[::1]:7777'],
+      ['WS://LocalHost:7777', 'ws://localhost:7777'],
+    ] as const) {
+      expect(validateScopedRelayUrl(raw)).toEqual({ ok: true, value });
+    }
+  });
+
+  it('refuses cleartext relays off this computer, and duplicates', () => {
+    for (const raw of ['ws://scoped.example', 'ws://192.168.1.10:7777', 'ws://127.0.0.1?x=1']) {
+      expect(validateScopedRelayUrl(raw).ok, raw).toBe(false);
+    }
+    expect(validateScopedRelayUrl('ws://127.0.0.1:7777', ['ws://127.0.0.1:7777']).ok).toBe(false);
+    expect(validateScopedRelayUrl('wss://a.example', ['wss://a.example']).ok).toBe(false);
+    expect(validateScopedRelayUrl('https://a.example').ok).toBe(false);
+    expect(validateScopedRelayUrl('').ok).toBe(false);
+  });
+});
 
 describe('validateRelayUrl', () => {
   it('accepts wss:// and normalises host case, default port and trailing slash', () => {

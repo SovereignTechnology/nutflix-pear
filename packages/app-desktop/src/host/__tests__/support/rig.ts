@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { RelayUrl, UnixSeconds } from '@sovit/core';
+import type { NfxSettings, RelayUrl, UnixSeconds } from '@sovit/core';
 import type { signer as signerMod } from '@sovit/core';
 import { nostr } from '@sovit/core';
 
@@ -61,10 +61,8 @@ export interface RigOptions {
    * suites pass a pass-through spy of it (`support/real-recovery.ts`).
    */
   readonly recoveryCore?: HostOptions['recoveryCore'];
-  /** Slice 4a: a namespace's NFX-04 scoped relays. */
-  readonly nfxScopedRelays?: HostOptions['nfxScopedRelays'];
-  /** Slice 4b: the NFX network the catalogue lists. */
-  readonly nfxCatalogNamespace?: HostOptions['nfxCatalogNamespace'];
+  /** Contracts v10: `Settings.nfx`, set with the test relays at start. */
+  readonly nfx?: NfxSettings;
 }
 
 /** Polls `check` every few ms until it returns a value, or fails with `what` after `ms`. */
@@ -113,8 +111,6 @@ export async function rig(o: RigOptions = {}): Promise<Rig> {
     ...(o.nip46 === undefined ? {} : { nip46: o.nip46 }),
     ...(o.topUp === undefined ? {} : { topUp: o.topUp }),
     ...(o.recoveryCore === undefined ? {} : { recoveryCore: o.recoveryCore }),
-    ...(o.nfxScopedRelays === undefined ? {} : { nfxScopedRelays: o.nfxScopedRelays }),
-    ...(o.nfxCatalogNamespace === undefined ? {} : { nfxCatalogNamespace: o.nfxCatalogNamespace }),
     imageTransport: o.imageTransport ?? (() => Promise.reject(new Error('no network in tests'))),
   });
   late.host = host;
@@ -124,6 +120,7 @@ export async function rig(o: RigOptions = {}): Promise<Rig> {
       { url: RELAY_A, read: true, write: true },
       { url: RELAY_B, read: true, write: false },
     ],
+    ...(o.nfx === undefined ? {} : { nfx: o.nfx }),
   });
   return {
     host,

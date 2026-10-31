@@ -25,6 +25,7 @@ import {
   isNfxAddress,
   isRelayUrl,
   isReplyMsg,
+  isScopedRelayUrl,
   isSessionId,
   isSubMsg,
   isTopic,
@@ -504,6 +505,78 @@ describe('URL rules (consistent with @sovit/ui Settings/Studio validators)', () 
         },
       ),
       { numRuns: 400 },
+    );
+  });
+});
+
+describe('NFX settings (contracts v10)', () => {
+  const nfx = (over: Record<string, unknown> = {}): unknown => ({
+    enabled: true,
+    network: 'nfx:testnet:1',
+    scopedRelays: ['wss://scoped.example', 'ws://127.0.0.1:7777'],
+    ...over,
+  });
+  const patch = (x: unknown): boolean => validateArgs.updateSettings([{ nfx: x }]);
+
+  it('scoped relays: wss anywhere, ws to loopback only', () => {
+    for (const ok of [
+      'wss://scoped.example',
+      'wss://scoped.example:444/nfx',
+      'ws://127.0.0.1:7777',
+      'ws://[::1]:7777',
+      'ws://localhost:7777',
+      'ws://localhost',
+    ])
+      expect(isScopedRelayUrl(ok), ok).toBe(true);
+    for (const bad of [
+      'ws://scoped.example',
+      'ws://192.168.1.10:7777',
+      'ws://127.0.0.2',
+      'ws://localhost.example',
+      'ws://127.0.0.1:7777?x=1',
+      'ws://u:p@127.0.0.1',
+      'http://127.0.0.1',
+      'wss://scoped.example/',
+      42,
+    ])
+      expect(isScopedRelayUrl(bad), String(bad)).toBe(false);
+  });
+
+  it('a patch names a known network, at most 8 unique scoped relays', () => {
+    expect(patch(nfx())).toBe(true);
+    expect(patch(nfx({ enabled: false, scopedRelays: [] }))).toBe(true);
+    expect(patch(nfx({ network: 'nfx:mainnet:1' }))).toBe(false);
+    expect(patch(nfx({ network: 'nutflix:testnet:1' }))).toBe(false);
+    expect(patch(nfx({ scopedRelays: ['wss://a.example', 'wss://a.example'] }))).toBe(false);
+    const nine = Array.from({ length: 9 }, (_, i) => `wss://r${String(i)}.example`);
+    expect(patch(nfx({ scopedRelays: nine }))).toBe(false);
+    expect(patch(nfx({ scopedRelays: nine.slice(0, 8) }))).toBe(true);
+    expect(patch(nfx({ scopedRelays: ['ws://scoped.example'] }))).toBe(false);
+    expect(patch(nfx({ extra: 1 }))).toBe(false);
+    expect(patch({ network: 'nfx:testnet:1', scopedRelays: [] })).toBe(false);
+  });
+
+  it('every scoped relay the Settings validator accepts is accepted here', async () => {
+    const ui = (await import(
+      /* @vite-ignore */ new URL('../../../../ui/src/screens/Settings/model.ts', import.meta.url)
+        .href
+    )) as {
+      validateScopedRelayUrl(s: string): { ok: boolean; value?: string };
+      UI_NFX_NETWORK: string;
+      UI_MAX_NFX_SCOPED_RELAYS: number;
+    };
+    expect(ui.UI_NFX_NETWORK).toBe('nfx:testnet:1');
+    expect(ui.UI_MAX_NFX_SCOPED_RELAYS).toBe(LIMITS.maxNfxScopedRelays);
+    const host = fc.constantFrom('127.0.0.1', '[::1]', 'localhost', 'Localhost', 'relay.example');
+    const port = fc.option(fc.integer({ min: 1, max: 65535 }), { nil: undefined });
+    const path = fc.stringMatching(/^(\/[A-Za-z0-9._~-]{1,8}){0,2}\/?$/);
+    fc.assert(
+      fc.property(fc.constantFrom('ws', 'WS', 'wss', 'http'), host, port, path, (sc, h, p, pa) => {
+        const raw = `${sc}://${h}${p === undefined ? '' : `:${String(p)}`}${pa}`;
+        const r = ui.validateScopedRelayUrl(raw);
+        if (r.ok) expect(isScopedRelayUrl(r.value), `${raw} → ${String(r.value)}`).toBe(true);
+      }),
+      { numRuns: 300 },
     );
   });
 });
