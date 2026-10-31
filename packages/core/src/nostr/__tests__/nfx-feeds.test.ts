@@ -4,7 +4,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { NfxAddress, NostrEvent, NostrFilter } from '../../contracts/index.js';
+import type { NfxAddress, NostrEvent } from '../../contracts/index.js';
 import {
   fetchNfxVideo,
   nfxAuthorsFeed,
@@ -93,7 +93,7 @@ describe('nfxVideoPage', () => {
       addr(creator.pubkey, 'video-002'),
       addr(creator.pubkey, 'video-000'),
     ]);
-    const filters = query.mock.calls.map((c) => c[1] as NostrFilter);
+    const filters = query.mock.calls.map((c) => c[1]);
     const deletionQuery = filters.find((f) => f.kinds?.includes(5));
     expect(deletionQuery?.authors).toEqual([creator.pubkey]);
     expect([...(deletionQuery?.['#a'] ?? [])].sort()).toEqual(

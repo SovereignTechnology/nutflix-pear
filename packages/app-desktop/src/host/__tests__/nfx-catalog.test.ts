@@ -18,7 +18,6 @@ import type {
   NostrFilter,
   NetworkAdapter,
   RelayUrl,
-  UnixSeconds,
 } from '@sovit/core';
 import { mocks, nostr } from '@sovit/core';
 
@@ -205,19 +204,18 @@ describe('NfxCatalog (NFX-04 §4)', () => {
     const scoped = new nostr.FakeRelayPool();
     const asked: RelayUrl[][] = [];
     const pool: nostr.PoolLike = {
-      query: (relays, filter, opts) => {
+      query: (relays, filter) => {
         asked.push([...relays]);
-        return (relays.includes(SCOPED) ? scoped : pub).query(relays, filter, opts);
+        return (relays.includes(SCOPED) ? scoped : pub).query(relays, filter);
       },
-      subscribe: (relays, filters, handlers, opts) =>
-        pub.subscribe(relays, filters, handlers, opts),
+      subscribe: (relays, filters, handlers) => pub.subscribe(relays, filters, handlers),
       publish: (relays, event) => pub.publish(relays, event),
       close: () => undefined,
     };
     const client = new nostr.NostrClient({
       pool,
       relays: [{ url: PUBLIC, read: true, write: true }],
-      now: () => mocks.FIXTURE_NOW as UnixSeconds,
+      now: () => mocks.FIXTURE_NOW,
     });
     return { pub, scoped, client, asked };
   }
