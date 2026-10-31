@@ -14,9 +14,11 @@ import type {
 } from '@sovit/core';
 import { nfx } from '@sovit/core';
 
+import { NFX_DEFAULT_NAMESPACE } from '../../worker/studio/nfx.js';
 import type { NfxStored } from '../nfx/publish.js';
 import {
   MAX_PENDING_NFX,
+  NFX_PUBLISH_NAMESPACE,
   PENDING_NFX_TTL_S,
   PendingNfxUploads,
   isSignedManifest,
@@ -63,6 +65,11 @@ const stored = (over: Partial<NfxStored> = {}): NfxStored => ({
 });
 
 describe('nfxManifestFor', () => {
+  it('announces on the network the worker packages for', () => {
+    // Two constants until slice 5's settings: this pins them together (a test is not bundled).
+    expect(NFX_PUBLISH_NAMESPACE).toBe(NFX_DEFAULT_NAMESPACE);
+  });
+
   it('builds the NFX-02 tags, the thumb, and one `e` link back to the legacy event', () => {
     const built = nfxManifestFor(legacyBy('aa'.repeat(32)), stored(), AT);
     expect(built.ok).toBe(true);

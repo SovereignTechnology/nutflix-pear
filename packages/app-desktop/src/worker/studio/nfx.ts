@@ -21,30 +21,19 @@ import type { NfxUploadFailure, NfxUploadStatusWire } from '../../ipc/worker-pro
  */
 export const NFX_DEFAULT_NAMESPACE = 'nfx:testnet:1' as const;
 
-/** Prefix of the video ids this app derives (`nutflix-<32 hex>`, 40 characters). */
-const VIDEO_ID_PREFIX = 'nutflix-';
-
 /**
  * The NFX address of the video a legacy NIP-71 event published: `<namespace>:nutflix-<first 32
- * hex of the event id>`. Deterministic: the same legacy video always maps to the same address,
- * and its manifest links back to the legacy event with `["e", …]`. Inside NFX-02's
- * `[a-z0-9][a-z0-9-]{6,62}`. 128 bits of the id keep two of this node's videos from colliding.
- *
- * The host imports this function too (`host/nfx/publish.ts`), to check that the stored video is
- * the one it published, so the two processes cannot derive different addresses. Nothing else in
- * this module runs there, and it loads only `@sovit/core` at runtime, which the host already does.
+ * hex of the event id>` (`nfx.legacyVideoAddr`, in core so that the host, which checks it before
+ * announcing the video, derives the same one). Throws on a bad id or namespace.
  */
 export function nfxVideoAddrFor(
   legacyEventId: string,
   namespace: string = NFX_DEFAULT_NAMESPACE,
 ): nfx.VideoAddr {
-  if (!/^[0-9a-f]{64}$/.test(legacyEventId)) {
-    throw new TypeError('nfx: a legacy event id is 64 lowercase hex');
-  }
   const ns = nfx.Namespace.parse(namespace);
   if (!ns.ok) throw new TypeError('nfx: not an NFX-01 namespace');
-  const addr = nfx.VideoAddr.of(ns.value, `${VIDEO_ID_PREFIX}${legacyEventId.slice(0, 32)}`);
-  if (!addr.ok) throw new TypeError('nfx: the derived video id is invalid');
+  const addr = nfx.legacyVideoAddr(ns.value, legacyEventId);
+  if (!addr.ok) throw new TypeError(`nfx: ${addr.error.reason}`);
   return addr.value;
 }
 

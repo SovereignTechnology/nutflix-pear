@@ -12,8 +12,13 @@ import type { NostrEvent, RelayUrl, VideoManifest } from '@sovit/core';
 import { nfx } from '@sovit/core';
 
 import type { NfxUploadStatusWire } from '../../ipc/worker-protocol.js';
-// The worker's own derivation, so the two processes cannot disagree (it loads only core).
-import { nfxVideoAddrFor } from '../../worker/studio/nfx.js';
+
+/**
+ * The NFX network this build announces on: the one the worker packages for
+ * (`worker/studio/nfx.ts` `NFX_DEFAULT_NAMESPACE`; a test pins the two equal). Slice 5's settings
+ * replace both. A stored video in any other namespace is refused, so a mismatch fails closed.
+ */
+export const NFX_PUBLISH_NAMESPACE = 'nfx:testnet:1' as const;
 
 export type NfxStored = Extract<NfxUploadStatusWire, { state: 'stored' }>;
 
@@ -54,14 +59,12 @@ export function nfxManifestFor(
   stored: NfxStored,
   createdAt: number,
 ): { readonly ok: true; readonly draft: NfxManifestDraft } | NfxNotPublished {
-  let expected: nfx.VideoAddr;
-  try {
-    expected = nfxVideoAddrFor(legacy.id);
-  } catch {
+  const ns = nfx.Namespace.parse(NFX_PUBLISH_NAMESPACE);
+  const expected = ns.ok ? nfx.legacyVideoAddr(ns.value, legacy.id) : undefined;
+  const addr = nfx.VideoAddr.parse(stored.video);
+  if (expected?.ok !== true || !addr.ok || !addr.value.equals(expected.value)) {
     return notPublished('address-mismatch');
   }
-  const addr = nfx.VideoAddr.parse(stored.video);
-  if (!addr.ok || !addr.value.equals(expected)) return notPublished('address-mismatch');
   if (!Number.isSafeInteger(legacy.publishedAt) || legacy.publishedAt < 0) {
     return notPublished('invalid');
   }
