@@ -59,6 +59,14 @@ export {
   type SidxSegment,
 } from './mp4-sidx.js';
 export { packageNfx } from './nfx-package.js';
+export {
+  checkNfxSegment,
+  planNfxPlayback,
+  segmentLead,
+  type NfxPlanResult,
+  type NfxPlayPlan,
+  type NfxPlaySegment,
+} from './nfx-play.js';
 export type {
   NfxPackageDeps,
   NfxPackageInput,

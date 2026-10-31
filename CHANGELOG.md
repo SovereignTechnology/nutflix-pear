@@ -9,6 +9,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- Core plans how a remote NFX rendition plays (ADR 0020 slice 5d, spike S-E's layout C):
+  `media.planNfxPlayback` predicts the global `sidx`, and every segment's `tfdt` and served size,
+  from the verified hash list, the init and the first segment alone.
+  - `media.checkNfxSegment` holds each later segment to that prediction on arrival.
+  - A progressive file part can start `skip` bytes into the stored file, so a segment is served
+    from its `moof` without a copy.
+  - Nothing plays NFX yet; the worker and the player come next.
 - The worker seeds its NFX videos over HyperDHT, NFX-12 `nfx/files/1` in free mode (ADR 0020
   slice 5b).
   - It serves only while seeding and the NFX setting are both on.

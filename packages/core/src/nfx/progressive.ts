@@ -10,9 +10,18 @@
  */
 import { MAX_HASH_LIST_BYTES } from './files1.js';
 
-/** A stored file (by sha256 and size) or bytes made for the view (a `sidx`). */
+/**
+ * A stored file (by sha256 and size) or bytes made for the view (a `sidx`). A file part may start
+ * `skip` bytes into the stored file (slice 5d: a segment served from its `moof`, past its own
+ * `styp`/`sidx`, never copied); `size` is then the bytes served, the file's size less `skip`.
+ */
 export type ProgressivePart =
-  | { readonly kind: 'file'; readonly sha256: string; readonly size: number }
+  | {
+      readonly kind: 'file';
+      readonly sha256: string;
+      readonly size: number;
+      readonly skip?: number;
+    }
   | { readonly kind: 'bytes'; readonly bytes: Uint8Array };
 
 export interface PlacedPart {
@@ -45,6 +54,12 @@ export function progressiveLayout(parts: readonly ProgressivePart[]): Progressiv
     const size = part.kind === 'file' ? part.size : part.bytes.length;
     if (part.kind === 'file' && !SHA.test(part.sha256))
       throw new RangeError('progressive: a part is not a sha256');
+    if (
+      part.kind === 'file' &&
+      part.skip !== undefined &&
+      !(Number.isSafeInteger(part.skip) && part.skip >= 0)
+    )
+      throw new RangeError('progressive: a bad skip');
     if (!Number.isSafeInteger(size) || size < 1) throw new RangeError('progressive: an empty part');
     if (!Number.isSafeInteger(offset + size)) throw new RangeError('progressive: past 2^53 bytes');
     placed.push({ part, offset, size });
