@@ -93,6 +93,11 @@ export class PeerNode {
     return this.swarm?.connections.size ?? 0;
   }
 
+  /** The swarm's DHT node while started (NFX-12 servers listen on it, slice 5b); else `null`. */
+  get dht(): DHT | null {
+    return this.swarm?.dht ?? null;
+  }
+
   start(): void {
     if (this.swarm !== null || this.destroyed) return;
     const { bootstrap, loopbackOnly } = this.o;

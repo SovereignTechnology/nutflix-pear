@@ -9,6 +9,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The worker seeds its NFX videos over HyperDHT, NFX-12 `nfx/files/1` in free mode (ADR 0020
+  slice 5b).
+  - It serves only while seeding and the NFX setting are both on.
+  - It listens on the swarm's DHT with a key pair of its own per network, derived from the
+    worker's key and never the legacy swarm's.
+  - It answers only for files a stored video's verified hash list names.
+  - Two new worker messages give the host what beacons will need (slice 5c): the `hyperdht`
+    endpoint with its `bind` for a seeder key, and the list of stored videos.
 - Settings › NFX network (contracts version 10, ADR 0020 slice 5a): taking part in nfx's testnet
   is now a setting, off by default.
   - When on, the catalogue lists the network's free videos beside the Nostr ones. A free upload's

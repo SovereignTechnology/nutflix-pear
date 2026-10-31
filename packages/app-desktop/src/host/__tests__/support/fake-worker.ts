@@ -214,7 +214,13 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
       case 'play.prefetch':
       case 'seeder.configure':
       case 'seeder.unban':
+      case 'nfx.configure':
         return Promise.resolve(undefined);
+      // Slice 5b: not seeding NFX, nothing stored, unless a test sets a handler.
+      case 'nfx.endpoint':
+        return Promise.resolve({ endpoint: null });
+      case 'nfx.videos':
+        return Promise.resolve({ videos: [] });
       case 'play.open': {
         const args = a as PlayOpenArgs;
         this.sessions.set(args.sid, args);

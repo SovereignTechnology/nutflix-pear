@@ -32,6 +32,7 @@ import { MINT, PUBKEY, SID, UPLOAD_ID, VIDEO, sats } from './samples.js';
 const R = VIDEO.renditions[0]!;
 const HYPER_IMG = `hyper://${'ab'.repeat(32)}/0-1`;
 const seeding = { enabled: true, diskCapBytes: 50 * 1024 ** 3 };
+const SHA = 'ef'.repeat(32) as Sha256Hex;
 const meta = {
   title: 'My video',
   description: '',
@@ -72,6 +73,9 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'seeder.configure': [seeding],
   'seeder.melt': [{ mint: MINT, bolt11: 'lnbc500n1pmockinvoice' }],
   'seeder.unban': [{ pubkey: PUBKEY }],
+  'nfx.configure': [{ enabled: true }, { enabled: false }],
+  'nfx.endpoint': [{ seeder: PUBKEY }],
+  'nfx.videos': [{}],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
   'studio.upload': [
     { uploadId: UPLOAD_ID, path: '/home/u/Videos/a.mp4', name: 'a.mp4', meta },
@@ -112,6 +116,15 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
   'seeder.configure': [undefined],
   'seeder.melt': [{ paid: true }],
   'seeder.unban': [undefined],
+  'nfx.configure': [undefined],
+  'nfx.endpoint': [
+    { endpoint: null },
+    { endpoint: { t: 'hyperdht', peer: 'a'.repeat(64), bind: 'b'.repeat(128) } },
+  ],
+  'nfx.videos': [
+    { videos: [] },
+    { videos: [{ video: 'nfx:testnet:1:nutflix-' + 'c'.repeat(32), root: SHA, segs: 9 }] },
+  ],
   'studio.ffmpeg': [
     { found: false },
     { found: true, path: '/usr/bin/ffmpeg', version: '8.1.2', os: 'linux' },
@@ -652,5 +665,35 @@ describe('worker → host', () => {
       ),
       { numRuns: 300 },
     );
+  });
+});
+
+describe('slice 5b: the NFX worker messages', () => {
+  it('init may carry nfx.enabled, and nothing else under nfx', () => {
+    const [init] = ARGS.init;
+    expect(validateWorkerArgs.init({ ...init!, nfx: { enabled: true } })).toBe(true);
+    expect(validateWorkerArgs.init({ ...init!, nfx: { enabled: 'yes' } })).toBe(false);
+    expect(validateWorkerArgs.init({ ...init!, nfx: { enabled: true, network: 'x' } })).toBe(false);
+  });
+
+  it('refuses a malformed endpoint or stored video', () => {
+    const ok = { t: 'hyperdht', peer: 'a'.repeat(64), bind: 'b'.repeat(128) };
+    const endpoint = validateWorkerResult['nfx.endpoint'];
+    for (const bad of [
+      { ...ok, t: 'iroh' },
+      { ...ok, peer: 'A'.repeat(64) },
+      { ...ok, bind: 'b'.repeat(127) },
+      { ...ok, extra: 1 },
+    ])
+      expect(endpoint({ endpoint: bad }), JSON.stringify(bad)).toBe(false);
+    const videos = validateWorkerResult['nfx.videos'];
+    const v = { video: 'nfx:testnet:1:nutflix-' + 'c'.repeat(32), root: SHA, segs: 9 };
+    for (const bad of [
+      { ...v, segs: 0 },
+      { ...v, segs: 1.5 },
+      { ...v, video: 'nutflix:testnet:1:abcdefg' },
+      { ...v, root: 'x' },
+    ])
+      expect(videos({ videos: [bad] }), JSON.stringify(bad)).toBe(false);
   });
 });

@@ -233,6 +233,30 @@ describe('seeder over the worker; settings side effects', () => {
     expect(r.worker().calls('seeder.unban')).toEqual([{ pubkey: 'd'.repeat(64) }]);
   });
 
+  it('slice 5b: Settings.nfx reaches the worker on every on/off change and at init', async () => {
+    const nfx = { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } as const;
+    r = await rig();
+    await r.ready();
+    const a = r.host.adapter;
+    expect(r.worker().calls('init')[0]).toMatchObject({ nfx: { enabled: false } });
+    await a.updateSettings({ nfx });
+    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true }]);
+    await a.updateSettings({ theme: 'dark' });
+    await a.updateSettings({ nfx: { ...nfx, scopedRelays: ['wss://scoped.test' as RelayUrl] } });
+    expect(r.worker().calls('nfx.configure')).toHaveLength(1); // no on/off change, no push
+    await a.updateSettings({ nfx: { ...nfx, enabled: false } });
+    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true }, { enabled: false }]);
+    await a.updateSettings({ nfx });
+    // A restarted worker starts with the current state.
+    r.worker().crash(1);
+    await eventually(
+      () => r!.spawned.length === 2 && r!.host.worker.state === 'ready',
+      'restart',
+      5000,
+    );
+    expect(r.spawned[1]!.calls('init')[0]).toMatchObject({ nfx: { enabled: true } });
+  });
+
   it('seeder.status events reach onStatus as SeederStatus (Map)', async () => {
     r = await rig();
     await r.ready();

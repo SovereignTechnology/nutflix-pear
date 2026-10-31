@@ -207,7 +207,8 @@ declare module 'hyperswarm' {
   class Hyperswarm extends EventEmitter {
     constructor(opts?: HyperswarmOptions);
     readonly keyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
-    readonly dht: { address(): { host: string; port: number } | null };
+    /** The swarm's DHT node; NFX-12 servers listen on it too (slice 5b). */
+    readonly dht: import('hyperdht').default;
     readonly peers: ReadonlyMap<string, PeerInfo>;
     readonly connections: ReadonlySet<SwarmConnection>;
     readonly destroyed: boolean;
@@ -228,6 +229,13 @@ declare module 'hyperswarm' {
 }
 
 declare module 'hyperdht' {
+  import type NoiseSecretStream from '@hyperswarm/secret-stream';
+
+  export interface KeyPair {
+    publicKey: Uint8Array;
+    secretKey: Uint8Array;
+  }
+
   export interface DHTOptions {
     readonly bootstrap?: readonly { host: string; port: number }[];
     /** UDP bind host; `127.0.0.1` keeps the node off every other interface. */
@@ -235,13 +243,31 @@ declare module 'hyperdht' {
     readonly port?: number;
     readonly ephemeral?: boolean;
     readonly firewalled?: boolean;
-    readonly keyPair?: { publicKey: Uint8Array; secretKey: Uint8Array };
+    readonly keyPair?: KeyPair;
   }
+
+  /** As `@sovit/seeder`'s declaration (`lib/server.js`), which `NfxDht` is written against. */
+  export interface ServerOptions {
+    readonly firewall?: (remotePublicKey: Uint8Array) => boolean | Promise<boolean>;
+  }
+
+  export interface Server {
+    readonly publicKey: Uint8Array | null;
+    listen(keyPair: KeyPair): Promise<void>;
+    close(): Promise<void>;
+  }
+
+  export interface ConnectOptions {
+    readonly keyPair?: KeyPair;
+  }
+
   class DHT {
     constructor(opts?: DHTOptions);
-    static keyPair(seed?: Uint8Array): { publicKey: Uint8Array; secretKey: Uint8Array };
+    static keyPair(seed?: Uint8Array): KeyPair;
     address(): { host: string; port: number } | null;
     fullyBootstrapped(): Promise<void>;
+    createServer(opts: ServerOptions, onconnection: (socket: NoiseSecretStream) => void): Server;
+    connect(remotePublicKey: Uint8Array, opts?: ConnectOptions): NoiseSecretStream;
     destroy(): Promise<void>;
   }
   export default DHT;

@@ -979,6 +979,13 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
         this.log.warn('seeding change not pushed to the worker (applies on its next start)');
       }
     }
+    if ((next.nfx?.enabled === true) !== (prev.nfx?.enabled === true)) {
+      try {
+        await this.o.worker('nfx.configure', { enabled: next.nfx?.enabled === true });
+      } catch {
+        this.log.warn('NFX change not pushed to the worker (applies on its next start)');
+      }
+    }
     return next;
   }
 

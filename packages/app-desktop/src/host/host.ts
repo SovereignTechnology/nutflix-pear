@@ -593,6 +593,8 @@ export async function createHost(o: HostOptions): Promise<Host> {
         storage,
         seeding: s.seeding,
         prefetchSeconds: s.prefetchSeconds,
+        // Slice 5b: NFX seeding needs the setting on as well as seeding.
+        nfx: { enabled: s.nfx?.enabled === true },
         ...(desktop.ffmpeg === undefined ? {} : { ffmpeg: desktop.ffmpeg }),
         // Payments need at least one mint to pay at and be paid at (Settings → mints).
         ...paymentsInit(money()),
