@@ -6,8 +6,9 @@
  *
  * - Started by `bare-sidecar` (the worker's way, holding `Bare.IPC`): it reports one `log`
  *   event whose `msg` is the JSON `SubprocessProbeReport`.
- * - Started by the plain `bare` binary (no IPC, the spike's case): it writes that JSON to the
- *   file named by its last argument.
+ * - Started by the plain `bare` binary (no IPC, the spike's case; by hand only, since there it
+ *   hangs or quits early, run 41189554679): it writes that JSON to the file named by its last
+ *   argument.
  *
  * A Bare `beforeExit` while exchanges are pending is recorded: it is the teardown S-D saw. Exits
  * 0 only on a report that says `ok`. Driven by `__tests__/bare-subprocess.test.ts` (CI).

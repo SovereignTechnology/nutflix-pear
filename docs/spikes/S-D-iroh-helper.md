@@ -124,6 +124,27 @@ used? How large is it, how much memory does it use, and does a file need two sto
   cannot hold a long-lived child, the fallback is for the host (Node, which runs this client
   without fault) to spawn the helper and hand the worker a pipe.
 
+## Finding 10, reproduced (slice 5e-1, 2026-10-31)
+
+`packages/app-desktop/src/worker/subprocess-probe-entry.ts` drives two `cat` children through
+`bare-subprocess` with a stdin pipe (300 echoes each, small and 64 KiB, a timer between, a
+heartbeat). Run [41189554679](https://github.com/SovereignTechnology/nutflix-pear/actions/runs/41189554679),
+three runs each way:
+
+- **Started by bare-sidecar, as the host starts the worker (holding `Bare.IPC`): 3 of 3 pass**,
+  every echo back byte for byte, both children exiting 0.
+- **Started by the plain `bare`, as this spike did (no IPC): 3 of 3 fail as finding 10 did.**
+  Two runs hang until killed at 50 s, with every timer dead: the probe's 45 s watchdog never
+  fires. One exits 0 after 173 ms without a report.
+
+So the fault is Bare's (or `bare-subprocess`'s) and needs no helper to appear. It does not
+appear in the worker's configuration, where the IPC pipe is always held. **The worker spawns
+the helper**, as ADR 0021 §2 says; the host fallback is not needed. The sidecar runs stay in CI as
+a regression check (`bare-subprocess.test.ts`).
+
+An upstream report (holepunchto/bare or bare-subprocess) is drafted, not filed: posting it is
+Cameron's call.
+
 ## Open questions
 
 - Other targets (ADR 0103 §3 step 2), and signing.
@@ -132,4 +153,5 @@ used? How large is it, how much memory does it use, and does a file need two sto
 - What the helper serves to whom (admission, rate limits), and loopback / link-local direct
   addresses from tickets (spec-level; nfx dials them too): slice 5 with the review notes.
 - A soak, IPv6, and packaging as a `prebuilds/` package (slice 5).
-- Finding 10: why Bare tears down with a live subprocess, and whether the real worker does.
+- Finding 10: why the plain `bare` tears down with a live subprocess (Bare's; the real worker
+  does not, 5e-1 above).

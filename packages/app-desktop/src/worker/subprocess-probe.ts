@@ -15,5 +15,5 @@ export interface SubprocessProbeReport {
 }
 
 /** Exchanges per child, and the children. */
-export const SUBPROCESS_PROBE_ROUNDS = 150;
+export const SUBPROCESS_PROBE_ROUNDS = 300;
 export const SUBPROCESS_PROBE_CHILDREN = 2;

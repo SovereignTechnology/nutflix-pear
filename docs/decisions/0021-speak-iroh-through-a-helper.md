@@ -84,6 +84,9 @@ relay-only. A small Rust program the worker spawns can use n0's crates as they a
   discovery, which nfxd can use only with a publicly trusted certificate. Driving the helper from
   Bare through `bare-subprocess` failed (finding 10): slice 5 reproduces that in the real worker
   before it depends on it, with the host spawning the helper as the fallback.
+- **Slice 5e-1 (2026-10-31):** finding 10 reproduces with `cat` under the plain `bare`, and
+  not under bare-sidecar holding `Bare.IPC` (3 of 3 each way). The worker spawns the helper;
+  the host fallback is not needed.
 - **Not decided here:** an in-process Rust addon (once `bare-rust` is proven), Windows on `pear://`
   (ADR 0017 open question 3), and whether the helper's store is a cache handed off and evicted or
   counted in the disk cap (the spike's finding settles it).
