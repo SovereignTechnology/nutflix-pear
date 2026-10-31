@@ -113,6 +113,42 @@ export interface NfxStoredVideoWire {
   readonly segs: number;
 }
 
+/** Slice 5d: the most seeders one `nfx.play.open` names. */
+export const MAX_NFX_PLAY_PEERS = 16;
+/** Slice 5d: the most renditions one `nfx.play.open` reports (the highest-bandwidth ones). */
+export const MAX_NFX_RENDITIONS = 16;
+/** Slice 5d: a rendition's `resolution` as it crosses (`<w>x<h>`, NFX-05 §2, bounded here). */
+export const NFX_RESOLUTION = /^[0-9]{1,6}x[0-9]{1,6}$/;
+
+/**
+ * Slice 5d (ADR 0020): watch one free NFX video. The host found it (a verified manifest by its
+ * author) and the seeders that beacon it (verified beacons, their `bind` checked); the worker
+ * fetches its files from them over NFX-12 and serves one rendition as one progressive fMP4.
+ */
+export interface NfxPlayOpenArgs {
+  /** Host-minted; one id space with `play.open`'s. */
+  readonly sid: SessionId;
+  /** `<namespace>:<video-id>` (NFX-01): the manifest's `d`. */
+  readonly video: string;
+  /** The manifest `root`: sha256 of the hash list. */
+  readonly root: Sha256Hex;
+  /** The manifest `segs`: how many files the hash list lists. */
+  readonly segs: number;
+  /** A rendition id of the hash list; absent: the highest-bandwidth one. */
+  readonly rendition?: string;
+  /** The beaconed `hyperdht` endpoints, in the order to try them (1..`MAX_NFX_PLAY_PEERS`). */
+  readonly peers: readonly NfxHyperdhtEndpointWire[];
+  readonly prefetchSeconds: number;
+}
+
+/** Slice 5d: one rendition of an NFX video, as the player's quality menu needs it. */
+export interface NfxRenditionWire {
+  readonly id: string;
+  /** Peak bits per second (NFX-05 `bandwidth`). */
+  readonly bandwidth: number;
+  readonly resolution?: string;
+}
+
 export interface PlayOpenArgs {
   /** Host-minted; the worker keys the session by it. */
   readonly sid: SessionId;
@@ -183,6 +219,22 @@ export interface WorkerMethodTable {
     args: Record<string, never>,
     result: { readonly videos: readonly NfxStoredVideoWire[] },
   ];
+  /**
+   * Slice 5d: answers once the hash list verified, the rendition's init and first segment are
+   * spooled and layout C is planned; the rest arrives in the background. `link` serves the
+   * whole rendition as one fMP4 (`video/mp4`, single ranges). `rendition` is the one served;
+   * `renditions` lists the hash list's (at most `MAX_NFX_RENDITIONS`, by bandwidth).
+   */
+  'nfx.play.open': [
+    args: NfxPlayOpenArgs,
+    result: {
+      readonly link: LoopbackLink;
+      readonly rendition: string;
+      readonly renditions: readonly NfxRenditionWire[];
+    },
+  ];
+  /** Slice 5d: closes the session (its link 404s, its fetches stop, its spool goes). Idempotent. */
+  'nfx.play.close': [args: { readonly sid: SessionId }, result: undefined];
   /** Probes the binary (`path` = the configured one, when set). */
   'studio.ffmpeg': [
     args: { readonly recheck: boolean; readonly path?: string },

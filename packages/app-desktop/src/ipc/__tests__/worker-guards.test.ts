@@ -33,6 +33,25 @@ const R = VIDEO.renditions[0]!;
 const HYPER_IMG = `hyper://${'ab'.repeat(32)}/0-1`;
 const seeding = { enabled: true, diskCapBytes: 50 * 1024 ** 3 };
 const SHA = 'ef'.repeat(32) as Sha256Hex;
+/** Slice 5d: an NFX video and one seeder's beaconed endpoint. */
+const NFX_VIDEO = `nfx:testnet:1:nutflix-${'c'.repeat(32)}`;
+const ENDPOINT = { t: 'hyperdht' as const, peer: 'a'.repeat(64), bind: 'b'.repeat(128) };
+const NFX_OPEN = {
+  sid: SID,
+  video: NFX_VIDEO,
+  root: SHA,
+  segs: 9,
+  peers: [ENDPOINT],
+  prefetchSeconds: 30,
+};
+const NFX_OPENED = {
+  link: 'http://127.0.0.1:41234/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/fedcba9876543210fedcba9876543210',
+  rendition: '720p',
+  renditions: [
+    { id: '720p', bandwidth: 2_500_000, resolution: '1280x720' },
+    { id: '360p', bandwidth: 800_000 },
+  ],
+} as const;
 const meta = {
   title: 'My video',
   description: '',
@@ -76,6 +95,16 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'nfx.configure': [{ enabled: true }, { enabled: false }],
   'nfx.endpoint': [{ seeder: PUBKEY }],
   'nfx.videos': [{}],
+  'nfx.play.open': [
+    NFX_OPEN,
+    {
+      ...NFX_OPEN,
+      rendition: '720p',
+      peers: [ENDPOINT, { ...ENDPOINT, peer: 'c'.repeat(64) }],
+      prefetchSeconds: 0,
+    },
+  ],
+  'nfx.play.close': [{ sid: SID }],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
   'studio.upload': [
     { uploadId: UPLOAD_ID, path: '/home/u/Videos/a.mp4', name: 'a.mp4', meta },
@@ -125,6 +154,11 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
     { videos: [] },
     { videos: [{ video: 'nfx:testnet:1:nutflix-' + 'c'.repeat(32), root: SHA, segs: 9 }] },
   ],
+  'nfx.play.open': [
+    NFX_OPENED,
+    { ...NFX_OPENED, rendition: '360p', renditions: [{ id: '360p', bandwidth: 1 }] },
+  ],
+  'nfx.play.close': [undefined],
   'studio.ffmpeg': [
     { found: false },
     { found: true, path: '/usr/bin/ffmpeg', version: '8.1.2', os: 'linux' },
@@ -695,5 +729,50 @@ describe('slice 5b: the NFX worker messages', () => {
       { ...v, root: 'x' },
     ])
       expect(videos({ videos: [bad] }), JSON.stringify(bad)).toBe(false);
+  });
+});
+
+describe('slice 5d: nfx.play.open / nfx.play.close', () => {
+  it('refuses malformed open args', () => {
+    const g = validateWorkerArgs['nfx.play.open'];
+    for (const bad of [
+      { ...NFX_OPEN, peers: [] },
+      { ...NFX_OPEN, peers: Array.from({ length: 17 }, () => ENDPOINT) },
+      { ...NFX_OPEN, peers: [{ ...ENDPOINT, peer: 'A'.repeat(64) }] },
+      { ...NFX_OPEN, peers: [{ ...ENDPOINT, t: 'iroh' }] },
+      { ...NFX_OPEN, video: 'nutflix:testnet:1:abcdefg' },
+      { ...NFX_OPEN, root: 'EF'.repeat(32) },
+      { ...NFX_OPEN, segs: 0 },
+      { ...NFX_OPEN, segs: 1.5 },
+      { ...NFX_OPEN, rendition: '' },
+      { ...NFX_OPEN, rendition: 'a\nb' },
+      { ...NFX_OPEN, prefetchSeconds: 601 },
+      { ...NFX_OPEN, sid: 'short' },
+      { ...NFX_OPEN, extra: 1 },
+    ])
+      expect(g(bad), JSON.stringify(bad).slice(0, 200)).toBe(false);
+    expect(validateWorkerArgs['nfx.play.close']({ sid: SID, extra: 1 })).toBe(false);
+  });
+
+  it('refuses a malformed open result, and one whose rendition is not listed', () => {
+    const g = validateWorkerResult['nfx.play.open'];
+    for (const bad of [
+      { ...NFX_OPENED, rendition: '1080p' },
+      { ...NFX_OPENED, renditions: [] },
+      { ...NFX_OPENED, link: 'http://evil.example:80/x' },
+      { ...NFX_OPENED, renditions: [{ id: '720p', bandwidth: 0 }] },
+      { ...NFX_OPENED, renditions: [{ id: '720p', bandwidth: 1, resolution: 'big' }] },
+      { ...NFX_OPENED, renditions: [{ id: '720p', bandwidth: 1, codecs: 'avc1' }] },
+      {
+        ...NFX_OPENED,
+        renditions: Array.from({ length: 17 }, (_, i) => ({
+          id: i === 0 ? '720p' : `r${String(i)}`,
+          bandwidth: 1,
+        })),
+      },
+      { ...NFX_OPENED, extra: true },
+    ])
+      expect(g(bad), JSON.stringify(bad).slice(0, 200)).toBe(false);
+    expect(validateWorkerResult['nfx.play.close']({})).toBe(false);
   });
 });

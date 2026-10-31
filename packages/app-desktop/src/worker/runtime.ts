@@ -1,8 +1,8 @@
 /**
  * What the runtime-neutral `WorkerHost` needs from its runtime (design §6 L6-C: "runtime-
  * neutral, adapters injected — runs under Node in tests and Bare in production"). Bare's
- * implementation is `adapters/bare.ts` (bare-fs, bare-os, bare-subprocess); tests build a
- * Node one from `@sovit/seeder`'s and `@sovit/core/media/node`'s adapters. Hashing and
+ * implementation is `adapters/bare.ts` (bare-fs, bare-os, bare-subprocess, bare-http1); tests
+ * build a Node one from `@sovit/seeder`'s and `@sovit/core/media/node`'s adapters. Hashing and
  * randomness are NOT here: `./crypto.ts` (libsodium) loads under both runtimes.
  */
 import type { FsAdapter, ProcessRunner } from '@sovit/core';
@@ -36,6 +36,45 @@ export interface StateFs {
   mkdirp(path: string): void;
 }
 
+/**
+ * Slice 5d: one request to a loopback HTTP server the worker owns — the part of node:http's and
+ * bare-http1's `IncomingMessage` that `nfx/range-server.ts` reads (bare-http1 mirrors node:http).
+ */
+export interface HttpRequestLike {
+  readonly method?: string | undefined;
+  /** The request target as sent: the path (and query). */
+  readonly url?: string | undefined;
+  /** By lowercase name. */
+  readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+}
+
+/** Its response: the part of `ServerResponse` (a writable stream in both) used here. */
+export interface HttpResponseLike {
+  /** The response was destroyed or the client went away. */
+  readonly destroyed: boolean;
+  writeHead(status: number, headers: Readonly<Record<string, string>>): unknown;
+  /** `false`: buffered past the high-water mark; wait for `drain`. */
+  write(chunk: Uint8Array): boolean;
+  end(): unknown;
+  destroy(): unknown;
+  on(event: 'drain' | 'close', listener: () => void): unknown;
+  off(event: 'drain' | 'close', listener: () => void): unknown;
+}
+
+/** The server, created but not listening. */
+export interface HttpServerLike {
+  listen(port: number, host: string, onListening: () => void): unknown;
+  /** `{ port, … }` once listening, else `null`. */
+  address(): unknown;
+  /** Stop accepting; `onClose` runs once every connection is gone. */
+  close(onClose: () => void): unknown;
+  /** Destroy every connection, in flight or not (both runtimes have it). */
+  closeAllConnections?(): void;
+  on(event: 'error', listener: (err: Error) => void): unknown;
+}
+
+export type HttpRequestHandler = (req: HttpRequestLike, res: HttpResponseLike) => void;
+
 export interface WorkerRuntime {
   /** `@sovit/seeder`'s filesystem (Corestore dir, CAS index, ban list, fixture dirs). */
   readonly seederFs: SeederFs;
@@ -55,6 +94,12 @@ export interface WorkerRuntime {
    * step of the system clock still counted toward a give-up.
    */
   readonly monotonicNow: () => number;
+  /**
+   * Slice 5d: an HTTP/1 server for the worker's own loopback endpoints (the NFX range server):
+   * bare-http1 under Bare (`adapters/bare.ts`), node:http in tests. The legacy playback server
+   * gets its HTTP from `hypercore-blob-server`'s own `imports` map instead.
+   */
+  readonly createHttpServer: (onRequest: HttpRequestHandler) => HttpServerLike;
   /**
    * Start the DLEQ thread (issue #8 d: F5's checks off this event loop). Bare's is `Bare.Thread`
    * (`adapters/bare.ts`); absent, the checks run inline in small chunks.

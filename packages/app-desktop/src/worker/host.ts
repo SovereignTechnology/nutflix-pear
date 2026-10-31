@@ -9,7 +9,10 @@
  *   - the `CreditPool` + `ViewerPayer` (viewer side: pay what we download, stay under the
  *     seeders' unpaid window);
  *   - the `PlaybackServer` and one `PlaybackGate` per play session;
- *   - the ffmpeg probe and Studio uploads (L8's runner, `studio.publish` asked of the host).
+ *   - the ffmpeg probe and Studio uploads (L8's runner, `studio.publish` asked of the host);
+ *   - slice 5b/5d (ADR 0020): NFX seeding over HyperDHT, and free NFX play sessions
+ *     (`nfx/watching.ts`), which need no payment providers — without them the worker has no
+ *     swarm, and NFX play dials from a DHT node of its own.
  *
  * Every request arrives already validated by `validateWorkerArgs` (the rpc layer runs the
  * L6-0 guards); failures are thrown as `<code>: …` errors that the rpc layer turns into
@@ -37,6 +40,7 @@ import { LIMITS } from '../ipc/protocol.js';
 import type {
   HostMethod,
   HostMethodTable,
+  NfxPlayOpenArgs,
   NfxStoredVideoWire,
   PlayOpenArgs,
   Req,
@@ -73,6 +77,7 @@ import {
 } from './providers.js';
 import type { WorkerRuntime } from './runtime.js';
 import { NfxSeeding } from './nfx/seeding.js';
+import { NFX_PLAY_DIR, NfxWatching } from './nfx/watching.js';
 import { NFX_DEFAULT_NAMESPACE } from './studio/nfx.js';
 import { runWorkerUpload } from './studio/upload.js';
 
@@ -222,6 +227,8 @@ export class WorkerHost {
   private nfxEnabled = false;
   /** Slice 5b: NFX-12 seeding of the store's NFX videos (with the net). */
   private nfxSeeding: NfxSeeding | null = null;
+  /** Slice 5d: free NFX play sessions (with or without the net). */
+  private nfxWatch: NfxWatching | null = null;
   private readonly sessions = new Map<string, Session>();
   private readonly corePolicies = new Map<CoreKeyHex, PricePolicy>();
   /**
@@ -327,6 +334,11 @@ export class WorkerHost {
         return { endpoint: (await this.nfxSeeding?.endpoint(req.a.seeder)) ?? null };
       case 'nfx.videos':
         return { videos: this.nfxVideos() };
+      case 'nfx.play.open':
+        return this.nfxPlayOpen(req.a);
+      case 'nfx.play.close':
+        await this.nfxWatch?.close(req.a.sid);
+        return undefined;
       case 'studio.ffmpeg':
         return this.probe(req.a.recheck, req.a.path);
       case 'studio.upload':
@@ -372,6 +384,21 @@ export class WorkerHost {
     const server = new PlaybackServer({ logger: log, randomHex });
     await server.listen();
     this.live = { init: a, log, server, storage: a.storage, tmpDir };
+    // Slice 5d: before the providers, which free NFX play does not need. The swarm's DHT and the
+    // seeder's key derivation are read when a session dials, so a worker with payment providers
+    // dials from its swarm and one without dials from a node of its own (`nfx/watching.ts`).
+    this.nfxWatch = new NfxWatching({
+      swarmDht: () => this.net?.node.dht ?? null,
+      bootstrap: dev?.bootstrap ?? this.o.testBootstrap ?? null,
+      seederKeyPair: (name) => this.net?.seeder.blobs.store.createKeyPair(name) ?? null,
+      fs,
+      rmTree: (p) => runtime.mediaFs(a.storage).rm(p, { recursive: true }),
+      spoolDir: fs.join(tmpDir, NFX_PLAY_DIR),
+      crypto: sodiumCrypto,
+      createHttpServer: runtime.createHttpServer,
+      randomHex,
+      logger: log,
+    });
 
     let providers: WorkerProviders | undefined;
     const ctx: ProviderContext = { storage: a.storage };
@@ -635,7 +662,8 @@ export class WorkerHost {
     const live = this.live;
     if (live === null) fail('backend-down', 'worker is not initialised');
     const net = this.requireNet();
-    if (this.sessions.has(a.sid)) fail('invalid-argument', 'duplicate session id');
+    if (this.sessions.has(a.sid) || this.nfxWatch?.has(a.sid) === true)
+      fail('invalid-argument', 'duplicate session id');
     if (this.sessions.size >= MAX_SESSIONS) fail('rate-limited', 'too many open play sessions');
     const { hyper, size } = a.rendition;
     if (hyper.blob.blockLength < 1 || hyper.blob.byteLength !== size)
@@ -697,6 +725,17 @@ export class WorkerHost {
     this.lastSidForCore.set(core, s);
     live.log.info('play session opened', { core, prefetchBlocks: gate.prefetchBlocks });
     return { key: core, link };
+  }
+
+  /**
+   * Slice 5d: a free NFX play session — no payment providers needed, no price, no gate (NFX
+   * Phase 1 plays free videos only). One sid space with `play.open`.
+   */
+  private nfxPlayOpen(a: NfxPlayOpenArgs): Promise<WorkerMethodTable['nfx.play.open'][1]> {
+    const watch = this.nfxWatch;
+    if (watch === null) fail('backend-down', 'worker is not initialised');
+    if (this.sessions.has(a.sid)) fail('invalid-argument', 'duplicate session id');
+    return watch.open(a);
   }
 
   /**
@@ -1119,6 +1158,8 @@ export class WorkerHost {
       await Promise.all([...this.sessions.keys()].map((sid) => this.closeSession(sid)));
       await this.net?.payer.flush().catch(() => undefined);
       await this.live?.server.close();
+      // Slice 5d: NFX play dials from the swarm's DHT (or its own node, destroyed here).
+      await this.nfxWatch?.shutdown();
       // Slice 5b: the NFX-12 listener lives on the swarm's DHT, so it closes first.
       await this.nfxSeeding?.close();
       try {
