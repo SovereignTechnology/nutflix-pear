@@ -23,6 +23,8 @@ import {
   isHyperblobRef,
   isImageMime,
   isInvoice,
+  isIrohRelayUrl,
+  isIrohRelays,
   isLabel,
   isMintUrl,
   isMsgId,
@@ -40,6 +42,7 @@ import {
   isWireError,
   literal,
   matches,
+  nullable,
   num,
   obj,
   oneOf,
@@ -50,11 +53,13 @@ import {
   nfxOnlyIfFree,
   uploadMetaGuards,
   uploadMetaOptGuards,
+  wireMap,
 } from './guards.js';
 import type {
   HostMethod,
   HostMethodTable,
   HostToWorker,
+  NfxIrohEndpointWire,
   PublishDraft,
   WorkerEvent,
   WorkerEventName,
@@ -63,6 +68,7 @@ import type {
   WorkerToHost,
 } from './worker-protocol.js';
 import {
+  MAX_NFX_IROH_ADDRS,
   MAX_NFX_PLAY_PEERS,
   MAX_NFX_RENDITIONS,
   NFX_RESOLUTION,
@@ -105,6 +111,13 @@ const isPayments = obj({
   mints: arrayOf(isMintUrl, 16, 1),
 });
 
+/**
+ * Slice 5b: `Settings.nfx` for the worker. Slice 5e-3: with its iroh relays, in the IPC guard's
+ * normal form (`isIrohRelays`: iroh's own spelling, unique, at most 4), so the worker compares a
+ * relay the helper reports as a string.
+ */
+const isNfxConfigure = obj({ enabled: bool, irohRelays: isIrohRelays });
+
 const isInit = safe(
   (x: unknown): x is WorkerMethodTable['init'][0] =>
     obj(
@@ -118,7 +131,9 @@ const isInit = safe(
         ffmpeg: obj({ ffmpeg: isAbsolutePath, ffprobe: isAbsolutePath }),
         dev: isDev,
         payments: isPayments,
-        nfx: obj({ enabled: bool }),
+        nfx: isNfxConfigure,
+        // Slice 5e-3: the iroh helper's executable (absolute, bounded), or none.
+        irohHelper: nullable(isAbsolutePath),
       },
     )(x) &&
     // Real payments and mock payments never run together.
@@ -181,6 +196,33 @@ const isNfxHyperdhtEndpoint = obj({
   bind: matches(/^[0-9a-f]{128}$/, 128),
 });
 
+/**
+ * Slice 5e-3: a key of an iroh endpoint's `tickets` — `meta` or a rendition id (NFX-03 §4). A
+ * rendition id comes from a hash list: a label, nothing longer. The worker serves over iroh only
+ * a video whose every rendition id passes this.
+ */
+export const isNfxTicketKey = isLabel;
+/** An iroh-blobs `BlobTicket` in its string form (NFX-06 §2): `blob` + lowercase base32. */
+export const isNfxBlobTicket = matches(/^blob[a-z2-7]{8,4092}$/, 4096);
+/** A direct address as iroh prints one: `a.b.c.d:port` or `[ipv6(%scope)]:port`. */
+export const isNfxSocketAddr = matches(
+  /^(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9a-f:.]{2,45}(?:%[0-9]{1,10})?\]):[0-9]{1,5}$/,
+  64,
+);
+const isNfxIrohEndpointShape = obj({
+  t: literal('iroh'),
+  node: matches(/^[0-9a-f]{64}$/, 64),
+  relay: union(literal(''), isIrohRelayUrl),
+  addrs: arrayOf(isNfxSocketAddr, MAX_NFX_IROH_ADDRS),
+  // `meta` and at most one per rendition the worker serves.
+  tickets: wireMap(isNfxTicketKey, isNfxBlobTicket, MAX_NFX_RENDITIONS + 1),
+});
+/** It carries the `meta` collection, without which an iroh-only fetcher has no hash list. */
+const isNfxIrohEndpoint = safe(
+  (x: unknown): x is NfxIrohEndpointWire =>
+    isNfxIrohEndpointShape(x) && x.tickets.$map.some(([k]) => k === 'meta'),
+);
+
 /** Slice 5d: a free NFX video to watch, from the seeders that beacon it. */
 const isNfxPlayOpen = obj(
   {
@@ -208,8 +250,8 @@ export const validateWorkerArgs: {
   'seeder.configure': safe(isSeeding),
   'seeder.melt': safe(obj({ mint: isMintUrl, bolt11: isInvoice })),
   'seeder.unban': safe(obj({ pubkey: isPubkey })),
-  'nfx.configure': safe(obj({ enabled: bool })),
-  'nfx.endpoint': safe(obj({ seeder: isPubkey })),
+  'nfx.configure': safe(isNfxConfigure),
+  'nfx.endpoint': safe(obj({ seeder: isPubkey, video: isNfxVideoAddr })),
   'nfx.videos': safe(obj({}) as Guard<Record<string, never>>),
   'nfx.play.open': safe(isNfxPlayOpen),
   'nfx.play.close': safe(isSid),
@@ -286,7 +328,12 @@ export const validateWorkerResult: {
   'seeder.melt': safe(obj({ paid: bool })),
   'seeder.unban': isVoid,
   'nfx.configure': isVoid,
-  'nfx.endpoint': safe(obj({ endpoint: union(isNfxHyperdhtEndpoint, literal(null)) })),
+  'nfx.endpoint': safe(
+    obj({
+      hyperdht: union(isNfxHyperdhtEndpoint, literal(null)),
+      iroh: union(isNfxIrohEndpoint, literal(null)),
+    }),
+  ),
   'nfx.videos': safe(obj({ videos: arrayOf(isNfxStoredVideo, MAX_NFX_STORED_VIDEOS) })),
   'nfx.play.open': isNfxPlayOpenResult,
   'nfx.play.close': isVoid,

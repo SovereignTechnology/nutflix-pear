@@ -380,7 +380,11 @@ function endpointText(e: Endpoint): string {
   const q = (s: string): string => JSON.stringify(s);
   switch (e.t) {
     case 'iroh': {
-      const tickets = [...e.tickets].map(([k, v]) => `${q(k)}:${q(v)}`).join(',');
+      // nfx-proto's `BTreeMap` order, whatever order the caller's Map was filled in.
+      const tickets = [...e.tickets]
+        .sort(([a], [b]) => compareCodePoints(a, b))
+        .map(([k, v]) => `${q(k)}:${q(v)}`)
+        .join(',');
       const members = [
         '"t":"iroh"',
         `"node":${q(e.node)}`,

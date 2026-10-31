@@ -3,6 +3,7 @@
  * `WorkerRpc` fed framed bytes and a host-side `FrameDecoder` + `isWorkerToHost`, exactly
  * what L6-B's host does — plus a Node `WorkerRuntime` and small HTTP / wait helpers.
  */
+import { spawn } from 'node:child_process';
 import {
   appendFileSync,
   closeSync,
@@ -36,6 +37,7 @@ import type {
 import type { LoopbackPayHub } from '../../dev/loopback-pay.js';
 import type { WorkerHostOptions } from '../../host.js';
 import { WorkerHost } from '../../host.js';
+import type { HelperSpawn } from '../../iroh/helper.js';
 import type { HttpRequestHandler, HttpServerLike, StateFs, WorkerRuntime } from '../../runtime.js';
 import { WorkerRpc } from '../../rpc.js';
 
@@ -105,12 +107,20 @@ export function nodeHttpServer(onRequest: HttpRequestHandler): Promise<HttpServe
   );
 }
 
+/**
+ * `WorkerRuntime.spawnHelper` on node:child_process (tests; production is bare-subprocess): the
+ * iroh helper with every stdio stream a pipe, argv only.
+ */
+export const nodeHelperSpawn: HelperSpawn = (file, args) =>
+  spawn(file, [...args], { stdio: ['pipe', 'pipe', 'pipe'], shell: false });
+
 export function nodeRuntime(): WorkerRuntime {
   return {
     stateFs: nodeStateFs,
     seederFs: nodeFs,
     mediaFs: (tmpDir) => nodeFsAdapter({ tmpDir }),
     createHttpServer: nodeHttpServer,
+    spawnHelper: nodeHelperSpawn,
     runner: nodeProcessRunner(),
     env: (name) => process.env[name],
     monotonicNow: () => performance.now(),

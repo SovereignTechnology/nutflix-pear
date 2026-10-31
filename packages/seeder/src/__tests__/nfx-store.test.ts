@@ -277,6 +277,31 @@ describe('NfxStore', () => {
     expect(await f.read(150_000, 30_000)).toEqual(big.subarray(150_000, 180_000));
   });
 
+  it('names the path of a listed file only, for the video that lists it', async () => {
+    const { store, dir } = await open();
+    const p = pkg('nfx-store-path', [seg(10, 1)]);
+    const other = pkg('nfx-store-path-other', [seg(11, 2)]);
+    await put(store, p);
+    await put(store, other);
+    for (const s of p.files.keys()) {
+      const at = store.path(p.video, s)!;
+      expect(at).toBe(path.join(dir, 'nfx', 'files', s.slice(0, 2), s));
+      expect(sha(new Uint8Array(await readFile(at)))).toBe(s);
+    }
+    expect(store.path(p.video, p.root)).toBe(
+      path.join(dir, 'nfx', 'files', p.root.slice(0, 2), p.root),
+    );
+    // Stored, but for another video; not stored at all; not a sha256; not a stored video.
+    const [otherFile] = [...other.files.keys()].filter((s) => !p.files.has(s));
+    expect(store.path(p.video, otherFile!)).toBeUndefined();
+    expect(store.path(p.video, 'ab'.repeat(32))).toBeUndefined();
+    for (const bad of ['../../etc/passwd', p.root.toUpperCase(), `${p.root}/x`])
+      expect(store.path(p.video, bad)).toBeUndefined();
+    expect(store.path(addr('nfx-store-absent'), p.root)).toBeUndefined();
+    await store.removeVideo(p.video);
+    expect(store.path(p.video, p.root)).toBeUndefined();
+  });
+
   it('serves through source() exactly what file() serves', async () => {
     const { store } = await open();
     const p = pkg('nfx-store-source', [seg(10, 1)]);

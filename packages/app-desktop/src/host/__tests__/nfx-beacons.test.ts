@@ -2,6 +2,8 @@
  * Slice 5c: the beacon publisher. Beacons go to the scoped relays only, only while the worker
  * serves, only for a video whose current manifest by the recorded author names the stored root,
  * and each one passes core's `parseBeacon` (free, `price_hint` 0, `chunks` all, TTL 120 s).
+ * Slice 5e-3: the worker is asked per video, and its iroh endpoint goes beside the HyperDHT one,
+ * naming a relay only when it is one of the network's.
  */
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -9,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type {
+  IrohRelayUrl,
   NfxAddress,
   NfxVideo,
   NostrEvent,
@@ -20,8 +23,9 @@ import { nfx } from '@sovit/core';
 import { hyperdhtEndpoint } from '@sovit/seeder';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { NfxEndpointsWire, NfxIrohEndpointWire } from '../../ipc/worker-protocol.js';
 import { memoryLogger } from '../log.js';
-import { BEACON_TTL_S, NfxBeacons, type NfxBeaconDeps } from '../nfx/beacons.js';
+import { BEACON_TTL_S, NfxBeacons, beaconEndpoints, type NfxBeaconDeps } from '../nfx/beacons.js';
 import { NfxSeederKey } from '../nfx/seeder-key.js';
 import { coreTestKit } from './support/core-helpers.js';
 
@@ -33,6 +37,21 @@ const ROOT = 'ab'.repeat(32) as Sha256Hex;
 const VIDEO = `${NS}:nutflix-${'c'.repeat(32)}`;
 const CREATOR = 'd'.repeat(64) as NostrPubkey;
 const ADDRESS = `38504:${CREATOR}:${VIDEO}` as NfxAddress;
+const IROH_RELAY = 'https://iroh-relay.test/' as IrohRelayUrl;
+/** Slice 5e-3: an iroh endpoint as the worker answers it (tickets in its own order). */
+const IROH: NfxIrohEndpointWire = {
+  t: 'iroh',
+  node: 'e1'.repeat(32),
+  relay: IROH_RELAY,
+  addrs: ['192.0.2.7:4433', '[2001:db8::7]:4433'],
+  tickets: {
+    $map: [
+      ['meta', `blob${'m'.repeat(60)}`],
+      ['720p', `blob${'s'.repeat(60)}`],
+      ['360p', `blob${'t'.repeat(60)}`],
+    ],
+  },
+};
 
 /** An Ed25519 key pair in sodium's form (secret = seed ‖ public), as a HyperDHT key is. */
 function peerKeyPair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
@@ -72,7 +91,9 @@ async function setup(over: Partial<NfxBeaconDeps> = {}): Promise<{
   const beacons = new NfxBeacons({
     scopedRelays: () => [SCOPED],
     key: () => Promise.resolve(key),
-    endpoint: (seeder) => Promise.resolve(hyperdhtEndpoint(peer, seeder, NS)),
+    endpoint: (seeder) =>
+      Promise.resolve({ hyperdht: hyperdhtEndpoint(peer, seeder, NS), iroh: null }),
+    irohRelays: () => [IROH_RELAY],
     stored: () => Promise.resolve([{ video: VIDEO, root: ROOT, segs: 9 }]),
     seeded: () => [{ video: VIDEO, author: CREATOR, root: ROOT }],
     manifest: (addr) => {
@@ -126,9 +147,57 @@ describe('NfxBeacons', () => {
     expect(keyAsked).toBe(0);
     const b = await setup({ key: () => Promise.resolve(null) });
     expect(await b.beacons.round()).toEqual({ published: 0, idle: 'no-key' });
-    const c = await setup({ endpoint: () => Promise.resolve(null) });
+    const c = await setup({ endpoint: () => Promise.resolve({ hyperdht: null, iroh: null }) });
     expect(await c.beacons.round()).toEqual({ published: 0, idle: 'not-serving' });
+    // Not serving: the manifest was never looked up either.
+    expect(c.manifests).toEqual([]);
     for (const x of [a, b, c]) expect(x.sent).toEqual([]);
+  });
+
+  it('slice 5e-3: asks per video and puts the iroh endpoint beside the HyperDHT one', async () => {
+    const asked: [string, string][] = [];
+    const peer = peerKeyPair();
+    const { beacons, sent } = await setup({
+      endpoint: (seeder, video) => {
+        asked.push([seeder, video]);
+        return Promise.resolve({ hyperdht: hyperdhtEndpoint(peer, seeder, NS), iroh: IROH });
+      },
+    });
+    expect(await beacons.round()).toEqual({ published: 1 });
+    const parsed = nfx.parseBeacon(sent[0]!.event, NOW);
+    if (!parsed.ok) throw new Error(parsed.error.reason);
+    expect(asked).toEqual([[parsed.value.seeder, VIDEO]]);
+    const [iroh, hyperdht] = parsed.value.content.endpoints;
+    expect(hyperdht?.t).toBe('hyperdht');
+    expect(iroh).toEqual({
+      t: 'iroh',
+      node: IROH.node,
+      relay: IROH_RELAY,
+      addrs: IROH.addrs,
+      tickets: new Map(IROH.tickets.$map),
+    });
+    // In key order on the wire, as nfx-proto writes them.
+    const content = JSON.parse(sent[0]!.event.content) as {
+      endpoints: { tickets?: Record<string, string> }[];
+    };
+    expect(Object.keys(content.endpoints[0]!.tickets!)).toEqual(['360p', '720p', 'meta']);
+
+    // Served over iroh only: the beacon names that alone.
+    const only = await setup({ endpoint: () => Promise.resolve({ hyperdht: null, iroh: IROH }) });
+    expect(await only.beacons.round()).toEqual({ published: 1 });
+    const alone = nfx.parseBeacon(only.sent[0]!.event, NOW);
+    expect(alone.ok && alone.value.content.endpoints.map((e) => e.t)).toEqual(['iroh']);
+  });
+
+  it('slice 5e-3: names an iroh relay only when it is one of the network’s', () => {
+    const served: NfxEndpointsWire = { hyperdht: null, iroh: IROH };
+    const [kept] = beaconEndpoints(served, [IROH_RELAY]);
+    expect(kept).toMatchObject({ t: 'iroh', relay: IROH_RELAY });
+    const [dropped] = beaconEndpoints(served, ['https://other-relay.test/']);
+    expect(dropped).toMatchObject({ t: 'iroh', relay: '' });
+    const [none] = beaconEndpoints({ hyperdht: null, iroh: { ...IROH, relay: '' } }, [IROH_RELAY]);
+    expect(none).toMatchObject({ t: 'iroh', relay: '' });
+    expect(beaconEndpoints({ hyperdht: null, iroh: null }, [IROH_RELAY])).toEqual([]);
   });
 
   it('never beacons a video of unknown author, a deleted manifest, or another root', async () => {
