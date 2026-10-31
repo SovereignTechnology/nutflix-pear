@@ -183,17 +183,17 @@ describe('nfxTwinsOf (slice 5d-4)', () => {
     const creator = new TestSigner();
     const other = new TestSigner();
     const twin = await sign(creator, {
-      ...manifestDraft('twin', T0 - 20),
-      tags: [...manifestDraft('twin', T0 - 20).tags, ['e', legacyId(1)]],
+      ...manifestDraft('twin-copy', T0 - 20),
+      tags: [...manifestDraft('twin-copy', T0 - 20).tags, ['e', legacyId(1)]],
     });
     // Another author's link to the same event is not a twin; nor is a copy of an event not asked.
     const impostor = await sign(other, {
-      ...manifestDraft('impostor', T0 - 10),
-      tags: [...manifestDraft('impostor', T0 - 10).tags, ['e', legacyId(1)]],
+      ...manifestDraft('impostor-copy', T0 - 10),
+      tags: [...manifestDraft('impostor-copy', T0 - 10).tags, ['e', legacyId(1)]],
     });
     const unasked = await sign(creator, {
-      ...manifestDraft('unasked', T0 - 5),
-      tags: [...manifestDraft('unasked', T0 - 5).tags, ['e', legacyId(2)]],
+      ...manifestDraft('unasked-copy', T0 - 5),
+      tags: [...manifestDraft('unasked-copy', T0 - 5).tags, ['e', legacyId(2)]],
     });
     for (const ev of [twin, impostor, unasked]) r.pool.store(ev);
     const query = vi.spyOn(r.pool, 'query');
@@ -201,7 +201,7 @@ describe('nfxTwinsOf (slice 5d-4)', () => {
       { id: legacyId(1), author: creator.pubkey },
       { id: legacyId(3), author: creator.pubkey },
     ]);
-    expect(got.map((v) => v.id)).toEqual([addr(creator.pubkey, 'twin')]);
+    expect(got.map((v) => v.id)).toEqual([addr(creator.pubkey, 'twin-copy')]);
     expect(got[0]?.legacyId).toBe(legacyId(1));
     const [first] = query.mock.calls.map((c) => c[1]);
     expect(first).toMatchObject({

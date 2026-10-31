@@ -276,13 +276,17 @@ describe('twins when the network can play (slice 5d-4)', () => {
     ]);
     for (const [i, s] of legacy.entries()) {
       const ageHours = (mocks.FIXTURE_NOW - s.event.created_at) / HOUR;
-      await storeNfx(r.pool, creator, `copy-${String(i)}`, ageHours - 0.5, [['e', s.event.id]]);
+      await storeNfx(r.pool, creator, `twin-copy-${String(i)}`, ageHours - 0.5, [
+        ['e', s.event.id],
+      ]);
     }
     const only = [
       await storeNfx(r.pool, creator, 'nfx-only-six', 6),
       await storeNfx(r.pool, creator, 'nfx-only-fifty', 50),
     ];
     const expected = [...legacy.map((s) => s.event), ...only].sort(nostr.byNewest).map((e) => e.id);
+    // The copies are real, listable NFX videos: only the twin rule keeps them off the pages.
+    expect(await r.host.adapter.nfxVideo(addr(creator.pubkey, 'twin-copy-0'))).not.toBeNull();
     for (const limit of [1, 2, 3]) {
       const got = await allPages(r.host.adapter, { source: 'tags', tags: ['space'], limit });
       expect(got.map((v) => (v.kind === 38504 ? v.eventId : v.id))).toEqual(expected);

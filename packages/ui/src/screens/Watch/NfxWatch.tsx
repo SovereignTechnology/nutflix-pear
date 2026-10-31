@@ -5,13 +5,18 @@
  * beacons name, every file checked against its hash list; nothing is paid, so there is no price,
  * spend or peer panel. Nothing that reacts or saves is offered: those are keyed by NIP-71 event
  * ids, and an NFX video is named by its address. The session closes when the page goes.
+ *
+ * Slice 5d-4: the NFX copy of a NIP-71 video (`legacyId`) shows that event's comments, once the
+ * event is found and is by the same author (a manifest cannot borrow another video's thread).
  */
-import { useEffect, useId, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactElement } from 'react';
 import type {
   NetworkAdapter,
   NfxAddress,
   NfxPlaySession,
   NfxVideo,
+  NostrEventId,
+  NostrPubkey,
   Profile,
   UnixSeconds,
 } from '@sovit/core';
@@ -23,14 +28,18 @@ import {
   ProfileAvatar,
   Skeleton,
   SkeletonLines,
+  ToastStack,
   cx,
   formatDuration,
   formatRelativeTime,
   shortPubkey,
+  type ToastItem,
 } from '../../components/index.js';
 import type { ScreenProps } from '../shared/route.js';
 import { avatarSrc } from '../shared/image.js';
-import { describeWatchError } from './model.js';
+import { describeWatchError, type Me } from './model.js';
+import { useResolvers } from './useResolvers.js';
+import { WatchComments } from './WatchComments.js';
 
 export interface NfxWatchProps extends ScreenProps {
   /** The NFX video to show (`Route { name: 'watch', videoId }` with an NFX address). */
@@ -211,6 +220,64 @@ export function NfxWatch({
   const id = useId();
   const [phase, setPhase] = useState<Phase>({ status: 'loading' });
   const [gen, setGen] = useState(0);
+  const resolvers = useResolvers(adapter);
+
+  const [me, setMe] = useState<Me>('pending');
+  useEffect(() => {
+    const ac = new AbortController();
+    adapter.me().then(
+      (pk) => {
+        if (!ac.signal.aborted) setMe(pk);
+      },
+      () => {
+        // An identity that cannot be read degrades to the signed-out experience.
+        if (!ac.signal.aborted) setMe(null);
+      },
+    );
+    return () => {
+      ac.abort();
+    };
+  }, [adapter]);
+
+  const [toasts, setToasts] = useState<readonly ToastItem[]>([]);
+  const toastSeq = useRef(0);
+  const toastError = useCallback((title: string, detail?: string): void => {
+    toastSeq.current += 1;
+    const item: ToastItem = {
+      id: `toast-${String(toastSeq.current)}`,
+      tone: 'error',
+      title,
+      ...(detail !== undefined ? { description: detail } : {}),
+    };
+    setToasts((prev) => [...prev, item]);
+  }, []);
+  const dismissToast = useCallback((toastId: string): void => {
+    setToasts((prev) => prev.filter((t) => t.id !== toastId));
+  }, []);
+
+  // Slice 5d-4: the NIP-71 event this copy names, trusted only from the same author.
+  const readyVideo = phase.status === 'ready' ? phase.video : null;
+  const [twin, setTwin] = useState<{ readonly of: NfxAddress; readonly id: NostrEventId } | null>(
+    null,
+  );
+  useEffect(() => {
+    const legacyId = readyVideo?.legacyId;
+    if (readyVideo === null || legacyId === undefined) return;
+    const ac = new AbortController();
+    adapter.video(legacyId).then(
+      (v) => {
+        if (!ac.signal.aborted && v?.author === readyVideo.author) {
+          setTwin({ of: readyVideo.id, id: v.id });
+        }
+      },
+      () => {
+        // No thread rather than a wrong one.
+      },
+    );
+    return () => {
+      ac.abort();
+    };
+  }, [adapter, readyVideo]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -336,8 +403,28 @@ export function NfxWatch({
               <Markdown source={video.description} className="nf-watch__desc-body" />
             ) : null}
           </div>
+          {twin?.of === video.id ? (
+            <WatchComments
+              key={twin.id}
+              adapter={adapter}
+              videoId={twin.id}
+              me={me}
+              nowSec={nowSec}
+              totalHint={undefined}
+              resolvers={resolvers}
+              onOpenChannel={(pubkey: NostrPubkey) => {
+                navigate({ name: 'channel', pubkey });
+              }}
+              onSignIn={() => {
+                navigate({ name: 'settings' });
+              }}
+              onError={toastError}
+              idPrefix={id}
+            />
+          ) : null}
         </div>
       </div>
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </section>
   );
 }
