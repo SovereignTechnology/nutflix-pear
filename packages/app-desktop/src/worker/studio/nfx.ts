@@ -9,15 +9,44 @@
  * Free videos only: the guards refuse `nfx` on a priced upload, and this module checks again.
  * Every failure is a typed `NfxUploadStatusWire`, never a throw into the legacy upload.
  */
-import type { FsAdapter, ProcessRunner, Sha256Hex, TranscodeOutput, nfx } from '@sovit/core';
-import { media } from '@sovit/core';
+import type { FsAdapter, ProcessRunner, Sha256Hex, TranscodeOutput } from '@sovit/core';
+import { media, nfx } from '@sovit/core';
 import type { Logger, NfxStore } from '@sovit/seeder';
 
-import { nfxVideoAddrFor } from '../../ipc/nfx-addr.js';
 import type { NfxUploadFailure, NfxUploadStatusWire } from '../../ipc/worker-protocol.js';
 
-// Shared with the host, which checks the stored video is the one it published (`ipc/nfx-addr.ts`).
-export { NFX_DEFAULT_NAMESPACE, nfxVideoAddrFor } from '../../ipc/nfx-addr.js';
+/**
+ * The one NFX network this build packages for, until Settings choose one (slice 5). NFX-01:
+ * `nfx:<network>:<specver>`.
+ */
+export const NFX_DEFAULT_NAMESPACE = 'nfx:testnet:1' as const;
+
+/** Prefix of the video ids this app derives (`nutflix-<32 hex>`, 40 characters). */
+const VIDEO_ID_PREFIX = 'nutflix-';
+
+/**
+ * The NFX address of the video a legacy NIP-71 event published: `<namespace>:nutflix-<first 32
+ * hex of the event id>`. Deterministic: the same legacy video always maps to the same address,
+ * and its manifest links back to the legacy event with `["e", …]`. Inside NFX-02's
+ * `[a-z0-9][a-z0-9-]{6,62}`. 128 bits of the id keep two of this node's videos from colliding.
+ *
+ * The host imports this function too (`host/nfx/publish.ts`), to check that the stored video is
+ * the one it published, so the two processes cannot derive different addresses. Nothing else in
+ * this module runs there, and it loads only `@sovit/core` at runtime, which the host already does.
+ */
+export function nfxVideoAddrFor(
+  legacyEventId: string,
+  namespace: string = NFX_DEFAULT_NAMESPACE,
+): nfx.VideoAddr {
+  if (!/^[0-9a-f]{64}$/.test(legacyEventId)) {
+    throw new TypeError('nfx: a legacy event id is 64 lowercase hex');
+  }
+  const ns = nfx.Namespace.parse(namespace);
+  if (!ns.ok) throw new TypeError('nfx: not an NFX-01 namespace');
+  const addr = nfx.VideoAddr.of(ns.value, `${VIDEO_ID_PREFIX}${legacyEventId.slice(0, 32)}`);
+  if (!addr.ok) throw new TypeError('nfx: the derived video id is invalid');
+  return addr.value;
+}
 
 export interface NfxUploadDeps {
   readonly store: NfxStore;

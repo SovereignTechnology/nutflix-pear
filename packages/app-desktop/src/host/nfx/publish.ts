@@ -11,8 +11,9 @@
 import type { NostrEvent, RelayUrl, VideoManifest } from '@sovit/core';
 import { nfx } from '@sovit/core';
 
-import { nfxVideoAddrFor } from '../../ipc/nfx-addr.js';
 import type { NfxUploadStatusWire } from '../../ipc/worker-protocol.js';
+// The worker's own derivation, so the two processes cannot disagree (it loads only core).
+import { nfxVideoAddrFor } from '../../worker/studio/nfx.js';
 
 export type NfxStored = Extract<NfxUploadStatusWire, { state: 'stored' }>;
 
