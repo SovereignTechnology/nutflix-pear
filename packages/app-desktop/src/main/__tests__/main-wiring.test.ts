@@ -796,7 +796,13 @@ describe('main.ts wiring (fake electron)', () => {
     expect(fx.fetches).toEqual([
       {
         url: 'http://127.0.0.1:41000/x',
-        init: { method: 'GET', headers: { range: 'bytes=0-2' }, redirect: 'error' },
+        init: {
+          method: 'GET',
+          headers: { range: 'bytes=0-2' },
+          redirect: 'error',
+          // A request the player drops aborts its upstream fetch (media.ts, proxy-abort e2e).
+          signal: expect.any(AbortSignal) as AbortSignal,
+        },
       },
     ]);
   });

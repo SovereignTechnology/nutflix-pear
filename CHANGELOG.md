@@ -59,6 +59,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Fixed
 
+- A video request the player drops now ends main's fetch from the worker too. Before, after a
+  reload or a quick switch of video, those requests stayed open, holding the 6 connections main
+  keeps to the worker, so the next video's requests never reached it and the worker's paid
+  stream stayed open. A new e2e suite (`proxy-abort`) holds 8 requests open through the app's
+  own handler: after a reload all of them close within 30 ms, and a new source gets through
+  (spike S-E, finding 6).
 - The NFX file store refuses a hash list that gives a file two sizes, or another size than the
   one it already stores. Before, such a list (from a peer, once seeders fetch NFX videos)
   skewed the disk cap and could delete another video's files at the next start. It also cleans

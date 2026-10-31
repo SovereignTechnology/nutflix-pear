@@ -48,7 +48,7 @@ import { HostConfirms } from './host-confirm.js';
 import { HostLink } from './host-link.js';
 import { IpcGate } from './ipc-gate.js';
 import { createLogger } from './log.js';
-import { ImageRequests, MediaLinks, createMediaProtocolHandler } from './media.js';
+import { ImageRequests, MediaLinks, createMediaProtocolHandler, netMediaFetch } from './media.js';
 import { KeychainStore, keychainUsable } from './keychain.js';
 import { createMoneyGate, type ConfirmPrompt } from './money-gate.js';
 import { PROMPT_CHANNEL, PromptService, type PromptSender } from './prompt.js';
@@ -452,7 +452,7 @@ function start(): void {
   const media = createMediaProtocolHandler({
     links,
     images,
-    fetch: (url, init) => net.fetch(url, { ...init, headers: { ...init.headers } }),
+    fetch: netMediaFetch((url, init) => net.fetch(url, init)),
     log,
   });
   /** e2e only: response status counts of `nf-media:` (numbers, never URLs). */
