@@ -3,7 +3,7 @@
  * event), the seeder over the worker, settings side effects, and the `--dev-fixtures`
  * catalogue (design §5a).
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -522,6 +522,16 @@ describe("slice 4a: a free upload's NFX manifest (kind 38504)", () => {
       'the published line',
     );
     expect(manifests()).toHaveLength(1);
+    // Slice 5c: this node may beacon it now, naming the user as the manifest's author.
+    const seeded = JSON.parse(
+      await readFile(join(r!.userData, 'nfx', 'seeded.json'), 'utf8'),
+    ) as unknown;
+    expect(seeded).toEqual({
+      v: 1,
+      videos: [
+        { video: parsed.value.addr.toString(), author: viewer.pubkey, root: 'ef'.repeat(32) },
+      ],
+    });
   });
 
   it('a failed packaging publishes nothing', async () => {

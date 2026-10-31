@@ -23,6 +23,7 @@ import type { WorkerInit } from '../ipc/worker-protocol.js';
 import { WORKER_V } from '../ipc/worker-protocol.js';
 import { hostError } from './errors.js';
 import { DesktopNetworkAdapter } from './adapter.js';
+import { NFX_DIR } from './nfx/seeder-key.js';
 import { FixtureCatalog } from './catalog/fixture-catalog.js';
 import type { HandlerTable } from './dispatch.js';
 import { handlers } from './dispatch.js';
@@ -224,6 +225,7 @@ export class Host {
     void this.signerFlow?.close();
     this.worker.stop();
     this.adapter.onWorkerDown();
+    this.adapter.stopNfx();
     this.stopped = true;
   }
 
@@ -649,6 +651,7 @@ export async function createHost(o: HostOptions): Promise<Host> {
     ...(fixtures === undefined ? {} : { fixtures }),
     ...(o.random === undefined ? {} : { random: o.random }),
     ...(o.now === undefined ? {} : { now: o.now }),
+    nfxDir: join(o.userData, NFX_DIR),
   });
   const host = new Host({
     adapter,
@@ -664,6 +667,8 @@ export async function createHost(o: HostOptions): Promise<Host> {
   late.post = host.post;
   late.worker = worker;
   worker.start();
+  // Slice 5c: beacons, which publish only while seeding and NFX are on.
+  adapter.startNfx();
   // Unlock by the chosen method (the keychain silently, a passphrase in main's window). In the
   // background: the host answers main at once, and a dismissed prompt just leaves it locked.
   void signerFlow?.start();

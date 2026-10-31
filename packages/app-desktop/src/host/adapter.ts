@@ -84,7 +84,10 @@ import { MergedCatalog } from './catalog/merged-catalog.js';
 import { NfxCatalog } from './catalog/nfx-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
+import { NfxBeacons } from './nfx/beacons.js';
 import type { NfxStored } from './nfx/publish.js';
+import { SeededVideos } from './nfx/seeded.js';
+import { NfxSeederKey } from './nfx/seeder-key.js';
 import {
   PendingNfxUploads,
   isSignedManifest,
@@ -150,6 +153,11 @@ export interface DesktopAdapterOptions {
   readonly now?: () => UnixSeconds;
   /** Relay wait per query, ms. */
   readonly maxWaitMs?: number;
+  /**
+   * Slice 5c: `<userData>/nfx`, where the seeder key and the seeded-video record live. Without
+   * it no beacon is ever published.
+   */
+  readonly nfxDir?: string;
 }
 
 /** Per page in the in-memory paged lists (history). */
@@ -193,6 +201,16 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly uploads = new Map<string, { readonly owner: number }>();
   /** Slice 4a: legacy events of NFX uploads until their `upload.nfx` (bounded, expiring). */
   private readonly pendingNfx = new PendingNfxUploads();
+  /** Slice 5c: whose manifest each seeded NFX video is (with `nfxDir`). */
+  private readonly seeded: SeededVideos | null;
+  /** Slice 5c: the beacon publisher (with `nfxDir`). */
+  private readonly beacons: NfxBeacons | null;
+  /** Slice 5c: the seeder key of the current user and network, opened on first need. */
+  private seederKey: {
+    readonly user: NostrPubkey;
+    readonly network: string;
+    readonly key: Promise<NfxSeederKey>;
+  } | null = null;
   /** `${owner}:${uploadId}` → progress listeners (subscribed before the upload starts). */
   private readonly uploadListeners = new Map<string, Set<(p: UploadProgress) => void>>();
   private readonly topUpLogged = new Map<string, number>();
@@ -210,6 +228,23 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     this.now = opts.now ?? nostr.nowSeconds;
     this.wallet = opts.wallet.wallet;
     this.nip71Catalog = new NostrCatalog(() => this.client());
+    const nfxDir = opts.nfxDir;
+    this.seeded = nfxDir === undefined ? null : new SeededVideos(nfxDir, this.log);
+    this.beacons =
+      nfxDir === undefined
+        ? null
+        : new NfxBeacons({
+            scopedRelays: () => this.beaconRelays(),
+            key: () => this.nfxSeederKey(nfxDir),
+            endpoint: async (seeder) => (await this.o.worker('nfx.endpoint', { seeder })).endpoint,
+            stored: async () => (await this.o.worker('nfx.videos', {})).videos,
+            seeded: () => this.seeded?.list() ?? [],
+            manifest: (addr) => this.nfxVideo(addr),
+            send: async (event, relays) =>
+              (await this.o.pool.publish(relays, event)).filter((r) => r.ok).length,
+            now: () => this.now(),
+            log: this.log.child('nfx-beacons'),
+          });
     this.wallet.onChange((e) => {
       if (e.type === 'balance') this.logAutoTopUpDue(e.mint, e.balance);
     });
@@ -258,6 +293,61 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       this.merged = { nfx, catalog };
     }
     return this.merged.catalog;
+  }
+
+  /** Slice 5c: start the beacon publisher (after the seeded-video record loads). */
+  startNfx(): void {
+    void this.seeded
+      ?.load()
+      .catch(() => undefined)
+      .then(() => {
+        this.beacons?.start();
+      });
+  }
+
+  /** Slice 5c: stop publishing beacons (they expire on their own within 120 s). */
+  stopNfx(): void {
+    this.beacons?.stop();
+  }
+
+  /** Slice 5c: beacons go to the scoped relays only, and only while seeding and NFX are on. */
+  private beaconRelays(): readonly RelayUrl[] {
+    const s = this.o.settings.get();
+    return s.seeding.enabled && s.nfx?.enabled === true ? s.nfx.scopedRelays : [];
+  }
+
+  /**
+   * Slice 5c: the current user's seeder key for the network, opened (or made) on first need with
+   * the user's signer sealing its passphrase. `null` without NFX or a signer. A failed open is
+   * retried next time, never cached.
+   */
+  private async nfxSeederKey(dir: string): Promise<NfxSeederKey | null> {
+    const nfx = this.o.settings.get().nfx;
+    const signer = this.o.identity.signer();
+    if (nfx?.enabled !== true || signer === undefined) return null;
+    const user = await signer.getPublicKey();
+    let held = this.seederKey;
+    if (held === null || held.user !== user || held.network !== nfx.network) {
+      if (held !== null) void held.key.then((k) => k.lock()).catch(() => undefined);
+      const key = NfxSeederKey.open({
+        dir,
+        network: nfx.network,
+        user,
+        seal: signer,
+        warn: (msg) => {
+          this.log.warn(msg);
+        },
+      });
+      held = { user, network: nfx.network, key };
+      this.seederKey = held;
+    }
+    try {
+      return await held.key;
+    } catch {
+      if (this.seederKey === held) this.seederKey = null;
+      this.log.warn('nfx: the seeder key could not be opened (the signer said no or is locked)');
+      return null;
+    }
   }
 
   /** Contracts v10: the scoped relays of `namespace` while NFX is on for it; otherwise none. */
@@ -913,6 +1003,12 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       });
       if (out === null) return 'not-author';
       if (!isSignedManifest(out.report.event, draft, legacy.author)) return 'did-not-verify';
+      // Slice 5c: this node may beacon the video now; the beacon's `a` names its author.
+      await this.seeded
+        ?.add({ video: stored.video, author: legacy.author, root: stored.root })
+        .catch(() => {
+          this.log.warn('nfx: the seeded-video record could not be saved');
+        });
       this.log.info('NFX manifest published', {
         video: stored.video,
         event: out.report.event.id,
