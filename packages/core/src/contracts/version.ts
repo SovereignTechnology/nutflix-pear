@@ -90,5 +90,9 @@
  *  11 — 2026-10-31 (ADR 0020, Phase 1 slice 5d). Additive: `NetworkAdapter.playNfx(addr,
  *       rendition?)` → `NfxPlaySession` (`videoId`, `rendition`, `renditions`, `source`, `close`) and
  *       `NfxRenditionInfo`. A free session: no `PricePolicy`, spend or peers; `play` is unchanged.
+ *  12 — 2026-10-31 (ADR 0020/0021, Phase 1 slice 5e-2). Additive: `NfxSettings.irohRelays?`, the
+ *       network's own iroh relays (NFX-06 §1), `IrohRelayUrl` (`https://host[:port]/`, or `http://`
+ *       to a loopback host) and `MAX_NFX_IROH_RELAYS` (4). A local setting, never read from beacons;
+ *       absent = none. A stored v10/v11 `nfx` stays valid. Every v11 consumer compiles.
  */
-export const CONTRACTS_VERSION = 11 as const;
+export const CONTRACTS_VERSION = 12 as const;

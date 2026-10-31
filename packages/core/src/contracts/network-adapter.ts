@@ -2,6 +2,7 @@ import type { CatalogVideo, NfxVideo, PricePolicy, VideoManifest } from './manif
 import type { NostrEvent, Profile, RelayConfig } from './nostr.js';
 import type { PeerWindow } from './payment.js';
 import type {
+  IrohRelayUrl,
   MintUrl,
   NfxAddress,
   NostrEventId,
@@ -219,6 +220,9 @@ export type NfxNetwork = (typeof NFX_NETWORKS)[number];
 /** v10: the most NFX-04 scoped relays one network may list. */
 export const MAX_NFX_SCOPED_RELAYS = 8 as const;
 
+/** v12: the most iroh relays (NFX-06 §1) one network may list. */
+export const MAX_NFX_IROH_RELAYS = 4 as const;
+
 /**
  * v10 (ADR 0020): taking part in an NFX network. Off unless `enabled`: no NFX query, listing,
  * seeding or beacon happens without it.
@@ -233,6 +237,13 @@ export interface NfxSettings {
    * (NFX-04 §4).
    */
   readonly scopedRelays: readonly RelayUrl[];
+  /**
+   * v12 (ADR 0021): the network's own iroh relays (NFX-06 §1), the only relays the iroh helper
+   * uses and the only ones beacons name; a relay a ticket names that is not here is dropped.
+   * Unique; at most `MAX_NFX_IROH_RELAYS`. Absent = none: without one, iroh connects directly or
+   * not at all. A local setting, never taken from a beacon.
+   */
+  readonly irohRelays?: readonly IrohRelayUrl[];
 }
 
 export interface Settings {

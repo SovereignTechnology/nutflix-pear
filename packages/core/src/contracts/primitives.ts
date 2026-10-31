@@ -43,6 +43,13 @@ export type MintUrl = Branded<string, 'MintUrl'>;
 /** Relay websocket URL, e.g. `wss://relay.example`. */
 export type RelayUrl = Branded<string, 'RelayUrl'>;
 
+/**
+ * v12 (NFX-06 §1): an iroh relay URL in iroh's normal form, `https://host[:port]/` (lower-case,
+ * trailing slash, root path only), or `http://` to a loopback host (`127.0.0.1`, `[::1]`,
+ * `localhost`) for a local relay (CI, a local nfxd setup). Compared as strings.
+ */
+export type IrohRelayUrl = Branded<string, 'IrohRelayUrl'>;
+
 /** Satoshis. Always an integer. Never a float, never a string on the wire. */
 export type Sats = Branded<number, 'Sats'>;
 

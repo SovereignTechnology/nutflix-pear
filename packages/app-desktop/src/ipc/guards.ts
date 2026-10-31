@@ -16,6 +16,7 @@ import type {
   CoreKeyHex,
   HyperblobId,
   HyperblobRef,
+  IrohRelayUrl,
   MeltQuote,
   MintQuote,
   MintUrl,
@@ -344,6 +345,28 @@ export const isScopedRelayUrl = safe(
 /** Unique scoped relays, at most `LIMITS.maxNfxScopedRelays`. */
 const isScopedRelays: Guard<readonly RelayUrl[]> = (x): x is readonly RelayUrl[] =>
   arrayOf(isScopedRelayUrl, LIMITS.maxNfxScopedRelays)(x) && new Set(x).size === x.length;
+
+/**
+ * Contracts v12: one of the network's iroh relays (NFX-06 §1), in iroh's normal form only, the
+ * form Settings' `validateIrohRelayUrl` writes and iroh itself prints: lower-case `https://`, a
+ * lower-case host (DNS labels or a bracketed IPv6 literal), an optional port and exactly `/`. No
+ * path, query, fragment or user-info, so that one relay has one spelling and a ticket's relay is
+ * matched as a string. `http://` only to a loopback address (`127.0.0.1`, `[::1]`, `localhost`):
+ * a local relay (CI, a local nfxd setup). A relay sees which nodes talk to whom, so a cleartext
+ * one anywhere else would show that to the path, which could also swap the relay for its own.
+ */
+const IROH_LABEL = '[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?';
+const IROH_HOST = `(?:${IROH_LABEL}(?:\\.${IROH_LABEL})*|\\[[0-9a-f:]{2,39}\\])`;
+const IROH_PORT = '(?::[1-9][0-9]{0,4})?';
+const IROH_RELAY_RE = new RegExp(
+  `^(?:https://${IROH_HOST}|http://(?:127\\.0\\.0\\.1|\\[::1\\]|localhost))${IROH_PORT}/$`,
+);
+export const isIrohRelayUrl = safe(
+  branded<IrohRelayUrl>(matches(IROH_RELAY_RE, LIMITS.maxServerUrl)),
+);
+/** Contracts v12: unique iroh relays, at most `LIMITS.maxNfxIrohRelays`. */
+const isIrohRelays: Guard<readonly IrohRelayUrl[]> = (x): x is readonly IrohRelayUrl[] =>
+  arrayOf(isIrohRelayUrl, LIMITS.maxNfxIrohRelays)(x) && new Set(x).size === x.length;
 export const isMintUrl = safe(branded<MintUrl>(matches(HTTPS_SERVER_RE, LIMITS.maxServerUrl)));
 export const isNfMediaImgUrl = matches(NF_IMG_RE, 150) as Guard<NfMediaImgUrl>;
 export const isImageSource: Guard<string> = safe(
@@ -479,7 +502,11 @@ const isSettingsPatch = obj(
     loadRemoteImages: bool,
     theme: oneOf(['dark', 'light', 'system'] as const),
     // Contracts v10 (ADR 0020): one network, its scoped relays; `enabled: false` is "off".
-    nfx: obj({ enabled: bool, network: oneOf(NFX_NETWORK_IDS), scopedRelays: isScopedRelays }),
+    // v12 (ADR 0021): its iroh relays, optional so a stored v10/v11 value stays valid.
+    nfx: obj(
+      { enabled: bool, network: oneOf(NFX_NETWORK_IDS), scopedRelays: isScopedRelays },
+      { irohRelays: isIrohRelays },
+    ),
     // SE-4: `belowSats: 0` is the v4 "off" sentinel; the host treats `<= 0` as disabled.
     // Issue #2: `amountSats` is a whole number of sats in 1 … `AUTO_TOP_UP_MAX_SATS` (absent =
     // the max) — anything else refuses the whole patch (and a stored file, which then reads as

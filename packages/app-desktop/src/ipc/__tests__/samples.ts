@@ -206,6 +206,16 @@ export const VALID: Samples = {
     [{ relays: [{ url: 'wss://relay.example' as never, read: true, write: false }] }],
     [{ defaultMints: [MINT], seeding: { enabled: true, diskCapBytes: 50 * 1024 ** 3 } }],
     [{ autoTopUp: { belowSats: sats(0), fromMint: MINT } }],
+    [
+      {
+        nfx: {
+          enabled: true,
+          network: 'nfx:testnet:1',
+          scopedRelays: ['wss://scoped.example' as never],
+          irohRelays: ['https://relay.example/' as never],
+        },
+      },
+    ],
   ],
   'desktop.ffmpeg': [[{ recheck: false }], [{ recheck: true }]],
   'desktop.signer.info': [[]],
@@ -350,6 +360,16 @@ export const INVALID: Partial<Record<Method, readonly unknown[][]>> = {
     [{ autoTopUp: undefined }],
     [{ prefetchSeconds: 1e9 }],
     [{ unknownSetting: true }],
+    [
+      {
+        nfx: {
+          enabled: true,
+          network: 'nfx:testnet:1',
+          scopedRelays: [],
+          irohRelays: ['http://relay.example/'],
+        },
+      },
+    ],
   ],
   'desktop.ffmpeg': [[{}], [{ recheck: 'yes' }], [{ recheck: true, path: '/usr/bin/ffmpeg' }]],
   // The renderer names a kind only: no NIP-07 on desktop, and never a URI, flow or passphrase.

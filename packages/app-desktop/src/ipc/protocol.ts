@@ -17,6 +17,7 @@
 import type {
   AUTO_TOP_UP_MAX_SATS,
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
+  MAX_NFX_IROH_RELAYS,
   MAX_NFX_SCOPED_RELAYS,
   CatalogVideo,
   Comment,
@@ -129,6 +130,8 @@ export const LIMITS = {
   maxAutoTopUpSatsPerDay: 50_000,
   /** Contracts v10: `NfxSettings.scopedRelays` — core's `MAX_NFX_SCOPED_RELAYS`. */
   maxNfxScopedRelays: 8,
+  /** Contracts v12: `NfxSettings.irohRelays` — core's `MAX_NFX_IROH_RELAYS`. */
+  maxNfxIrohRelays: 4,
   /** `PricePolicy.minPaySats` ceiling — core's `MAX_MIN_PAY_SATS` (the manifest parser's bound). */
   maxMinPaySats: 1_000_000,
   /** A custom thumbnail's bytes (same cap as host-fetched images, design §3). */
@@ -1010,6 +1013,8 @@ interface Checks {
   topUpMax: Mutual<(typeof LIMITS)['maxAutoTopUpAmountSats'], typeof AUTO_TOP_UP_MAX_SATS>;
   /** Contracts v10: the NFX limits and networks are exactly core's (type-only imports). */
   nfxScopedRelays: Mutual<(typeof LIMITS)['maxNfxScopedRelays'], typeof MAX_NFX_SCOPED_RELAYS>;
+  /** Contracts v12: the iroh relay cap is core's too. */
+  nfxIrohRelays: Mutual<(typeof LIMITS)['maxNfxIrohRelays'], typeof MAX_NFX_IROH_RELAYS>;
   nfxNetworks: Mutual<(typeof NFX_NETWORK_IDS)[number], NfxNetwork>;
   topUpPerDay: Mutual<
     (typeof LIMITS)['maxAutoTopUpSatsPerDay'],

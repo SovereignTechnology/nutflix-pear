@@ -866,3 +866,63 @@ describe('Settings — NFX network (contracts v10)', () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe('Settings — NFX iroh relays (contracts v12)', () => {
+  const OFF = { enabled: false, network: 'nfx:testnet:1', scopedRelays: [] } as const;
+
+  it("adds an iroh relay in iroh's normal form, http:// only to this computer, and removes it", async () => {
+    const adapter = adapterWith();
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    expect(section(r, 'NFX network').textContent).toContain(
+      'No iroh relays yet: iroh then connects only directly.',
+    );
+    const field = input(r, '-nfx-iroh-add');
+    expect(field.placeholder).toBe('https://relay.example/');
+    type(field, 'http://relay.example');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(update).not.toHaveBeenCalled();
+    type(field, 'HTTPS://Relay.Example');
+    submit(field);
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({
+      nfx: { ...OFF, irohRelays: ['https://relay.example/'] },
+    });
+    expect(field.value).toBe('');
+    expect(section(r, 'NFX network').textContent).not.toContain('No iroh relays yet');
+    // The scoped relays' list and field are their own.
+    expect(section(r, 'NFX network').textContent).toContain('No scoped relays yet.');
+    expect(input(r, '-nfx-add').getAttribute('aria-invalid')).toBeNull();
+    click(r.get('[aria-label="Remove https://relay.example/"]'));
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: { ...OFF, irohRelays: [] } });
+  });
+
+  it('keeps the scoped relays and the switch when an iroh relay is added', async () => {
+    const on = { ...OFF, enabled: true, scopedRelays: ['wss://scoped.example'] };
+    const adapter = adapterWith({}, { nfx: on } as never);
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    const field = input(r, '-nfx-iroh-add');
+    type(field, 'http://127.0.0.1:3340');
+    submit(field);
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({
+      nfx: { ...on, irohRelays: ['http://127.0.0.1:3340/'] },
+    });
+  });
+
+  it('stops at four iroh relays', async () => {
+    const four = Array.from({ length: 4 }, (_, i) => `https://r${String(i)}.example/`);
+    const adapter = adapterWith({}, { nfx: { ...OFF, irohRelays: four } } as never);
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    const field = input(r, '-nfx-iroh-add');
+    type(field, 'https://r9.example/');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(r.get('[id$="-nfx-iroh-add-error"]').textContent).toContain('At most 4 iroh relays.');
+    expect(update).not.toHaveBeenCalled();
+  });
+});
