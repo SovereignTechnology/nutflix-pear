@@ -219,9 +219,9 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
       case 'seeder.unban':
       case 'nfx.configure':
         return Promise.resolve(undefined);
-      // Slice 5b: not seeding NFX, nothing stored, unless a test sets a handler.
+      // Slice 5b: not seeding NFX, nothing stored, unless a test sets a handler (5e-3: per video).
       case 'nfx.endpoint':
-        return Promise.resolve({ endpoint: null });
+        return Promise.resolve({ hyperdht: null, iroh: null });
       case 'nfx.videos':
         return Promise.resolve({ videos: [] });
       // Slice 5d: one 720p rendition, served at a link of the shape the worker's range server uses.

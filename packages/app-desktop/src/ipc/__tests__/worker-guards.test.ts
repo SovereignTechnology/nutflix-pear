@@ -44,6 +44,20 @@ const NFX_OPEN = {
   peers: [ENDPOINT],
   prefetchSeconds: 30,
 };
+/** Slice 5e-3: the network's iroh relays and an iroh endpoint as the worker answers it. */
+const IROH_RELAYS = ['https://iroh-relay.example/', 'http://127.0.0.1:3340/'] as never[];
+const IROH = {
+  t: 'iroh' as const,
+  node: 'e1'.repeat(32),
+  relay: 'https://iroh-relay.example/' as never,
+  addrs: ['192.0.2.7:4433', '[2001:db8::7]:4433', '[fe80::1%2]:4433'],
+  tickets: {
+    $map: [
+      ['meta', `blob${'a'.repeat(60)}`],
+      ['720p', `blob${'b'.repeat(60)}`],
+    ] as const,
+  },
+};
 const NFX_OPENED = {
   link: 'http://127.0.0.1:41234/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/fedcba9876543210fedcba9876543210',
   rendition: '720p',
@@ -73,6 +87,23 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
       ffmpeg: { ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/usr/bin/ffprobe' },
       dev: { mocks: true, fixtures: true, bootstrap: [{ host: '127.0.0.1', port: 49737 }] },
     },
+    // Slice 5e-3: the iroh relays, and the helper or none.
+    {
+      v: WORKER_V,
+      storage: '/tmp/w',
+      seeding,
+      prefetchSeconds: 30,
+      nfx: { enabled: true, irohRelays: IROH_RELAYS },
+      irohHelper: '/opt/nutflix/nutflix-iroh-helper',
+    },
+    {
+      v: WORKER_V,
+      storage: '/tmp/w',
+      seeding,
+      prefetchSeconds: 30,
+      nfx: { enabled: false, irohRelays: [] },
+      irohHelper: null,
+    },
   ],
   'play.open': [
     {
@@ -92,8 +123,11 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'seeder.configure': [seeding],
   'seeder.melt': [{ mint: MINT, bolt11: 'lnbc500n1pmockinvoice' }],
   'seeder.unban': [{ pubkey: PUBKEY }],
-  'nfx.configure': [{ enabled: true }, { enabled: false }],
-  'nfx.endpoint': [{ seeder: PUBKEY }],
+  'nfx.configure': [
+    { enabled: true, irohRelays: [] },
+    { enabled: false, irohRelays: IROH_RELAYS },
+  ],
+  'nfx.endpoint': [{ seeder: PUBKEY, video: NFX_VIDEO }],
   'nfx.videos': [{}],
   'nfx.play.open': [
     NFX_OPEN,
@@ -147,8 +181,10 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
   'seeder.unban': [undefined],
   'nfx.configure': [undefined],
   'nfx.endpoint': [
-    { endpoint: null },
-    { endpoint: { t: 'hyperdht', peer: 'a'.repeat(64), bind: 'b'.repeat(128) } },
+    { hyperdht: null, iroh: null },
+    { hyperdht: ENDPOINT, iroh: null },
+    { hyperdht: ENDPOINT, iroh: IROH },
+    { hyperdht: null, iroh: { ...IROH, relay: '', addrs: [] } },
   ],
   'nfx.videos': [
     { videos: [] },
@@ -703,11 +739,14 @@ describe('worker → host', () => {
 });
 
 describe('slice 5b: the NFX worker messages', () => {
-  it('init may carry nfx.enabled, and nothing else under nfx', () => {
+  it('init may carry nfx.enabled and its iroh relays, and nothing else under nfx', () => {
     const [init] = ARGS.init;
-    expect(validateWorkerArgs.init({ ...init!, nfx: { enabled: true } })).toBe(true);
-    expect(validateWorkerArgs.init({ ...init!, nfx: { enabled: 'yes' } })).toBe(false);
-    expect(validateWorkerArgs.init({ ...init!, nfx: { enabled: true, network: 'x' } })).toBe(false);
+    const nfx = { enabled: true, irohRelays: [] };
+    expect(validateWorkerArgs.init({ ...init!, nfx })).toBe(true);
+    expect(validateWorkerArgs.init({ ...init!, nfx: { ...nfx, enabled: 'yes' } })).toBe(false);
+    expect(validateWorkerArgs.init({ ...init!, nfx: { ...nfx, network: 'x' } })).toBe(false);
+    // Slice 5e-3: the relays are always said, even when there are none.
+    expect(validateWorkerArgs.init({ ...init!, nfx: { enabled: true } })).toBe(false);
   });
 
   it('refuses a malformed endpoint or stored video', () => {
@@ -719,7 +758,10 @@ describe('slice 5b: the NFX worker messages', () => {
       { ...ok, bind: 'b'.repeat(127) },
       { ...ok, extra: 1 },
     ])
-      expect(endpoint({ endpoint: bad }), JSON.stringify(bad)).toBe(false);
+      expect(endpoint({ hyperdht: bad, iroh: null }), JSON.stringify(bad)).toBe(false);
+    // The slice 5b shape is gone: a result names both endpoints.
+    expect(endpoint({ endpoint: ok })).toBe(false);
+    expect(endpoint({ hyperdht: ok })).toBe(false);
     const videos = validateWorkerResult['nfx.videos'];
     const v = { video: 'nfx:testnet:1:nutflix-' + 'c'.repeat(32), root: SHA, segs: 9 };
     for (const bad of [
@@ -729,6 +771,88 @@ describe('slice 5b: the NFX worker messages', () => {
       { ...v, root: 'x' },
     ])
       expect(videos({ videos: [bad] }), JSON.stringify(bad)).toBe(false);
+  });
+});
+
+describe('slice 5e-3: the iroh helper, the iroh relays and the iroh endpoint', () => {
+  const init = ARGS.init[0]!;
+
+  it('init names the helper by an absolute path within the path cap, or not at all', () => {
+    const g = validateWorkerArgs.init;
+    for (const ok of ['/usr/lib/nutflix/nutflix-iroh-helper', 'C:\\nutflix\\helper.exe', null])
+      expect(g({ ...init, irohHelper: ok }), String(ok)).toBe(true);
+    for (const bad of [
+      'nutflix-iroh-helper',
+      './nutflix-iroh-helper',
+      '',
+      '/',
+      '/opt/a\u0000b',
+      `/${'a'.repeat(4096)}`,
+      42,
+      { path: '/opt/h' },
+    ])
+      expect(g({ ...init, irohHelper: bad }), JSON.stringify(bad).slice(0, 80)).toBe(false);
+  });
+
+  it('the iroh relays are the IPC guard’s normal form: https, or http to loopback; ≤ 4, unique', () => {
+    const g = validateWorkerArgs['nfx.configure'];
+    const four = Array.from({ length: 4 }, (_, i) => `https://r${String(i)}.example/`);
+    expect(g({ enabled: true, irohRelays: four })).toBe(true);
+    expect(g({ enabled: true, irohRelays: ['http://[::1]:3340/'] })).toBe(true);
+    for (const bad of [
+      [...four, 'https://r4.example/'],
+      ['https://relay.example/', 'https://relay.example/'],
+      ['https://relay.example'],
+      ['https://Relay.example/'],
+      ['https://relay.example/path/'],
+      ['http://relay.example/'],
+      ['http://192.168.1.10:3340/'],
+      ['wss://relay.example/'],
+      'https://relay.example/',
+      [42],
+    ])
+      expect(g({ enabled: true, irohRelays: bad }), JSON.stringify(bad)).toBe(false);
+    expect(g({ enabled: true })).toBe(false);
+    expect(g({ enabled: true, irohRelays: [], extra: 1 })).toBe(false);
+    for (const bad of [{ seeder: PUBKEY }, { seeder: PUBKEY, video: 'nutflix:testnet:1:abcdefg' }])
+      expect(validateWorkerArgs['nfx.endpoint'](bad), JSON.stringify(bad)).toBe(false);
+  });
+
+  it('refuses an iroh endpoint that a beacon could not carry', () => {
+    const g = validateWorkerResult['nfx.endpoint'];
+    const ok = (iroh: unknown): boolean => g(viaJson({ hyperdht: null, iroh }));
+    expect(ok(IROH)).toBe(true);
+    const tickets = (...entries: (readonly [string, string])[]) => ({ $map: entries });
+    const meta = ['meta', `blob${'a'.repeat(60)}`] as const;
+    const renditions = Array.from(
+      { length: 16 },
+      (_, i) => [`r${String(i)}`, `blob${'c'.repeat(60)}`] as const,
+    );
+    expect(ok({ ...IROH, tickets: tickets(meta, ...renditions) })).toBe(true);
+    for (const bad of [
+      { ...IROH, t: 'hyperdht' },
+      { ...IROH, node: 'E1'.repeat(32) },
+      { ...IROH, node: 'e1'.repeat(31) },
+      // A relay in iroh's normal form only (the worker names the network's alone).
+      { ...IROH, relay: 'https://iroh-relay.example' },
+      { ...IROH, relay: 'wss://iroh-relay.example/' },
+      { ...IROH, relay: null },
+      { ...IROH, addrs: ['relay.example:4433'] },
+      { ...IROH, addrs: ['192.0.2.7'] },
+      { ...IROH, addrs: Array.from({ length: 17 }, () => '192.0.2.7:4433') },
+      // `meta` is always there; keys are unique labels; tickets are BlobTickets.
+      { ...IROH, tickets: tickets(['720p', `blob${'b'.repeat(60)}`]) },
+      { ...IROH, tickets: tickets(meta, meta) },
+      { ...IROH, tickets: tickets(meta, ['', `blob${'b'.repeat(60)}`]) },
+      { ...IROH, tickets: tickets(meta, ['a\nb', `blob${'b'.repeat(60)}`]) },
+      { ...IROH, tickets: tickets(['meta', 'BLOBAAAAAAAAAAAA']) },
+      { ...IROH, tickets: tickets(['meta', `blob${'1'.repeat(60)}`]) },
+      { ...IROH, tickets: tickets(['meta', `blob${'a'.repeat(4093)}`]) },
+      { ...IROH, tickets: tickets(meta, ...renditions, ['r16', `blob${'c'.repeat(60)}`]) },
+      { ...IROH, tickets: { meta: meta[1] } },
+      { ...IROH, extra: 1 },
+    ])
+      expect(ok(bad), JSON.stringify(bad).slice(0, 200)).toBe(false);
   });
 });
 

@@ -19,6 +19,7 @@ import type {
   CashuProof,
   CoreKeyHex,
   HyperblobRef,
+  IrohRelayUrl,
   LockedProofSet,
   MintKeyset,
   MintUrl,
@@ -44,6 +45,7 @@ import type {
   SessionId,
   UploadId,
   WireError,
+  WireMap,
 } from './protocol.js';
 
 /** Bumped on any incompatible change; carried by `init` and the `ready` event. */
@@ -91,9 +93,24 @@ export interface WorkerInit {
   /**
    * Slice 5b (ADR 0020): `Settings.nfx.enabled` at start; later changes come as `nfx.configure`.
    * The worker serves its NFX videos over HyperDHT only while this AND seeding are on. Absent =
-   * off. The network is the one the worker packages for (contracts v10 has one).
+   * off. The network is the one the worker packages for (contracts v10 has one). Slice 5e-3: with
+   * the network's iroh relays (`Settings.nfx.irohRelays`, none when unset).
    */
-  readonly nfx?: { readonly enabled: boolean };
+  readonly nfx?: NfxConfigureArgs;
+  /**
+   * Slice 5e-3 (ADR 0021): the iroh helper's executable, absolute. With it, and while NFX seeding
+   * is on, the worker also serves its NFX videos over iroh (NFX-06); without it (absent or `null`)
+   * it speaks HyperDHT only, and that is not an error. Dev and CI name it in the host's
+   * environment (`NUTFLIX_IROH_HELPER`); slice 5e-5 supplies a packaged build's own copy.
+   */
+  readonly irohHelper?: string | null;
+}
+
+/** Slice 5b: `Settings.nfx` as the worker needs it; slice 5e-3 adds the network's iroh relays. */
+export interface NfxConfigureArgs {
+  readonly enabled: boolean;
+  /** The only relays the iroh helper uses and beacons name (NFX-06 §1); at most 4, unique. */
+  readonly irohRelays: readonly IrohRelayUrl[];
 }
 
 /** Slice 5b: an NFX-12 endpoint as a beacon carries it (NFX-03 §4, NFX-12 §2). */
@@ -103,6 +120,34 @@ export interface NfxHyperdhtEndpointWire {
   readonly peer: string;
   /** The peer key's signature over `nfx/hyperdht/1:<seeder>:<namespace>`, 128 lowercase hex. */
   readonly bind: string;
+}
+
+/** Slice 5e-3: the most direct addresses a beacon's iroh endpoint names. */
+export const MAX_NFX_IROH_ADDRS = 16;
+
+/**
+ * Slice 5e-3: an NFX-06 endpoint as a beacon carries it (NFX-03 §4): the iroh helper's node, and
+ * one BlobTicket per collection it serves for the video (NFX-06 §2).
+ */
+export interface NfxIrohEndpointWire {
+  readonly t: 'iroh';
+  /** The helper's iroh endpoint id (an Ed25519 public key), 64 lowercase hex. */
+  readonly node: string;
+  /** Its home relay when that is one of the network's (NFX-06 §1), else `''`. */
+  readonly relay: IrohRelayUrl | '';
+  /** Its direct addresses, `ip:port`, at most `MAX_NFX_IROH_ADDRS`. */
+  readonly addrs: readonly string[];
+  /** Collection → ticket: `meta`, and one per rendition id of the hash list. Unique keys. */
+  readonly tickets: WireMap<string, string>;
+}
+
+/**
+ * Slice 5e-3: where a beacon for one video says this node serves it: over HyperDHT (NFX-12) and
+ * over iroh (NFX-06), each `null` while it is not served that way.
+ */
+export interface NfxEndpointsWire {
+  readonly hyperdht: NfxHyperdhtEndpointWire | null;
+  readonly iroh: NfxIrohEndpointWire | null;
 }
 
 /** Slice 5b: a video this node's NFX store holds, verified against its root when stored. */
@@ -207,12 +252,19 @@ export interface WorkerMethodTable {
     result: { readonly paid: boolean },
   ];
   'seeder.unban': [args: { readonly pubkey: NostrPubkey }, result: undefined];
-  /** Slice 5b: pushed by the host whenever `Settings.nfx` changes. */
-  'nfx.configure': [args: { readonly enabled: boolean }, result: undefined];
-  /** Slice 5b: the `hyperdht` endpoint for `seeder`'s beacons while NFX seeding is up, else null. */
+  /**
+   * Slice 5b: pushed by the host whenever `Settings.nfx.enabled` changes; slice 5e-3: and
+   * whenever its iroh relays do.
+   */
+  'nfx.configure': [args: NfxConfigureArgs, result: undefined];
+  /**
+   * Slice 5b: the `hyperdht` endpoint for `seeder`'s beacons while NFX seeding is up, else null.
+   * Slice 5e-3: per video (`<namespace>:<video-id>`), with the `iroh` endpoint while that video
+   * is served over iroh. Answers at once: what is still being imported is not named yet.
+   */
   'nfx.endpoint': [
-    args: { readonly seeder: NostrPubkey },
-    result: { readonly endpoint: NfxHyperdhtEndpointWire | null },
+    args: { readonly seeder: NostrPubkey; readonly video: string },
+    result: NfxEndpointsWire,
   ];
   /** Slice 5b: the NFX videos this node stores (what its beacons may announce). */
   'nfx.videos': [

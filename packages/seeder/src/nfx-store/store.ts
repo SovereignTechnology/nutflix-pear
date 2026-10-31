@@ -325,6 +325,18 @@ export class NfxStore {
     };
   }
 
+  /**
+   * Where file `sha` of `video` lies on disk, for a transport that reads files in place (the
+   * iroh helper imports them by reference, ADR 0021): only a file that video's verified hash
+   * list lists (or the hash list itself), as `file` answers. `undefined` for anything else, even
+   * a file stored for another video. The path is under `dataDir`, so absolute when it is.
+   */
+  path(video: nfx.VideoAddr, sha: string): string | undefined {
+    if (!SHA.test(sha)) return undefined;
+    const listed = this.records.get(video.toString())?.files.some((f) => f.sha256 === sha);
+    return listed === true ? this.filePath(sha) : undefined;
+  }
+
   /** The transport's view of the store. */
   source(): NfxStoreSource {
     return {

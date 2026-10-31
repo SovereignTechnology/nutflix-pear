@@ -9,6 +9,25 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The worker seeds its NFX videos over iroh too, NFX-06 through the iroh helper (ADR 0020 slice
+  5e-3, ADR 0021), beside HyperDHT and only while seeding and the NFX setting are both on.
+  - **The helper:** one per worker, started when a stored video is to be served and stopped when
+    serving goes off. Dev and CI name it in `NUTFLIX_IROH_HELPER`; a packaged build's own copy
+    comes with slice 5e-5. Without one the worker speaks HyperDHT only.
+  - **A stable node:** its iroh key is derived from the worker's Corestore primary key
+    (`nfx:<namespace>:iroh`), so the node id survives restarts. The network's own iroh relays
+    only; a change of them restarts the helper.
+  - **What it serves:** each file is imported by its path in the NFX store, only for a file of a
+    stored video's verified hash list. The collections are NFX-06 §2's: `meta`, then one per
+    rendition in its playlist's order (moved out of spike S-D into `worker/iroh/collections.ts`).
+  - **Beacons:** `nfx.endpoint` is per video now and answers an `iroh` endpoint (node, network
+    relay, addresses, a ticket per collection) beside the `hyperdht` one. Core writes the tickets
+    in key order.
+  - **Seams:** `WorkerRuntime.spawnHelper` (`bare-subprocess` under Bare, `node:child_process` in
+    tests) and `NfxStore.path`.
+  - **CI:** a job builds the helper (pinned toolchain, `--locked`) for the test job, and the
+    worker's iroh suite fetches every file back through a second helper. It fails there, never
+    skips, without one.
 - Settings › NFX network lists the network's own iroh relays (contracts version 12, ADR 0020
   slice 5e-2, ADR 0021).
   - **What they are:** every NFX network runs its own iroh relays (NFX-06 §1). They are the only

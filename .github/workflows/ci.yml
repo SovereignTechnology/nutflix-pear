@@ -5,7 +5,8 @@
 # Supply-chain policy (threat T12): actions pinned by commit SHA; `npm ci --ignore-scripts`
 # (lockfile-only, exact pins, no lifecycle scripts); lockfile drift and non-registry
 # resolutions fail; registry signatures and provenance verified; the native-module inventory
-# is frozen; least-privilege token.
+# is frozen; least-privilege token. The iroh helper (ADR 0021) builds with the runner's own
+# rustup at the pinned toolchain, its Cargo.lock honoured (--locked), as spike-iroh.yml builds it.
 name: ci
 
 on:
@@ -62,7 +63,53 @@ jobs:
       - run: bash scripts/native-module-inventory.sh --check
       - run: npm run lint:electron
 
+  # Slice 5e-3 (ADR 0021): the iroh helper that the worker's iroh tests spawn for real
+  # (`nfx-iroh.integration.test.ts`, which fails, never skips, in CI without it). Release build,
+  # the runner's own rustup, the toolchain the crate pins, its Cargo.lock honoured. The helper's
+  # own gates (fmt, clippy, tests, cargo deny, the NAT matrix) stay in spike-iroh.yml.
+  iroh-helper:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # crates/iroh-helper/rust-toolchain.toml's channel (nfx's), checked below.
+      RUST_VERSION: '1.98.0'
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: the pinned toolchain (the runner's rustup; no other download)
+        run: |
+          set -euo pipefail
+          # One pin, two places: the crate's rust-toolchain.toml and RUST_VERSION may not drift.
+          grep -qx "channel = \"${RUST_VERSION}\"" crates/iroh-helper/rust-toolchain.toml
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
+      - name: cache (cargo registry, the helper's build)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            crates/iroh-helper/target
+          key: iroh-helper-${{ env.RUST_VERSION }}-${{ hashFiles('crates/iroh-helper/Cargo.lock') }}
+          restore-keys: |
+            iroh-helper-${{ env.RUST_VERSION }}-
+      - name: build (release, --locked)
+        working-directory: crates/iroh-helper
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: iroh-helper-linux-x64
+          path: crates/iroh-helper/target/release/nutflix-iroh-helper
+          if-no-files-found: error
+          retention-days: 7
+
   test:
+    needs: iroh-helper
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -77,10 +124,20 @@ jobs:
       - name: system packages (ffmpeg for the real-ffmpeg suites)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm ci --ignore-scripts
+      # Outside the checkout, so no lint, build or test glob ever walks it.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: iroh-helper-linux-x64
+          path: ${{ runner.temp }}/iroh-helper
+      - name: the iroh helper (artifacts drop the executable bit)
+        run: chmod 0755 "$RUNNER_TEMP/iroh-helper/nutflix-iroh-helper"
       # The app-desktop suites read sibling packages from dist/ and the packaging tests stage
       # the built app, so the build comes first.
       - run: npm run build
+      # Only the test step sees the helper: the worker's iroh suite spawns it.
       - run: npm test
+        env:
+          NUTFLIX_IROH_HELPER: ${{ runner.temp }}/iroh-helper/nutflix-iroh-helper
 
   e2e:
     runs-on: ubuntu-24.04

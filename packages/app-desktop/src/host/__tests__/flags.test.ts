@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HostArgsError, parseHostArgs } from '../flags.js';
+import { HostArgsError, irohHelperFromEnv, parseHostArgs } from '../flags.js';
 
 const BASE = ['--user-data-dir=/tmp/ud', '--worker-entry=/opt/app/dist/worker/main.js'];
 
@@ -61,5 +61,20 @@ describe('parseHostArgs', () => {
       [...BASE, '--user-data-dir'],
     ])
       expect(() => parseHostArgs(argv), argv.join(' ')).toThrow(HostArgsError);
+  });
+});
+
+describe('irohHelperFromEnv (slice 5e-3)', () => {
+  it('takes an absolute path; unset or empty is no helper', () => {
+    expect(irohHelperFromEnv('/opt/nutflix/nutflix-iroh-helper')).toBe(
+      '/opt/nutflix/nutflix-iroh-helper',
+    );
+    expect(irohHelperFromEnv(undefined)).toBeNull();
+    expect(irohHelperFromEnv('')).toBeNull();
+  });
+
+  it('refuses anything else instead of falling back quietly', () => {
+    for (const v of ['nutflix-iroh-helper', './bin/helper', '/opt/a\u0000b'])
+      expect(() => irohHelperFromEnv(v), JSON.stringify(v)).toThrow(HostArgsError);
   });
 });

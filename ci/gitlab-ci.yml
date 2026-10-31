@@ -102,6 +102,9 @@ electron-security:
     - npm run lint:electron
 
 # ------------------------------------------------------------------------------ test --
+# Slice 5e-3: the worker's iroh suite (nfx-iroh.integration.test.ts) fails under CI without an iroh
+# helper in NUTFLIX_IROH_HELPER. When a runner exists, give this job one built as
+# .github/workflows/ci.yml's iroh-helper job builds it (pinned toolchain, cargo build --locked).
 test:
   stage: test
   script:
