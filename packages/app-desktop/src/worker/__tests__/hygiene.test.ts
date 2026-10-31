@@ -32,7 +32,13 @@ function sources(dir: string): string[] {
 }
 
 /** Modules that run ONLY under Bare (they import `bare-*` addons that cannot load in Node). */
-const BARE_ONLY = new Set(['adapters/bare.ts', 'entry.ts', 'probe-entry.ts', 'bare-globals.ts']);
+const BARE_ONLY = new Set([
+  'adapters/bare.ts',
+  'entry.ts',
+  'probe-entry.ts',
+  'subprocess-probe-entry.ts',
+  'bare-globals.ts',
+]);
 
 describe('worker log redaction', () => {
   const pk = 'ab'.repeat(32);
