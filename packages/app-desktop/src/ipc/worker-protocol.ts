@@ -88,6 +88,29 @@ export interface WorkerInit {
     /** Mints the wallet takes payment at and pays from. */
     readonly mints: readonly MintUrl[];
   };
+  /**
+   * Slice 5b (ADR 0020): `Settings.nfx.enabled` at start; later changes come as `nfx.configure`.
+   * The worker serves its NFX videos over HyperDHT only while this AND seeding are on. Absent =
+   * off. The network is the one the worker packages for (contracts v10 has one).
+   */
+  readonly nfx?: { readonly enabled: boolean };
+}
+
+/** Slice 5b: an NFX-12 endpoint as a beacon carries it (NFX-03 §4, NFX-12 §2). */
+export interface NfxHyperdhtEndpointWire {
+  readonly t: 'hyperdht';
+  /** The listener's Ed25519 key, 64 lowercase hex. */
+  readonly peer: string;
+  /** The peer key's signature over `nfx/hyperdht/1:<seeder>:<namespace>`, 128 lowercase hex. */
+  readonly bind: string;
+}
+
+/** Slice 5b: a video this node's NFX store holds, verified against its root when stored. */
+export interface NfxStoredVideoWire {
+  /** `<namespace>:<video-id>` (NFX-01). */
+  readonly video: string;
+  readonly root: Sha256Hex;
+  readonly segs: number;
 }
 
 export interface PlayOpenArgs {
@@ -148,6 +171,18 @@ export interface WorkerMethodTable {
     result: { readonly paid: boolean },
   ];
   'seeder.unban': [args: { readonly pubkey: NostrPubkey }, result: undefined];
+  /** Slice 5b: pushed by the host whenever `Settings.nfx` changes. */
+  'nfx.configure': [args: { readonly enabled: boolean }, result: undefined];
+  /** Slice 5b: the `hyperdht` endpoint for `seeder`'s beacons while NFX seeding is up, else null. */
+  'nfx.endpoint': [
+    args: { readonly seeder: NostrPubkey },
+    result: { readonly endpoint: NfxHyperdhtEndpointWire | null },
+  ];
+  /** Slice 5b: the NFX videos this node stores (what its beacons may announce). */
+  'nfx.videos': [
+    args: Record<string, never>,
+    result: { readonly videos: readonly NfxStoredVideoWire[] },
+  ];
   /** Probes the binary (`path` = the configured one, when set). */
   'studio.ffmpeg': [
     args: { readonly recheck: boolean; readonly path?: string },

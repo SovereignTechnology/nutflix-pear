@@ -37,6 +37,7 @@ import { LIMITS } from '../ipc/protocol.js';
 import type {
   HostMethod,
   HostMethodTable,
+  NfxStoredVideoWire,
   PlayOpenArgs,
   Req,
   StudioUploadArgs,
@@ -71,6 +72,8 @@ import {
   getWorkerProviders,
 } from './providers.js';
 import type { WorkerRuntime } from './runtime.js';
+import { NfxSeeding } from './nfx/seeding.js';
+import { NFX_DEFAULT_NAMESPACE } from './studio/nfx.js';
 import { runWorkerUpload } from './studio/upload.js';
 
 /** Live play sessions per worker (the host backstop keeps ≤ 1 unpaused per window). */
@@ -215,6 +218,10 @@ export class WorkerHost {
   /** `--dev-fixtures`: the DLEQ self-check (`dev/dleq-selfcheck.ts`), once it is loaded. */
   private devDleq: Promise<DleqSelfCheck | null> | null = null;
   private seeding: WorkerInit['seeding'] = { enabled: false, diskCapBytes: 0 };
+  /** Slice 5b: `Settings.nfx.enabled`, as the host last said. */
+  private nfxEnabled = false;
+  /** Slice 5b: NFX-12 seeding of the store's NFX videos (with the net). */
+  private nfxSeeding: NfxSeeding | null = null;
   private readonly sessions = new Map<string, Session>();
   private readonly corePolicies = new Map<CoreKeyHex, PricePolicy>();
   /**
@@ -312,6 +319,14 @@ export class WorkerHost {
         this.net?.seeder.unban({ pubkey: req.a.pubkey });
         this.pushStatusSoon();
         return undefined;
+      case 'nfx.configure':
+        this.nfxEnabled = req.a.enabled;
+        await this.applyNfxSeeding();
+        return undefined;
+      case 'nfx.endpoint':
+        return { endpoint: (await this.nfxSeeding?.endpoint(req.a.seeder)) ?? null };
+      case 'nfx.videos':
+        return { videos: this.nfxVideos() };
       case 'studio.ffmpeg':
         return this.probe(req.a.recheck, req.a.path);
       case 'studio.upload':
@@ -351,6 +366,7 @@ export class WorkerHost {
     await runtime.mediaFs(a.storage).rm(tmpDir, { recursive: true });
     await fs.mkdir(tmpDir, { recursive: true });
     this.seeding = a.seeding;
+    this.nfxEnabled = a.nfx?.enabled === true;
     if (a.ffmpeg !== undefined) this.ffmpeg = a.ffmpeg;
 
     const server = new PlaybackServer({ logger: log, randomHex });
@@ -473,6 +489,17 @@ export class WorkerHost {
     seeder.start();
     node.start();
     this.net = { providers, seeder, node, payer, credit, record };
+    this.nfxSeeding = new NfxSeeding(
+      {
+        dht: () => node.dht,
+        keyPair: (name) => seeder.blobs.store.createKeyPair(name),
+        source: seeder.nfx.source(),
+        logger: log,
+      },
+      NFX_DEFAULT_NAMESPACE,
+    );
+    // Listening announces on the DHT, which can take a while: `ready` does not wait for it.
+    void this.applyNfxSeeding();
     // ADR 0015: our own profile core (avatar, thumbnails) is served free while seeding.
     this.ownProfile().catch(() => {
       log.warn('the profile core could not be opened');
@@ -983,11 +1010,28 @@ export class WorkerHost {
     // ADR 0015: stop serving other creators' images first, so `setServing` cannot re-announce them.
     if (!this.servesImages()) void this.releaseImageCores();
     this.net?.node.setServing(a.enabled);
+    void this.applyNfxSeeding();
     if (a.diskCapBytes !== prevCap)
       this.live?.log.info('disk cap change applies at the next worker start', {
         diskCapBytes: a.diskCapBytes,
       });
     this.pushStatusSoon();
+  }
+
+  /** Slice 5b: NFX videos are served while seeding AND NFX are both on, and only then. */
+  private applyNfxSeeding(): Promise<void> {
+    return this.nfxSeeding?.set(this.seeding.enabled && this.nfxEnabled) ?? Promise.resolve();
+  }
+
+  /** Slice 5b: what the store holds, for the host's beacons (a `segs` past 2^53 is skipped). */
+  private nfxVideos(): NfxStoredVideoWire[] {
+    const out: NfxStoredVideoWire[] = [];
+    for (const r of this.net?.seeder.nfx.videos() ?? []) {
+      const segs = Number(r.segs);
+      if (!Number.isSafeInteger(segs) || segs < 1) continue;
+      out.push({ video: r.video, root: r.root as Sha256Hex, segs });
+    }
+    return out;
   }
 
   private pushStatusSoon(): void {
@@ -1075,6 +1119,8 @@ export class WorkerHost {
       await Promise.all([...this.sessions.keys()].map((sid) => this.closeSession(sid)));
       await this.net?.payer.flush().catch(() => undefined);
       await this.live?.server.close();
+      // Slice 5b: the NFX-12 listener lives on the swarm's DHT, so it closes first.
+      await this.nfxSeeding?.close();
       try {
         await this.net?.node.destroy();
       } finally {

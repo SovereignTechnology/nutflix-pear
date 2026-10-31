@@ -9,6 +9,27 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The worker seeds its NFX videos over HyperDHT, NFX-12 `nfx/files/1` in free mode (ADR 0020
+  slice 5b).
+  - It serves only while seeding and the NFX setting are both on.
+  - It listens on the swarm's DHT with a key pair of its own per network, derived from the
+    worker's key and never the legacy swarm's.
+  - It answers only for files a stored video's verified hash list names.
+  - Two new worker messages give the host what beacons need: the `hyperdht` endpoint with its
+    `bind` for a seeder key, and the list of stored videos.
+- NFX beacons (NFX-03, ADR 0020 slice 5c). While the worker serves, the host publishes one
+  kind-20464 beacon per seeded video every minute.
+  - **The beacon:** TTL 120 s, free (`price_hint` 0, no mints), `chunks: "all"`, with the
+    worker's `hyperdht` endpoint.
+  - **Where it goes:** the network's scoped relays, and nowhere else.
+  - **Which videos:** only those whose current manifest, by the recorded author, names the root
+    the store verified, and that the author has not deleted. This is rechecked every 10 minutes.
+  - **Signing:** each beacon is signed by an NFX seeder key, one per network and user, held by
+    core's `LocalSigner` and kept in a key file in `<userData>/nfx/`. The key file's random
+    passphrase is sealed NIP-44-to-self by the user's signer. The key signs beacons and nothing
+    else.
+  - **Which author:** the host records whose manifest each seeded video is when it publishes the
+    user's own.
 - Settings › NFX network (contracts version 10, ADR 0020 slice 5a): taking part in nfx's testnet
   is now a setting, off by default.
   - When on, the catalogue lists the network's free videos beside the Nostr ones. A free upload's

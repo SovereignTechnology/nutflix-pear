@@ -112,6 +112,7 @@ const isInit = safe(
         ffmpeg: obj({ ffmpeg: isAbsolutePath, ffprobe: isAbsolutePath }),
         dev: isDev,
         payments: isPayments,
+        nfx: obj({ enabled: bool }),
       },
     )(x) &&
     // Real payments and mock payments never run together.
@@ -182,6 +183,9 @@ export const validateWorkerArgs: {
   'seeder.configure': safe(isSeeding),
   'seeder.melt': safe(obj({ mint: isMintUrl, bolt11: isInvoice })),
   'seeder.unban': safe(obj({ pubkey: isPubkey })),
+  'nfx.configure': safe(obj({ enabled: bool })),
+  'nfx.endpoint': safe(obj({ seeder: isPubkey })),
+  'nfx.videos': safe(obj({}) as Guard<Record<string, never>>),
   'studio.ffmpeg': safe(obj({ recheck: bool }, { path: isAbsolutePath })),
   'studio.upload': safe(isStudioUpload),
   'image.fetch': safe(obj({ url: isHyperImageUrl, sha256: isSha256, size: isImageSize })),
@@ -212,6 +216,21 @@ const isFfmpegStatus = obj(
   },
 );
 
+/** Slice 5b: the most NFX videos one `nfx.videos` lists. */
+export const MAX_NFX_STORED_VIDEOS = 4096;
+
+const isNfxHyperdhtEndpoint = obj({
+  t: literal('hyperdht'),
+  peer: matches(/^[0-9a-f]{64}$/, 64),
+  bind: matches(/^[0-9a-f]{128}$/, 128),
+});
+
+const isNfxStoredVideo = obj({
+  video: isNfxVideoAddr,
+  root: isSha256,
+  segs: int(1, Number.MAX_SAFE_INTEGER),
+});
+
 /** Results of every host → worker request (checked by the host). */
 export const validateWorkerResult: {
   readonly [M in WorkerMethod]: Guard<WorkerMethodTable[M][1]>;
@@ -228,6 +247,9 @@ export const validateWorkerResult: {
   'seeder.configure': isVoid,
   'seeder.melt': safe(obj({ paid: bool })),
   'seeder.unban': isVoid,
+  'nfx.configure': isVoid,
+  'nfx.endpoint': safe(obj({ endpoint: union(isNfxHyperdhtEndpoint, literal(null)) })),
+  'nfx.videos': safe(obj({ videos: arrayOf(isNfxStoredVideo, MAX_NFX_STORED_VIDEOS) })),
   'studio.ffmpeg': safe(isFfmpegStatus),
   'studio.upload': safe(isVideoManifest),
   // At most the image cap as hex (two characters a byte).

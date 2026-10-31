@@ -118,3 +118,25 @@ off means no NFX query, listing, seeding or beacon.
     setup, the same rule as for ordinary relays.
 - **NIP-66 discovery** (kind 30166) waits until someone publishes it; nfxd does not.
 
+
+## Amendment 2026-10-31: seeding and beacons (slices 5b and 5c)
+
+- **Serving.** The worker serves its NFX store over NFX-12 in free mode only while seeding AND
+  the NFX setting are both on.
+  - It listens on the swarm's DHT with one key pair per network,
+    `Corestore.createKeyPair('nfx:<namespace>:seeder')`. That key is never the legacy swarm's, so
+    the two identities cannot be linked.
+  - It never runs `nfx/pay/1`: a free seeder does not quote (NFX-07 §2).
+- **The seeder key** that signs beacons is a separate Nostr key per network and per user.
+  - It is held by core's `LocalSigner`, which is still the only code holding a Nostr private
+    key, in a `LocalSigner` key file under `<userData>/nfx/`.
+  - The key file's random passphrase is sealed NIP-44-to-self by the user's signer, the recovery
+    file's pattern. It works on every platform; a NIP-46 user approves one decryption per launch.
+  - It signs kind 20464 only, and is never the user's identity.
+  - A signer that is merely unavailable never causes the key to be replaced.
+- **Beacons** go to the scoped relays only, never to public ones (NFX-03 §7).
+  - Each lives 120 s and is republished every 60 s, carrying `free: true` and `price_hint: 0`.
+  - A video is beaconed only while its current manifest by the recorded author names the
+    verified root, and is not deleted (NFX-02 §6). This is rechecked every 10 minutes.
+  - The author of each seeded video is recorded when it becomes known, because the store keeps
+    files by address only.

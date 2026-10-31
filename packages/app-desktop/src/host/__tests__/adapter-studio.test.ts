@@ -3,7 +3,7 @@
  * event), the seeder over the worker, settings side effects, and the `--dev-fixtures`
  * catalogue (design §5a).
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -231,6 +231,30 @@ describe('seeder over the worker; settings side effects', () => {
     expect(await a.seeder.melt(mocks.MINTS.a, 'lnbc10n1x')).toEqual({ paid: true });
     await a.seeder.unban('d'.repeat(64) as never);
     expect(r.worker().calls('seeder.unban')).toEqual([{ pubkey: 'd'.repeat(64) }]);
+  });
+
+  it('slice 5b: Settings.nfx reaches the worker on every on/off change and at init', async () => {
+    const nfx = { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } as const;
+    r = await rig();
+    await r.ready();
+    const a = r.host.adapter;
+    expect(r.worker().calls('init')[0]).toMatchObject({ nfx: { enabled: false } });
+    await a.updateSettings({ nfx });
+    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true }]);
+    await a.updateSettings({ theme: 'dark' });
+    await a.updateSettings({ nfx: { ...nfx, scopedRelays: ['wss://scoped.test' as RelayUrl] } });
+    expect(r.worker().calls('nfx.configure')).toHaveLength(1); // no on/off change, no push
+    await a.updateSettings({ nfx: { ...nfx, enabled: false } });
+    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true }, { enabled: false }]);
+    await a.updateSettings({ nfx });
+    // A restarted worker starts with the current state.
+    r.worker().crash(1);
+    await eventually(
+      () => r!.spawned.length === 2 && r!.host.worker.state === 'ready',
+      'restart',
+      5000,
+    );
+    expect(r.spawned[1]!.calls('init')[0]).toMatchObject({ nfx: { enabled: true } });
   });
 
   it('seeder.status events reach onStatus as SeederStatus (Map)', async () => {
@@ -498,6 +522,16 @@ describe("slice 4a: a free upload's NFX manifest (kind 38504)", () => {
       'the published line',
     );
     expect(manifests()).toHaveLength(1);
+    // Slice 5c: this node may beacon it now, naming the user as the manifest's author.
+    const seeded = JSON.parse(
+      await readFile(join(r!.userData, 'nfx', 'seeded.json'), 'utf8'),
+    ) as unknown;
+    expect(seeded).toEqual({
+      v: 1,
+      videos: [
+        { video: parsed.value.addr.toString(), author: viewer.pubkey, root: 'ef'.repeat(32) },
+      ],
+    });
   });
 
   it('a failed packaging publishes nothing', async () => {
