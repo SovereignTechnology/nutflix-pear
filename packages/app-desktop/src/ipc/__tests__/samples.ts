@@ -112,6 +112,7 @@ export const VALID: Samples = {
   ],
   'library.liked': [[]],
   play: [[VIDEO_ID], [VIDEO_ID, '720p']],
+  playNfx: [[NFX_ADDR], [NFX_ADDR, '720p']],
   image: [
     ['https://blossom.example/' + 'ab'.repeat(32)],
     ['https://blossom.example/thumb.jpg?x=1', mocks.asSha256('thumb')],

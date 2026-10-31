@@ -11,6 +11,8 @@
  * `EXCLUDED_METHODS` and `TOPIC_METHODS`.
  */
 import type {
+  NfxAddress,
+  NfxRenditionInfo,
   NostrEventId,
   Notification,
   PricePolicy,
@@ -40,6 +42,15 @@ export interface BridgePlaySession {
   pause(): void;
   resume(): void;
   switchRendition(label: string): Promise<BridgePlaySession>;
+  close(): Promise<void>;
+}
+
+/** Contracts v11: a free NFX session; `close()` is `session.close` by sid. */
+export interface BridgeNfxPlaySession {
+  readonly videoId: NfxAddress;
+  readonly rendition: string;
+  readonly renditions: readonly NfxRenditionInfo[];
+  readonly source: { readonly kind: 'url'; readonly url: NfMediaPlayUrl };
   close(): Promise<void>;
 }
 
@@ -83,6 +94,7 @@ export interface NutflixBridge {
     liked: Call<'library.liked'>;
   };
   play(videoId: NostrEventId, rendition?: string): Promise<BridgePlaySession>;
+  playNfx(addr: NfxAddress, rendition?: string): Promise<BridgeNfxPlaySession>;
   image: Call<'image'>;
   readonly wallet: {
     mints: Call<'wallet.mints'>;

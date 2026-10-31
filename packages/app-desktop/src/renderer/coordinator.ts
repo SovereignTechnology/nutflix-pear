@@ -122,6 +122,9 @@ export class PlaybackCoordinator {
       subscriptions: () => a.subscriptions(),
       report: (id, reason) => a.report(id, reason),
       play: (id, rendition) => this.play(a, id, rendition),
+      // Contracts v11: a free NFX session plays only on its own screen, which closes it.
+      playNfx: (addr, rendition) =>
+        rendition === undefined ? a.playNfx(addr) : a.playNfx(addr, rendition),
       image: (url, sha) => (sha === undefined ? a.image(url) : a.image(url, sha)),
       settings: () => a.settings(),
       updateSettings: (p) => a.updateSettings(p),

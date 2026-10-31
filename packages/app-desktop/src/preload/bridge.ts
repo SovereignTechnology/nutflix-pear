@@ -16,11 +16,12 @@
  * Nothing else: no `ipcRenderer`, no generic `invoke`, no Node. Errors are `IpcError`s whose
  * message starts with `"<code>: "` (all `contextBridge` keeps); the renderer rebuilds `.code`.
  */
-import type { NostrEventId } from '@sovit/core';
+import type { NfxAddress, NostrEventId } from '@sovit/core';
 import type {
   ExcludedMethod,
   ImageMime,
   Method,
+  NfxPlaySessionWire,
   PlaySessionWire,
   ThumbnailBytes,
   UploadId,
@@ -29,7 +30,13 @@ import type {
 import { IMAGE_MIMES, LIMITS } from '../ipc/protocol.js';
 import { fromWireError, wireError } from '../ipc/errors.js';
 import type { Transport } from './transport.js';
-import type { BridgePlaySession, BridgeUploadInput, Call, NutflixBridge } from './types.js';
+import type {
+  BridgeNfxPlaySession,
+  BridgePlaySession,
+  BridgeUploadInput,
+  Call,
+  NutflixBridge,
+} from './types.js';
 
 export interface BridgeDeps {
   /** `webUtils.getPathForFile` — `''` for a `File` the page constructed itself. */
@@ -146,6 +153,27 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
     };
   }
 
+  /** Contracts v11: a free NFX session — `close` is `session.close`, nothing else is on it. */
+  function nfxSession(w: NfxPlaySessionWire): BridgeNfxPlaySession {
+    let closed = false;
+    return {
+      videoId: w.videoId,
+      rendition: w.rendition,
+      renditions: w.renditions,
+      source: { kind: 'url', url: w.source.url },
+      async close(): Promise<void> {
+        if (closed) return;
+        closed = true;
+        try {
+          await t.call('session.close', [w.sid]);
+        } catch (err: unknown) {
+          const c = codeOf(err);
+          if (c !== 'session-closed' && c !== 'not-found') throw err;
+        }
+      },
+    };
+  }
+
   async function thumbnailOf(
     choice: BridgeUploadInput['thumbnailChoice'],
   ): Promise<number | ThumbnailBytes | undefined> {
@@ -242,6 +270,10 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
       const args: [NostrEventId, string?] =
         rendition === undefined ? [videoId] : [videoId, rendition];
       return session(await t.call('play', args));
+    },
+    async playNfx(addr: NfxAddress, rendition?: string): Promise<BridgeNfxPlaySession> {
+      const args: [NfxAddress, string?] = rendition === undefined ? [addr] : [addr, rendition];
+      return nfxSession(await t.call('playNfx', args));
     },
     image: call('image'),
     wallet: {

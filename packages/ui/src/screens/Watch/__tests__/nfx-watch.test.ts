@@ -49,17 +49,22 @@ describe('NfxWatch', () => {
     expect(navigate).toHaveBeenLastCalledWith({ name: 'channel', pubkey: NFX.author });
   });
 
-  it('never plays, pays, reacts or saves', async () => {
+  it('plays only when asked, free: no paid session, stats, comments or money UI', async () => {
     const adapter = new MockNetworkAdapter({ nfx: true });
     const play = vi.spyOn(adapter, 'play');
+    const playNfx = vi.spyOn(adapter, 'playNfx');
     const stats = vi.spyOn(adapter, 'stats');
     const comments = vi.spyOn(adapter, 'comments');
-    const video = vi.spyOn(adapter, 'video');
     const { r } = mount(adapter);
     await flush();
+    expect(r.container.querySelector('video')).toBeNull();
+    expect(playNfx).not.toHaveBeenCalled();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    expect(playNfx).toHaveBeenCalledWith(NFX.id);
+    const video = r.get('video.nf-nfxwatch__video');
+    expect(video.getAttribute('src')).toBe(`fixture://nfx/${NFX.eventId}/720p`);
     for (const sel of [
-      'video',
-      '.nf-player',
       '.nf-sats--price',
       '.nf-reactions',
       '.nf-watch__actions',
@@ -67,11 +72,56 @@ describe('NfxWatch', () => {
     ]) {
       expect(r.container.querySelector(sel), sel).toBeNull();
     }
-    expect(r.container.querySelectorAll('button')).toHaveLength(1); // the channel link
     expect(play).not.toHaveBeenCalled();
     expect(stats).not.toHaveBeenCalled();
     expect(comments).not.toHaveBeenCalled();
-    expect(video).not.toHaveBeenCalled();
+  });
+
+  it('switching quality closes the session and opens the other rendition', async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true });
+    const closes: string[] = [];
+    const real = adapter.playNfx.bind(adapter);
+    const spy = vi.spyOn(adapter, 'playNfx').mockImplementation(async (addr, rendition) => {
+      const s = await real(addr, rendition);
+      return {
+        ...s,
+        close: () => {
+          closes.push(s.rendition);
+          return Promise.resolve();
+        },
+      };
+    });
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    const select = r.get('.nf-nfxwatch__quality select') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(['720p', '360p']);
+    act(() => {
+      select.value = '360p';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    expect(spy).toHaveBeenLastCalledWith(NFX.id, '360p');
+    expect(closes).toEqual(['720p']);
+    expect(r.get('video').getAttribute('src')).toBe(`fixture://nfx/${NFX.eventId}/360p`);
+    r.unmount();
+    mounted = undefined;
+    await flush();
+    expect(closes).toEqual(['720p', '360p']);
+  });
+
+  it('nobody seeding: says so, and Retry asks again', async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true, failWith: 'no-seeders' });
+    const playNfx = vi.spyOn(adapter, 'playNfx');
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    expect(r.container.textContent).toContain('No seeders online');
+    click(r.get('.nf-state--empty button'));
+    await flush();
+    expect(playNfx).toHaveBeenCalledTimes(2);
   });
 
   it('an unknown, deleted or priced address is "not found", with a way home', async () => {

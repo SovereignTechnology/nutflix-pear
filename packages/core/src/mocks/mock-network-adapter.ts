@@ -12,6 +12,7 @@ import type {
   MintUrl,
   NetworkAdapter,
   NfxAddress,
+  NfxPlaySession,
   NfxVideo,
   Notification,
   NostrEventId,
@@ -399,6 +400,27 @@ export class MockNetworkAdapter implements NetworkAdapter {
     const bal = await this.wallet.balance(video.price.mints[0] ?? MINTS.a);
     if (bal <= 0) throw new Error(`no-balance: no balance at ${video.price.mints[0] ?? ''}`);
     return this.makeSession(video, r.label);
+  }
+
+  /** v11: a free NFX session over the fixture's renditions (no money, no peers). */
+  async playNfx(addr: NfxAddress, rendition?: string): Promise<NfxPlaySession> {
+    const video = await this.delay(NFX_VIDEOS.find((v) => v.id === addr) ?? null);
+    if (video === null) throw new Error('not-found: no such NFX video');
+    if (this.opts.failWith === 'no-seeders')
+      throw new Error('no-seeders: nobody is seeding this video right now');
+    const renditions = [
+      { id: '720p', bandwidth: 2_500_000, resolution: '1280x720' },
+      { id: '360p', bandwidth: 800_000, resolution: '640x360' },
+    ];
+    const chosen = renditions.find((r) => r.id === rendition) ?? renditions[0];
+    if (chosen === undefined) throw new Error('not-found: no renditions');
+    return {
+      videoId: video.id,
+      rendition: chosen.id,
+      renditions,
+      source: { kind: 'url', url: `fixture://nfx/${video.eventId}/${chosen.id}` },
+      close: () => Promise.resolve(),
+    };
   }
 
   private makeSession(video: VideoManifest, label: string): PlaySession {
