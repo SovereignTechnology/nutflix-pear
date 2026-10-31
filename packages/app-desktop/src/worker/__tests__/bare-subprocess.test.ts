@@ -26,7 +26,7 @@ import { WORKER_SRC, bundleForBare, spawnBare } from './helpers/bare.js';
 
 const require = createRequire(import.meta.url);
 const BARE = join(
-  dirname(require.resolve('bare-sidecar/package.json')),
+  dirname(require.resolve('bare-sidecar/package')),
   'prebuilds',
   `${process.platform}-${process.arch}`,
   'bare',
