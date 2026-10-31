@@ -36,12 +36,12 @@ function mount(
 }
 
 describe('NfxWatch', () => {
-  it("shows the video and its channel, and says it can't play yet", async () => {
+  it('shows the video and its channel, and a free Play', async () => {
     const adapter = new MockNetworkAdapter({ nfx: true });
     const { r, navigate } = mount(adapter);
     await flush();
     expect(r.get('.nf-watch__title').textContent).toBe(NFX.title);
-    expect(r.container.textContent).toContain("Can't play this yet");
+    expect(r.get('.nf-nfxwatch__start button').textContent).toBe('Play — free');
     expect(r.container.textContent).toContain('Free · NFX');
     const channel = CHANNELS.find((c) => c.pubkey === NFX.author)!;
     expect(r.get('.nf-nfxwatch__channel').textContent).toContain(channel.profile.displayName);

@@ -103,7 +103,7 @@ function NfxStage({
       (error: unknown) => {
         if (!mounted.current || ticket !== opening.current) return;
         setState(
-          /no-seeders/.test(messageOf(error))
+          messageOf(error).includes('no-seeders')
             ? { status: 'no-seeders' }
             : { status: 'error', error },
         );

@@ -167,6 +167,6 @@ describe('openNfxSession (contracts v11)', () => {
     const revoked = r.out.filter((m) => m.kind === 'media-link' && m.url === null);
     expect(revoked).toHaveLength(2);
     expect(r.worker().calls('nfx.play.close')).toEqual([{ sid: mine.sid }]);
-    void theirs;
+    expect(theirs.sid).not.toBe(mine.sid);
   });
 });
