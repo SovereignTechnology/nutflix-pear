@@ -131,3 +131,29 @@ describe('progressiveLayout and locate', () => {
     expect(() => progressiveLayout([{ kind: 'file', sha256: A, size: 0 }])).toThrow(RangeError);
   });
 });
+
+describe('file parts that start into the stored file (slice 5d)', () => {
+  const sha = 'ab'.repeat(32);
+  it('keeps `skip` on the part, and the served size is what places it', () => {
+    const layout = progressiveLayout([
+      { kind: 'bytes', bytes: new Uint8Array(4) },
+      { kind: 'file', sha256: sha, size: 10, skip: 60 },
+    ]);
+    expect(layout.size).toBe(14);
+    expect(layout.parts[1]).toEqual({
+      part: { kind: 'file', sha256: sha, size: 10, skip: 60 },
+      offset: 4,
+      size: 10,
+    });
+    // `locate` gives offsets within the served part; the reader adds `skip`.
+    expect(locate(layout, 6, 3).map((p) => [p.offset, p.length])).toEqual([[2, 3]]);
+  });
+
+  it('refuses a negative, fractional or unsafe skip', () => {
+    for (const skip of [-1, 1.5, Number.MAX_SAFE_INTEGER + 2]) {
+      expect(() => progressiveLayout([{ kind: 'file', sha256: sha, size: 10, skip }])).toThrow(
+        RangeError,
+      );
+    }
+  });
+});
