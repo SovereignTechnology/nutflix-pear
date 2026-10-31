@@ -216,6 +216,7 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
     setProfilePicture: call('setProfilePicture'),
     feed: call('feed'),
     video: call('video'),
+    nfxVideo: call('nfxVideo'),
     stats: call('stats'),
     related: call('related'),
     search: call('search'),

@@ -106,6 +106,7 @@ export function adapterFromBridge(b: NutflixBridge): NetworkAdapter {
     setProfilePicture: (image) => settle(b.setProfilePicture(image)),
     feed: (q) => settle(b.feed(q)),
     video: (id) => settle(b.video(id)),
+    nfxVideo: (addr) => settle(b.nfxVideo(addr)),
     stats: (id) => settle(b.stats(id)),
     related: (id, limit) => settle(limit === undefined ? b.related(id) : b.related(id, limit)),
     search: (q) => settle(b.search(q)),

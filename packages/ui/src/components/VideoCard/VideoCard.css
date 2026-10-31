@@ -99,6 +99,20 @@
   bottom: var(--nf-space-8);
 }
 
+/* Contracts v9: a free NFX video carries no price, so it says so where the price sits. */
+.nf-card__free {
+  position: absolute;
+  left: var(--nf-space-8);
+  bottom: var(--nf-space-8);
+  padding: 2px 4px;
+  border-radius: var(--nf-radius-sm);
+  font-size: var(--nf-text-xs);
+  font-weight: var(--nf-weight-medium);
+  line-height: 1.2;
+  color: var(--nf-color-overlay-fg);
+  background: var(--nf-color-overlay-strong);
+}
+
 .nf-card__progress {
   position: absolute;
   left: 0;

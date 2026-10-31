@@ -940,3 +940,32 @@ describe('Channel — cancellation', () => {
     expect(off).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Channel — free NFX videos (contracts v9)', () => {
+  const NFX = mocks.NFX_VIDEOS.find((v) => v.author === ORBITAL.pubkey)!;
+
+  it('lists the channel’s NFX video with the long-form ones, free, without stats', async () => {
+    const adapter = adapterWith({ nfx: true });
+    const stats = vi.spyOn(adapter, 'stats');
+    const { r, navigate } = mount(adapter);
+    await flush();
+    const card = r
+      .all('.nf-channelpage__grid .nf-card')
+      .find((c) => c.getAttribute('aria-label') === NFX.title);
+    expect(card).toBeDefined();
+    expect(card!.querySelector('.nf-card__free')).not.toBeNull();
+    expect(stats.mock.calls.map(([id]) => id)).not.toContain(NFX.id);
+    click(card!.querySelector('.nf-card__thumb')!);
+    expect(navigate).toHaveBeenLastCalledWith({ name: 'watch', videoId: NFX.id });
+  });
+
+  it('counts seeders over the NIP-71 videos only, never stuck on "Checking"', async () => {
+    const { r } = mount(adapterWith({ nfx: true }), { tab: 'about' });
+    await flush();
+    const details = r.get('.nf-channelpage__details').textContent;
+    expect(details).not.toContain('Checking seeders');
+    expect(details).toContain(
+      `Seeders online for ${ORBITAL_VIDEOS.length} of ${ORBITAL_VIDEOS.length} videos`,
+    );
+  });
+});

@@ -18,6 +18,16 @@ export type NostrPubkey = Branded<string, 'NostrPubkey'>;
 /** Nostr event id (sha256 of the serialised event, hex). */
 export type NostrEventId = Branded<string, 'NostrEventId'>;
 
+/**
+ * v9 (ADR 0020): an NFX manifest's address, `38504:<author, 64 lower-case hex>:<d>` (NIP-01,
+ * NFX-02 §2), where `d` is `<namespace>:<video-id>`, so the address is split at its first two
+ * colons only. Stable across the manifest's revisions, unlike its event id.
+ */
+export type NfxAddress = Branded<string, 'NfxAddress'>;
+
+/** v9: a video's identity, a NIP-71 event id or an NFX address. */
+export type VideoId = NostrEventId | NfxAddress;
+
 /** Cashu P2PK (NUT-11) public key: 33-byte compressed secp256k1, hex (66 chars). */
 export type CashuP2pkPubkey = Branded<string, 'CashuP2pkPubkey'>;
 

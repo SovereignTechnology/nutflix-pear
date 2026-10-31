@@ -112,6 +112,7 @@ describe('Home — populated feeds', () => {
     expect(cards).toHaveLength(expected.items.length);
     expect(cards.length).toBeGreaterThan(0);
     const first = expected.items[0]!;
+    if (first.kind === 38504) throw new Error('the mock lists NFX videos only when asked');
     const thumb = first.renditions[0]!.image!;
     expect(image).toHaveBeenCalledWith(thumb.url, thumb.sha256);
     expect(r.get('.nf-card__img').getAttribute('src')).toBe(thumb.url);
@@ -510,5 +511,39 @@ describe('previewCostSats', () => {
       renditions: [{ ...cheapest, bitrateKbps: 1, size: 10 }],
     };
     expect(previewCostSats(tiny)).toBe(v.price.satsPerBlock);
+  });
+});
+
+describe('Home — free NFX videos (contracts v9)', () => {
+  it('lists them in the long-form grid, with no stats, price or preview, and opens their page', async () => {
+    const adapter = adapterWith({ nfx: true });
+    const stats = vi.spyOn(adapter, 'stats');
+    const image = vi.spyOn(adapter, 'image');
+    const { r, navigate } = mount(adapter, { tab: 'tags', followedTags: ['space'] });
+    keep(r);
+    await flush();
+    const nfx = mocks.NFX_VIDEOS.find((v) => v.tags.includes('space'))!;
+    const card = r
+      .all('.nf-home__grid .nf-card')
+      .find((c) => c.getAttribute('aria-label') === nfx.title);
+    expect(card).toBeDefined();
+    expect(card!.querySelector('.nf-card__free')?.textContent).toBe('Free');
+    expect(card!.querySelector('.nf-card__price')).toBeNull();
+    expect(stats.mock.calls.map(([id]) => id)).not.toContain(nfx.id);
+    expect(stats).toHaveBeenCalled(); // the NIP-71 cards still get theirs
+    expect(image.mock.calls.some(([url]) => url.includes(nfx.thumb!.sha256))).toBe(false);
+    pointerEnter(card!.closest('.nf-home__item')!);
+    expect(r.container.querySelector('.nf-home__preview')).toBeNull();
+    click(card!.querySelector('.nf-card__thumb')!);
+    expect(navigate).toHaveBeenLastCalledWith({ name: 'watch', videoId: nfx.id });
+  });
+
+  it('keeps them out of the trending and shorts shelves', async () => {
+    const adapter = adapterWith({ nfx: true });
+    const { r } = mount(adapter, { tab: 'trending' });
+    keep(r);
+    await flush();
+    const titles = r.all('.nf-card').map((c) => c.getAttribute('aria-label'));
+    for (const v of mocks.NFX_VIDEOS) expect(titles).not.toContain(v.title);
   });
 });

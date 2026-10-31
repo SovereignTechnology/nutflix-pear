@@ -105,6 +105,7 @@ export class PlaybackCoordinator {
       setProfilePicture: (image) => a.setProfilePicture(image),
       feed: (q) => a.feed(q),
       video: (id) => a.video(id),
+      nfxVideo: (addr) => a.nfxVideo(addr),
       stats: (id) => a.stats(id),
       related: (id, limit) => (limit === undefined ? a.related(id) : a.related(id, limit)),
       search: (q) => a.search(q),

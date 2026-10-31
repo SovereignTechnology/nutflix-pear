@@ -70,6 +70,7 @@ import {
   formatSats,
   isTextEntryTarget,
   mintHost,
+  nip71Only,
   parseMarkdown,
   reactionStateOf,
   reactionStep,
@@ -450,7 +451,8 @@ export function Shorts({
       try {
         const page = await adapter.feed({ source: 'shorts', limit: pageSize });
         if (cancelled()) return;
-        let list = dedupe([], page.items);
+        // The shorts feed is NIP-71 only (contracts v9: NFX has no short kind).
+        let list = dedupe([], nip71Only(page.items));
         let start = 0;
         let missing = false;
         if (startId !== undefined) {
@@ -531,7 +533,7 @@ export function Shorts({
         moreBusyRef.current = false;
         setFeed((prev) => ({
           ...prev,
-          items: dedupe(prev.items, page.items),
+          items: dedupe(prev.items, nip71Only(page.items)),
           next: page.next,
           more: 'idle',
         }));

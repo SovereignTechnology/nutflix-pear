@@ -6,10 +6,13 @@
  * `failWith` forces error states ("no seeders online", "signer not detected", ...).
  */
 import type {
+  CatalogVideo,
   Comment,
   FeedQuery,
   MintUrl,
   NetworkAdapter,
+  NfxAddress,
+  NfxVideo,
   Notification,
   NostrEventId,
   NostrPubkey,
@@ -40,6 +43,7 @@ import {
   ME,
   MINTS,
   MY_PROFILE,
+  NFX_VIDEOS,
   VIDEOS,
   asEventId,
   asPubkey,
@@ -63,6 +67,12 @@ export interface MockNetworkAdapterOptions {
   readonly blocksPerSecond?: number;
   /** Interval driver, injectable for tests. Defaults to `setInterval`. */
   readonly setInterval?: (fn: () => void, ms: number) => () => void;
+  /**
+   * v9: also list the free NFX fixtures (`NFX_VIDEOS`) in the subscriptions, tags and author
+   * feeds and in search, as the desktop catalog does once an NFX network is chosen. Off by
+   * default, so screens see only NIP-71 videos unless a story or test asks.
+   */
+  readonly nfx?: boolean;
 }
 
 export class MockNetworkAdapter implements NetworkAdapter {
@@ -165,15 +175,18 @@ export class MockNetworkAdapter implements NetworkAdapter {
   }
 
   // ---- catalog
-  feed(q: FeedQuery): Promise<Page<VideoManifest>> {
-    let items = [...VIDEOS];
+  feed(q: FeedQuery): Promise<Page<CatalogVideo>> {
+    let items: CatalogVideo[] = [...VIDEOS];
+    if (this.opts.nfx === true && q.source !== 'trending' && q.source !== 'shorts') {
+      items.push(...NFX_VIDEOS);
+    }
     switch (q.source) {
       case 'subscriptions':
-        items = items.filter((v) => this.subs.has(v.author) && v.kind === 21);
+        items = items.filter((v) => this.subs.has(v.author) && v.kind !== 22);
         break;
       case 'trending':
         items = items
-          .filter((v) => v.kind === 21)
+          .filter((v): v is VideoManifest => v.kind === 21)
           .sort((a, b) => this.trendScore(b) - this.trendScore(a));
         break;
       case 'tags':
@@ -191,6 +204,9 @@ export class MockNetworkAdapter implements NetworkAdapter {
   }
   video(id: NostrEventId): Promise<VideoManifest | null> {
     return this.delay(VIDEOS.find((v) => v.id === id) ?? null);
+  }
+  nfxVideo(addr: NfxAddress): Promise<NfxVideo | null> {
+    return this.delay(NFX_VIDEOS.find((v) => v.id === addr) ?? null);
   }
   stats(id: NostrEventId): Promise<VideoStats> {
     const v = VIDEOS.find((x) => x.id === id);
@@ -225,9 +241,11 @@ export class MockNetworkAdapter implements NetworkAdapter {
     readonly text: string;
     readonly cursor?: string;
     readonly filters?: SearchFilters;
-  }): Promise<Page<VideoManifest>> {
+  }): Promise<Page<CatalogVideo>> {
     const needle = q.text.toLowerCase();
-    let items = VIDEOS.filter(
+    const all: readonly CatalogVideo[] =
+      this.opts.nfx === true ? [...VIDEOS, ...NFX_VIDEOS] : VIDEOS;
+    let items = all.filter(
       (v) => v.title.toLowerCase().includes(needle) || v.tags.some((t) => t.includes(needle)),
     );
     const f = q.filters;

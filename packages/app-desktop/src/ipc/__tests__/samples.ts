@@ -18,6 +18,7 @@ import type { FileToken, Method, MethodTable, SessionId, UploadId } from '../pro
 
 export const VIDEO = mocks.VIDEOS[0]!;
 export const VIDEO_ID: NostrEventId = VIDEO.id;
+export const NFX_ADDR = mocks.NFX_VIDEOS[0]!.id;
 export const PUBKEY: NostrPubkey = mocks.ME;
 export const MINT: MintUrl = mocks.MINTS.a;
 export const SID = '0123456789abcdef0123456789abcdef' as SessionId;
@@ -58,6 +59,7 @@ export const VALID: Samples = {
     [{ source: 'tags', tags: ['physics', 'orbital-mechanics'] }],
   ],
   video: [[VIDEO_ID]],
+  nfxVideo: [[NFX_ADDR]],
   stats: [[VIDEO_ID]],
   related: [[VIDEO_ID], [VIDEO_ID, 6], [VIDEO_ID, undefined]],
   search: [
@@ -236,6 +238,20 @@ export const INVALID: Partial<Record<Method, readonly unknown[][]>> = {
     [{ source: 'tags', tags: Array.from({ length: 257 }, () => 't') }],
     [{ source: 'trending', author: undefined }],
     [{ source: 'trending', __proto__: { polluted: true } }],
+  ],
+  nfxVideo: [
+    [VIDEO_ID],
+    [NFX_ADDR.toUpperCase()],
+    [NFX_ADDR.replace('nfx:testnet:1', 'nfx:testnet:01')],
+    [NFX_ADDR.replace(':1:', ':18446744073709551616:')],
+    [NFX_ADDR.replace('nfx:testnet', 'nutflix:testnet')],
+    [NFX_ADDR.replace('38504:', '30023:')],
+    [`${NFX_ADDR}:extra`],
+    [`${NFX_ADDR} `],
+    [NFX_ADDR.replace(/:[a-z0-9-]+$/, ':short')],
+    [`38504:${PUBKEY}:lagrange-points`],
+    [42],
+    [],
   ],
   related: [
     [VIDEO_ID, -1],

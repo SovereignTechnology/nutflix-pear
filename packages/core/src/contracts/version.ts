@@ -77,5 +77,11 @@
  *   8 — 2026-10-24 (ADR 0020, Phase 1 slice 2b). Additive: `UploadInput.nfx?` — also package
  *       the upload for NFX into the node's NFX store; refused for a priced video (free only,
  *       issue #15). Every v7 consumer compiles.
+ *   9 — 2026-10-31 (ADR 0020, Phase 1 slice 4b). The NFX identity. `NfxAddress`
+ *       (`38504:<author>:<d>`, stable across revisions) and `VideoId`; `NfxVideo`, a free kind-38504
+ *       manifest for listing (no `PricePolicy`, no Hyperblob renditions); `CatalogVideo`.
+ *       BREAKING for listing: `feed` and `search` return `Page<CatalogVideo>`, so a consumer
+ *       narrows on `kind` before it prices, plays or reacts. New `NetworkAdapter.nfxVideo(addr)`.
+ *       Everything keyed by event id (`video`, stats, social, library, play) is unchanged.
  */
-export const CONTRACTS_VERSION = 8 as const;
+export const CONTRACTS_VERSION = 9 as const;

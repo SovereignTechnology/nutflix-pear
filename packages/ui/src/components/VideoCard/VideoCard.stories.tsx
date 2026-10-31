@@ -5,6 +5,7 @@ import {
   avatar,
   channelFor,
   durationOf,
+  nfxVideoAt,
   thumbnail,
   videoAt,
   withPlaceholder,
@@ -60,6 +61,18 @@ export const WatchedProgress: Story = {
   args: {
     ...Default.args,
     progress: 0.62,
+  },
+};
+
+const nfx = nfxVideoAt(0);
+
+export const NfxFree: Story = {
+  name: 'NFX (free, not playable yet; contracts v9)',
+  args: {
+    video: nfx,
+    channel: channelFor(nfx),
+    avatarSrc: avatar(nfx.author),
+    now: NOW,
   },
 };
 

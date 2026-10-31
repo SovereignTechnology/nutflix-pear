@@ -3,9 +3,17 @@
  * data-URL images so thumbnails/avatars render offline. Never imported by component source.
  */
 import { mocks } from '@sovit/core';
-import type { NostrPubkey, PeerSpend, Profile, Sats, VideoManifest } from '@sovit/core';
+import type {
+  CatalogVideo,
+  NfxVideo,
+  NostrPubkey,
+  PeerSpend,
+  Profile,
+  Sats,
+  VideoManifest,
+} from '@sovit/core';
 
-export const { VIDEOS, CHANNELS, MINTS, FIXTURE_NOW, ME, MY_PROFILE } = mocks;
+export const { VIDEOS, NFX_VIDEOS, CHANNELS, MINTS, FIXTURE_NOW, ME, MY_PROFILE } = mocks;
 export const NOW = FIXTURE_NOW;
 
 function at<T>(list: readonly T[], i: number, what: string): T {
@@ -15,6 +23,7 @@ function at<T>(list: readonly T[], i: number, what: string): T {
 }
 
 export const videoAt = (i: number): VideoManifest => at(VIDEOS, i, 'VIDEOS');
+export const nfxVideoAt = (i: number): NfxVideo => at(NFX_VIDEOS, i, 'NFX_VIDEOS');
 export const channelAt = (i: number): mocks.FixtureChannel => at(CHANNELS, i, 'CHANNELS');
 /** `durationSec` is optional on the contract; fixtures always set it. */
 export const durationOf = (v: VideoManifest): number => v.durationSec ?? 0;
@@ -54,7 +63,7 @@ export function avatar(pubkey: NostrPubkey | string): string {
   );
 }
 
-export function channelFor(video: VideoManifest): Profile {
+export function channelFor(video: Pick<CatalogVideo, 'author'>): Profile {
   const c = CHANNELS.find((x) => x.pubkey === video.author);
   if (!c) throw new Error('fixture channel missing');
   return c.profile;

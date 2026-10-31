@@ -1,8 +1,9 @@
 import { useState, type ReactElement } from 'react';
-import type { Profile, UnixSeconds, VideoManifest, VideoStats } from '@sovit/core';
+import type { CatalogVideo, Profile, UnixSeconds, VideoStats } from '@sovit/core';
 import { ProfileAvatar } from '../Avatar/Avatar.js';
 import { SatsBadge } from '../SatsBadge/SatsBadge.js';
 import { Skeleton } from '../Skeleton/Skeleton.js';
+import { isNfxVideo } from '../shared/catalog-video.js';
 import { Icon } from '../shared/Icon.js';
 import {
   cx,
@@ -16,7 +17,8 @@ import {
 export type VideoCardLayout = 'grid' | 'list';
 
 export interface VideoCardProps {
-  readonly video: VideoManifest;
+  /** Contracts v9: a NIP-71 video, or a free NFX one (no price, no thumbnail yet, not playable). */
+  readonly video: CatalogVideo;
   /** Channel profile for the row under the title (resolved by the screen). */
   readonly channel?: Profile | undefined;
   /** Resolved, hash-verified thumbnail URL (`NetworkAdapter.image`). Omit while loading. */
@@ -32,8 +34,8 @@ export interface VideoCardProps {
   readonly hideChannel?: boolean;
   /** Watched progress 0–1 for the red bar under the thumbnail (from NIP-51 history). */
   readonly progress?: number | undefined;
-  readonly onOpen?: ((video: VideoManifest) => void) | undefined;
-  readonly onOpenChannel?: ((pubkey: VideoManifest['author']) => void) | undefined;
+  readonly onOpen?: ((video: CatalogVideo) => void) | undefined;
+  readonly onOpenChannel?: ((pubkey: CatalogVideo['author']) => void) | undefined;
   readonly className?: string;
 }
 
@@ -60,9 +62,10 @@ export function VideoCard({
   className,
 }: VideoCardProps): ReactElement {
   const [loaded, setLoaded] = useState(false);
-  const rendition = video.renditions[0];
-  const placeholder = rendition?.placeholder;
-  const price = defaultRenditionSats(video.renditions, video.price);
+  // An NFX video has no renditions and no price: its files are fetched over NFX (slice 5).
+  const nfx = isNfxVideo(video);
+  const placeholder = isNfxVideo(video) ? undefined : video.renditions[0]?.placeholder;
+  const price = isNfxVideo(video) ? undefined : defaultRenditionSats(video.renditions, video.price);
   const channelName = channel?.displayName ?? channel?.name ?? '';
   const isShort = video.kind === 22;
 
@@ -79,7 +82,13 @@ export function VideoCard({
         type="button"
         className="nf-card__thumb"
         onClick={open}
-        aria-label={price === undefined ? video.title : `${video.title}, ${formatSats(price)}`}
+        aria-label={
+          nfx
+            ? `${video.title}, free`
+            : price === undefined
+              ? video.title
+              : `${video.title}, ${formatSats(price)}`
+        }
       >
         {placeholder ? (
           <img className="nf-card__placeholder" src={placeholder} alt="" aria-hidden="true" />
@@ -96,11 +105,18 @@ export function VideoCard({
             }}
           />
         ) : null}
-        <span className="nf-card__hover" aria-hidden="true">
-          <Icon name="play" size={40} />
-        </span>
+        {nfx ? null : (
+          <span className="nf-card__hover" aria-hidden="true">
+            <Icon name="play" size={40} />
+          </span>
+        )}
         {video.durationSec !== undefined ? (
           <span className="nf-card__duration">{formatDuration(video.durationSec)}</span>
+        ) : null}
+        {nfx ? (
+          <span className="nf-card__free" aria-hidden="true">
+            Free
+          </span>
         ) : null}
         {price !== undefined ? (
           <SatsBadge

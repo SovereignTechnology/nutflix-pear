@@ -38,6 +38,7 @@ import {
   type ReactElement,
 } from 'react';
 import type {
+  CatalogVideo,
   NostrEventId,
   NostrPubkey,
   Playlist,
@@ -65,6 +66,8 @@ import {
   defaultRenditionSats,
   formatInteger,
   formatSats,
+  isNfxVideo,
+  nip71Only,
   parseMarkdown,
   shortPubkey,
 } from '../../components/index.js';
@@ -114,7 +117,8 @@ interface ProfileState {
 
 interface VideosState {
   readonly status: LoadStatus;
-  readonly items: readonly VideoManifest[];
+  /** Contracts v9: the author feed may hold the channel's free NFX videos too. */
+  readonly items: readonly CatalogVideo[];
   /** Cursor of the next author-feed page; `undefined` = everything is loaded. */
   readonly next: string | undefined;
   /** The "Show more" page. */
@@ -145,8 +149,9 @@ type ImageState =
 
 const imageKey = (url: string, sha256: Sha256Hex | undefined): string => `${sha256 ?? '-'} ${url}`;
 
-/** The thumbnail of a video: the first rendition that carries one. */
-function thumbOf(video: VideoManifest): Rendition['image'] {
+/** The thumbnail of a video: the first rendition that carries one (an NFX video has none yet). */
+function thumbOf(video: CatalogVideo): Rendition['image'] {
+  if (isNfxVideo(video)) return undefined;
   return video.renditions.find((r) => r.image !== undefined)?.image;
 }
 
@@ -510,6 +515,8 @@ export function Channel({
   useEffect(() => {
     if (videos.status !== 'ready') return;
     for (const v of videos.items) {
+      // NFX videos have no NIP-71 stats (contracts v9).
+      if (isNfxVideo(v)) continue;
       const image = thumbOf(v);
       if (image) requestImage(image.url, image.sha256, image.size);
       if (requestedStats.current.has(v.id)) continue;
@@ -608,11 +615,12 @@ export function Channel({
   }, [firstVideos, requestImage]);
 
   // ---- navigation ------------------------------------------------------------------------
-  const openVideo = (video: VideoManifest): void => {
+  const openVideo = (video: CatalogVideo): void => {
     navigate({ name: 'watch', videoId: video.id });
   };
-  const openShort = (video: VideoManifest): void => {
-    navigate({ name: 'shorts', videoId: video.id });
+  const openShort = (video: CatalogVideo): void => {
+    if (isNfxVideo(video)) openVideo(video);
+    else navigate({ name: 'shorts', videoId: video.id });
   };
   const openUpload = (): void => {
     navigate({ name: 'studio', tab: 'upload' });
@@ -697,7 +705,8 @@ export function Channel({
         />
       );
     }
-    const items = videos.items.filter((v) => v.kind === (shorts ? 22 : 21));
+    // Long-form: kind 21 and free NFX videos (contracts v9).
+    const items = videos.items.filter((v) => (shorts ? v.kind === 22 : v.kind !== 22));
     if (items.length === 0 && videos.more !== 'loading') return renderVideoEmpty(shorts);
     return (
       <div className="nf-channelpage__list">
@@ -705,7 +714,7 @@ export function Channel({
           {items.map((v) => {
             const image = thumbOf(v);
             const thumb = imageFor(image?.url, image?.sha256);
-            const s = stats[v.id];
+            const s = isNfxVideo(v) ? undefined : stats[v.id];
             return (
               <li key={v.id} className="nf-channelpage__item">
                 <VideoCard
@@ -930,9 +939,11 @@ export function Channel({
   };
 
   const renderAvailability = (): string | null => {
-    if (videos.status !== 'ready' || videos.items.length === 0) return null;
-    const known = videos.items.filter((v) => stats[v.id] !== undefined);
-    if (known.length < videos.items.length) return 'Checking seeders…';
+    // NFX videos have no seeder count before beacons (slice 5): only NIP-71 ones are counted.
+    const listed = nip71Only(videos.items);
+    if (videos.status !== 'ready' || listed.length === 0) return null;
+    const known = listed.filter((v) => stats[v.id] !== undefined);
+    if (known.length < listed.length) return 'Checking seeders…';
     // An absent count is unknown, not 0 (contract v5, #23): only counted videos are reported.
     const counts = known.flatMap((v) => {
       const n = stats[v.id]?.seedersOnline;

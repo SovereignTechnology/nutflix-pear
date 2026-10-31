@@ -1164,3 +1164,30 @@
   font-size: var(--nf-text-sm);
   text-align: right;
 }
+
+/* ---- NfxWatch (contracts v9, ADR 0020): a free NFX video, listed but not playable yet ---- */
+
+.nf-nfxwatch__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--nf-radius-lg);
+  background: var(--nf-color-bg-subtle);
+}
+
+.nf-nfxwatch__channel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nf-space-8);
+  margin-top: var(--nf-space-8);
+  padding: 0;
+  border: 0;
+  font: inherit;
+  font-weight: var(--nf-weight-medium);
+  color: inherit;
+  background: none;
+  cursor: pointer;
+}

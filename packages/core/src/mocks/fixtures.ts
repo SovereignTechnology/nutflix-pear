@@ -6,6 +6,8 @@ import type {
   CashuP2pkPubkey,
   CoreKeyHex,
   MintUrl,
+  NfxAddress,
+  NfxVideo,
   NostrEvent,
   NostrEventId,
   NostrPubkey,
@@ -350,6 +352,90 @@ function manifest(def: VideoDef): VideoManifest {
 }
 
 export const VIDEOS: readonly VideoManifest[] = videoDefs.map(manifest);
+
+/** The NFX namespace the fixtures use (nfx's testnet, as slice 4a publishes to). */
+export const NFX_FIXTURE_NAMESPACE = 'nfx:testnet:1';
+
+/** A fixture NFX address, `38504:<author>:<namespace>:<video-id>` (NFX-02 §2). */
+export const asNfxAddress = (author: NostrPubkey, videoId: string): NfxAddress =>
+  `38504:${author}:${NFX_FIXTURE_NAMESPACE}:${videoId}` as NfxAddress;
+
+interface NfxVideoDef {
+  readonly videoId: string;
+  readonly title: string;
+  readonly channel: number;
+  readonly durationSec: number;
+  readonly tags: readonly string[];
+  readonly ageHours: number;
+}
+
+const nfxVideoDefs: readonly NfxVideoDef[] = [
+  {
+    videoId: 'lagrange-points',
+    title: 'Lagrange points on a kitchen table (NFX)',
+    channel: 0,
+    durationSec: 612,
+    tags: ['space', 'physics'],
+    ageHours: 5,
+  },
+  {
+    videoId: 'tide-field-recording',
+    title: 'Field recording: the tide coming in (NFX)',
+    channel: 2,
+    durationSec: 1460,
+    tags: ['music'],
+    ageHours: 30,
+  },
+];
+
+function nfxVideo(def: NfxVideoDef): NfxVideo {
+  const channel = CHANNELS[def.channel];
+  if (!channel) throw new Error('fixture channel index out of range');
+  const publishedAt = unix(FIXTURE_NOW - def.ageHours * 3600);
+  const eventId = asEventId(`nfx:${def.videoId}`);
+  const root = asSha256(`nfx-root:${def.videoId}`);
+  const thumb = { sha256: asSha256(`nfx-thumb:${def.videoId}`), mime: 'image/jpeg' };
+  const d = `${NFX_FIXTURE_NAMESPACE}:${def.videoId}`;
+  const event: NostrEvent = {
+    id: eventId,
+    pubkey: channel.pubkey,
+    kind: 38504,
+    created_at: publishedAt,
+    content: `Fixture description for **${def.title}**, a free video on the NFX network.`,
+    tags: [
+      ['d', d],
+      ['n', NFX_FIXTURE_NAMESPACE],
+      ['title', def.title],
+      ['published_at', String(publishedAt)],
+      ['license', 'open'],
+      ['root', root],
+      ['segs', '12'],
+      ['duration', String(def.durationSec)],
+      ['thumb', thumb.sha256, thumb.mime],
+      ...def.tags.map((t) => ['t', t]),
+    ],
+    sig: fakeHex64(`sig:nfx:${def.videoId}`) + fakeHex64(`sig2:nfx:${def.videoId}`),
+  };
+  return {
+    kind: 38504,
+    id: asNfxAddress(channel.pubkey, def.videoId),
+    eventId,
+    author: channel.pubkey,
+    title: def.title,
+    description: event.content,
+    publishedAt,
+    durationSec: def.durationSec,
+    tags: def.tags,
+    namespace: NFX_FIXTURE_NAMESPACE,
+    root,
+    segs: 12,
+    thumb,
+    event,
+  };
+}
+
+/** Free NFX videos (ADR 0020), listed beside `VIDEOS` and never playable in this build. */
+export const NFX_VIDEOS: readonly NfxVideo[] = nfxVideoDefs.map(nfxVideo);
 
 /**
  * NIP-22 comment tags on a regular (kind 21/22) video event: root = `E`/`K`/`P`, parent =

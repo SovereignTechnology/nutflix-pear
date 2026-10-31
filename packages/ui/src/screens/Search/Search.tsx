@@ -31,6 +31,7 @@ import {
   type SyntheticEvent,
 } from 'react';
 import type {
+  CatalogVideo,
   NetworkAdapter,
   NostrEventId,
   NostrPubkey,
@@ -38,7 +39,6 @@ import type {
   Profile,
   SearchFilters,
   UnixSeconds,
-  VideoManifest,
   VideoStats,
 } from '@sovit/core';
 import {
@@ -52,6 +52,7 @@ import {
   VideoCard,
   VideoCardSkeleton,
   cx,
+  isNfxVideo,
   isTextEntryTarget,
   shortPubkey,
 } from '../../components/index.js';
@@ -264,7 +265,8 @@ interface ResultsState {
   readonly query: string;
   /** The exact first-page request, reused (plus `cursor`) for every further page. */
   readonly request: SearchRequest | undefined;
-  readonly items: readonly VideoManifest[];
+  /** Contracts v9: NIP-71 videos and, once an NFX network is chosen, free NFX ones. */
+  readonly items: readonly CatalogVideo[];
   readonly next: string | undefined;
   readonly error: unknown;
   readonly more: 'idle' | 'loading' | 'error';
@@ -283,9 +285,9 @@ const IDLE_RESULTS: ResultsState = {
 };
 
 function dedupe(
-  existing: readonly VideoManifest[],
-  incoming: readonly VideoManifest[],
-): readonly VideoManifest[] {
+  existing: readonly CatalogVideo[],
+  incoming: readonly CatalogVideo[],
+): readonly CatalogVideo[] {
   const seen = new Set(existing.map((v) => v.id));
   const out = [...existing];
   for (const v of incoming) {
@@ -298,7 +300,7 @@ function dedupe(
 }
 
 /** Calls the adapter, turning a synchronous throw into a rejection (never thrown to React). */
-function runSearch(adapter: NetworkAdapter, req: SearchRequest): Promise<Page<VideoManifest>> {
+function runSearch(adapter: NetworkAdapter, req: SearchRequest): Promise<Page<CatalogVideo>> {
   try {
     return adapter.search(req);
   } catch (err: unknown) {
@@ -591,6 +593,12 @@ export function Search({
     const fresh: NostrPubkey[] = [];
     for (const video of results.items) {
       const req = requested.current;
+      if (isNfxVideo(video)) {
+        // No thumbnail to fetch before an NFX transport exists, and no NIP-71 stats (v9).
+        if (!req.profiles.has(video.author)) fresh.push(video.author);
+        resolveProfile(video.author);
+        continue;
+      }
       if (!req.thumbs.has(video.id)) {
         req.thumbs.add(video.id);
         const image = video.renditions[0]?.image;
@@ -722,7 +730,7 @@ export function Search({
   };
 
   // ---- derived view data -------------------------------------------------------------
-  const openVideo = (video: VideoManifest): void => {
+  const openVideo = (video: CatalogVideo): void => {
     navigate(
       video.kind === 22
         ? { name: 'shorts', videoId: video.id }
@@ -803,14 +811,14 @@ export function Search({
     </ol>
   );
 
-  const row = (video: VideoManifest): ReactElement => (
+  const row = (video: CatalogVideo): ReactElement => (
     <li key={video.id} className="nf-search__item">
       <VideoCard
         layout="list"
         video={video}
         channel={profiles[video.author] ?? undefined}
         thumbnailSrc={thumbs[video.id]}
-        stats={stats[video.id]}
+        stats={isNfxVideo(video) ? undefined : stats[video.id]}
         now={nowSec}
         onOpen={openVideo}
         onOpenChannel={openChannel}

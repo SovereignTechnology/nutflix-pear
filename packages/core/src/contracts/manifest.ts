@@ -3,6 +3,7 @@ import type {
   CashuP2pkPubkey,
   CoreKeyHex,
   MintUrl,
+  NfxAddress,
   NostrEventId,
   NostrPubkey,
   Sats,
@@ -154,6 +155,42 @@ export interface VideoManifest {
   /** The verified source event. Signature has been checked before this object exists. */
   readonly event: NostrEvent;
 }
+
+/**
+ * v9 (ADR 0020, Phase 1): a parsed, verified NFX manifest (kind 38504, NFX-02), for listing.
+ *
+ * Always free: only a manifest with `license open` and no `price_hint` (or `0`) becomes one,
+ * because this app cannot pay on NFX yet. It has no `PricePolicy` and no Hyperblob renditions:
+ * its files are named by sha256 under `root` (NFX-05) and fetched over an NFX transport, so
+ * nothing that pays, plays or fetches by URL takes one.
+ */
+export interface NfxVideo {
+  readonly kind: 38504;
+  /** The stable identity: the manifest's address. */
+  readonly id: NfxAddress;
+  /** The current revision's event id (NFX-02 §4 "Revisions"); it changes when the creator edits. */
+  readonly eventId: NostrEventId;
+  readonly author: NostrPubkey;
+  readonly title: string;
+  readonly description: string; // raw markdown; UI renders via the markdown subset only
+  readonly publishedAt: UnixSeconds;
+  readonly durationSec?: number;
+  readonly tags: readonly string[]; // `t` hashtags
+  /** `nfx:<network>:<specver>` (NFX-01). */
+  readonly namespace: string;
+  /** sha256 of the hash list (NFX-05): the integrity anchor of every file. */
+  readonly root: Sha256Hex;
+  readonly segs: number;
+  /** A poster in the NFX file store, by sha256; never fetched by URL. */
+  readonly thumb?: { readonly sha256: Sha256Hex; readonly mime: string };
+  /** The NIP-71 event this manifest links to with `e`. The catalog trusts it only from the same author. */
+  readonly legacyId?: NostrEventId;
+  /** The verified source event. */
+  readonly event: NostrEvent;
+}
+
+/** v9: what a catalog listing can hold, a NIP-71 video or an NFX one; narrow on `kind`. */
+export type CatalogVideo = VideoManifest | NfxVideo;
 
 /**
  * NIP-71 tag schema as published by this network. A `build` produces exactly these tags;

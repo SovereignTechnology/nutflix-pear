@@ -1,5 +1,7 @@
 export { Watch } from './Watch.js';
 export type { WatchProps } from './Watch.js';
+export { NfxWatch } from './NfxWatch.js';
+export type { NfxWatchProps } from './NfxWatch.js';
 export {
   WATCH_DEFAULT_PREFETCH_SEC,
   WATCH_NUTZAP_AMOUNTS,
