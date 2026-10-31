@@ -69,9 +69,22 @@ byte range? Which byte layout does it take:
      per host:port.
    - When layout A had opened 7 (run 40991896607), the next layout's requests never reached its
      server: they queued behind A's.
-   - The app's `proxyPlay` (`main/media.ts`) forwards no abort to its upstream `fetch`. A
+   - The app's `proxyPlay` (`main/media.ts`) forwarded no abort to its upstream `fetch`. A
      seek-heavy session or a quick switch of source could therefore stall the legacy path as
-     well. This is not fixed here; it is a follow-up.
+     well.
+   - **Since confirmed and fixed** (PR #41, the `proxy-abort` e2e, Electron 44.9.3):
+     - With the shipping handler (run
+       [41153803174](https://github.com/SovereignTechnology/nutflix-pear/actions/runs/41153803174)),
+       8 `<video>` elements on a stalling upstream got 6 requests through, the pool. After a
+       reload none closed within 5 s, and a new source never reached the server.
+     - Electron did not abort the request's `signal`. It does cancel the body handed back:
+       the fix's cancel is what fires. But handing back `net.fetch`'s own body, as before, did
+       not close its connection.
+     - With the fix (run
+       [41154636610](https://github.com/SovereignTechnology/nutflix-pear/actions/runs/41154636610)),
+       the body is a pull-based pass-through whose cancel aborts the upstream fetch. All 8
+       close 13–24 ms after the reload, the 2 queued ones included, and the new source
+       arrives in 101 ms.
 7. **The pieces hold on real bytes.**
    - `nfx.renditionMembers`, `nfx.progressiveLayout`, `nfx.locate`, `media.initTrack`,
      `media.segmentStart`, `media.stripSegmentIndex` and `media.buildSidx` run on the real
@@ -95,8 +108,8 @@ byte range? Which byte layout does it take:
   - **The index is computed once:** it needs each segment's `tfdt` and the length of its leading
     boxes, so it is computed when the video is stored (or first played) and kept, not at every
     open.
-  - **The proxy:** forward the player's abort to the upstream fetch, or otherwise keep a session
-    from holding the pool (finding 6).
+  - **The proxy:** done in PR #41. A request the player drops aborts its upstream fetch
+    (finding 6).
 
 ## Open questions
 
@@ -107,4 +120,5 @@ byte range? Which byte layout does it take:
 - Long videos: a 2 h rendition is 3,600 references (43 KB of `sidx`); `reference_count` caps a
   rendition at about 36 h of 2 s segments.
 - Rendition switching mid-play: the existing `switchRendition` opens a new session.
-- Finding 6 in the legacy path: is it reachable by a person seeking?
+- Finding 6 in the legacy path: a reload reached it (PR #41). Whether a person seeking reaches it
+  was not measured; the fix covers any request the player drops.
