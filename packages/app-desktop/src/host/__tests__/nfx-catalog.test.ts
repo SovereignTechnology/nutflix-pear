@@ -1,0 +1,297 @@
+/**
+ * Slice 4b-2 (ADR 0020, contracts v9): the NFX catalogue beside the NIP-71 one. Real signed
+ * events in `FakeRelayPool`s, read through L1 as from relays.
+ *
+ * - Dormant: without `nfxCatalogNamespace` the host never asks for an NFX event.
+ * - Merged feeds: newest first under one time cursor, nothing lost or repeated across pages.
+ * - Twins: a same-author NFX copy of a NIP-71 video is dropped, also across pages.
+ * - NFX-04 §4: the read relays first, the scoped relays only as the fallback.
+ * - An NFX failure lists the NIP-71 videos alone.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type {
+  CatalogVideo,
+  FeedQuery,
+  NfxAddress,
+  NostrEvent,
+  NostrFilter,
+  NetworkAdapter,
+  RelayUrl,
+  UnixSeconds,
+} from '@sovit/core';
+import { mocks, nostr } from '@sovit/core';
+
+import { SignerIdentity } from '../identity.js';
+import { memoryLogger } from '../log.js';
+import { NostrCatalog } from '../catalog/catalog.js';
+import { MergedCatalog } from '../catalog/merged-catalog.js';
+import { NfxCatalog, type NfxSource } from '../catalog/nfx-catalog.js';
+import { seedVideos } from './support/catalog.js';
+import { coreTestKit, type TestSignerLike } from './support/core-helpers.js';
+import type { Rig } from './support/rig.js';
+import { rig } from './support/rig.js';
+
+const kit = await coreTestKit();
+const NS = 'nfx:testnet:1';
+const HOUR = 3600;
+
+let r: Rig | undefined;
+afterEach(async () => {
+  await r?.close();
+  r = undefined;
+});
+
+const fixture = (slug: string): (typeof mocks.VIDEOS)[number] => {
+  const v = mocks.VIDEOS.find((x) => x.id === mocks.asEventId(slug));
+  if (v === undefined) throw new Error(`no fixture ${slug}`);
+  return v;
+};
+
+function nfxDraft(videoId: string, ageHours: number, extra: string[][] = []): nostr.EventDraft {
+  const at = mocks.FIXTURE_NOW - ageHours * HOUR;
+  return {
+    kind: 38504,
+    created_at: at,
+    content: `NFX copy: ${videoId}.`,
+    tags: [
+      ['d', `${NS}:${videoId}`],
+      ['n', NS],
+      ['title', `NFX ${videoId}`],
+      ['published_at', String(at)],
+      ['license', 'open'],
+      ['root', 'ab'.repeat(32)],
+      ['segs', '4'],
+      ['t', 'space'],
+      ...extra,
+    ],
+  };
+}
+
+async function storeNfx(
+  pool: nostr.FakeRelayPool,
+  by: TestSignerLike,
+  videoId: string,
+  ageHours: number,
+  extra: string[][] = [],
+): Promise<NostrEvent> {
+  const ev = await kit.sign(by, nfxDraft(videoId, ageHours, extra));
+  pool.store(ev);
+  return ev;
+}
+
+const addr = (author: string, videoId: string): NfxAddress =>
+  `38504:${author}:${NS}:${videoId}` as NfxAddress;
+
+async function allPages(a: NetworkAdapter, q: FeedQuery, max = 10): Promise<CatalogVideo[]> {
+  const out: CatalogVideo[] = [];
+  let cursor: string | undefined;
+  for (let i = 0; i < max; i++) {
+    const page = await a.feed(cursor === undefined ? q : { ...q, cursor });
+    out.push(...page.items);
+    cursor = page.next;
+    if (cursor === undefined) return out;
+  }
+  throw new Error('too many pages');
+}
+
+const filtersOf = (spy: { mock: { calls: unknown[][] } }): NostrFilter[] =>
+  spy.mock.calls.map((c) => c[1] as NostrFilter);
+
+describe('dormant without a namespace (production until slice 5)', () => {
+  it('never asks for kind 38504, an `n` or an `a`, and knows no NFX video', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator) });
+    await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
+    await storeNfx(r.pool, creator, 'lagrange-points', 1);
+    const query = vi.spyOn(r.pool, 'query');
+    const a = r.host.adapter;
+    const tags = await a.feed({ source: 'tags', tags: ['space'] });
+    await a.feed({ source: 'author', author: creator.pubkey });
+    await a.search({ text: 'lagrange' });
+    expect(await a.nfxVideo(addr(creator.pubkey, 'lagrange-points'))).toBeNull();
+    expect(tags.items.every((v) => v.kind !== 38504)).toBe(true);
+    for (const f of filtersOf(query)) {
+      expect(f.kinds ?? []).not.toContain(38504);
+      expect(f['#n']).toBeUndefined();
+      expect(f['#a']).toBeUndefined();
+    }
+  });
+});
+
+describe('merged feeds (nfxCatalogNamespace set)', () => {
+  it('pages NIP-71 and NFX videos newest first, nothing lost or repeated', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    // NIP-71 'space': hohmann (3 h), short-launch (12 h), orbit-decay (100 h).
+    const legacy = await seedVideos(kit, r.pool, creator, [
+      fixture('hohmann'),
+      fixture('short-launch'),
+      fixture('orbit-decay'),
+    ]);
+    const nfx = [
+      await storeNfx(r.pool, creator, 'nfx-one-hour', 1),
+      await storeNfx(r.pool, creator, 'nfx-six-hours', 6),
+      await storeNfx(r.pool, creator, 'nfx-fifty-hours', 50),
+      await storeNfx(r.pool, creator, 'nfx-two-hundred', 200),
+    ];
+    const expected = [...legacy.map((s) => s.event), ...nfx].sort(nostr.byNewest).map((e) => e.id);
+    const got = await allPages(r.host.adapter, { source: 'tags', tags: ['space'], limit: 2 });
+    const ids = got.map((v) => (v.kind === 38504 ? v.eventId : v.id));
+    expect(ids).toEqual(expected);
+    expect(got.filter((v) => v.kind === 38504)).toHaveLength(4);
+  });
+
+  it('nfxVideo finds a manifest by address, and nothing outside the network', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ nfxCatalogNamespace: NS });
+    const ev = await storeNfx(r.pool, creator, 'lagrange-points', 1);
+    const a = r.host.adapter;
+    expect((await a.nfxVideo(addr(creator.pubkey, 'lagrange-points')))?.eventId).toBe(ev.id);
+    const mainnet = `38504:${creator.pubkey}:nfx:mainnet:1:lagrange-points` as NfxAddress;
+    expect(await a.nfxVideo(mainnet)).toBeNull();
+  });
+
+  it('Studio lists the creator’s NIP-71 uploads only', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
+    await storeNfx(r.pool, creator, 'lagrange-points', 1);
+    const mine = await r.host.adapter.studio.myVideos();
+    expect(mine.items.map((v) => v.kind)).toEqual([21]);
+  });
+});
+
+describe('twins (ADR 0020: same author only)', () => {
+  it('drops an NFX copy whose NIP-71 event exists, also when that event is on a later page', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    const [hohmann, raku] = await seedVideos(kit, r.pool, creator, [
+      fixture('hohmann'),
+      fixture('raku'),
+    ]);
+    // Newer than both NIP-71 videos, linking to the older one (raku, 9 h).
+    await storeNfx(r.pool, creator, 'raku-on-nfx', 1, [['e', raku!.event.id]]);
+    const got = await allPages(r.host.adapter, {
+      source: 'author',
+      author: creator.pubkey,
+      limit: 1,
+    });
+    expect(got.map((v) => v.id)).toEqual([hohmann!.video.id, raku!.video.id]);
+  });
+
+  it('keeps an NFX video linking to another author’s event', async () => {
+    const creator = new kit.TestSigner();
+    const other = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfxCatalogNamespace: NS });
+    const [raku] = await seedVideos(kit, r.pool, creator, [fixture('raku')]);
+    await storeNfx(r.pool, other, 'not-a-twin', 1, [['e', raku!.event.id]]);
+    const got = await allPages(r.host.adapter, { source: 'tags', tags: ['space', 'ceramics'] });
+    expect(got.map((v) => v.id)).toEqual([addr(other.pubkey, 'not-a-twin'), raku!.video.id]);
+  });
+});
+
+describe('NfxCatalog (NFX-04 §4)', () => {
+  const PUBLIC = 'wss://public.test' as RelayUrl;
+  const SCOPED = 'wss://scoped.test' as RelayUrl;
+
+  function twoPools(): {
+    readonly pub: nostr.FakeRelayPool;
+    readonly scoped: nostr.FakeRelayPool;
+    readonly client: nostr.NostrClient;
+    readonly asked: RelayUrl[][];
+  } {
+    const pub = new nostr.FakeRelayPool();
+    const scoped = new nostr.FakeRelayPool();
+    const asked: RelayUrl[][] = [];
+    const pool: nostr.PoolLike = {
+      query: (relays, filter, opts) => {
+        asked.push([...relays]);
+        return (relays.includes(SCOPED) ? scoped : pub).query(relays, filter, opts);
+      },
+      subscribe: (relays, filters, handlers, opts) =>
+        pub.subscribe(relays, filters, handlers, opts),
+      publish: (relays, event) => pub.publish(relays, event),
+      close: () => undefined,
+    };
+    const client = new nostr.NostrClient({
+      pool,
+      relays: [{ url: PUBLIC, read: true, write: true }],
+      now: () => mocks.FIXTURE_NOW as UnixSeconds,
+    });
+    return { pub, scoped, client, asked };
+  }
+
+  it('reads the public relays first; the scoped relays only when they have nothing', async () => {
+    const t = twoPools();
+    const creator = new kit.TestSigner();
+    const cat = new NfxCatalog(
+      () => t.client,
+      NS,
+      () => [SCOPED],
+    );
+    t.scoped.store(await kit.sign(creator, nfxDraft('scoped-only', 2)));
+    const fromScoped = await cat.feed({ source: 'author', author: creator.pubkey }, null);
+    expect(fromScoped.items.map((v) => v.title)).toEqual(['NFX scoped-only']);
+    expect(t.asked.some((relays) => relays.includes(SCOPED))).toBe(true);
+
+    t.asked.length = 0;
+    t.pub.store(await kit.sign(creator, nfxDraft('public-copy', 1)));
+    const fromPublic = await cat.feed({ source: 'author', author: creator.pubkey }, null);
+    expect(fromPublic.items.map((v) => v.title)).toEqual(['NFX public-copy']);
+    expect(t.asked.every((relays) => !relays.includes(SCOPED))).toBe(true);
+  });
+
+  it('without scoped relays, asks the public relays only', async () => {
+    const t = twoPools();
+    const cat = new NfxCatalog(
+      () => t.client,
+      NS,
+      () => [],
+    );
+    expect((await cat.feed({ source: 'tags', tags: ['space'] }, null)).items).toEqual([]);
+    expect(t.asked.length).toBeGreaterThan(0);
+    expect(t.asked.every((relays) => !relays.includes(SCOPED))).toBe(true);
+  });
+
+  it('runs on a canonical namespace only, and has nothing for trending or shorts', async () => {
+    const t = twoPools();
+    for (const bad of ['nutflix:testnet:1', 'nfx:testnet:01', 'nfx:Testnet:1', '']) {
+      expect(
+        () =>
+          new NfxCatalog(
+            () => t.client,
+            bad,
+            () => [],
+          ),
+      ).toThrow();
+    }
+    const cat = new NfxCatalog(
+      () => t.client,
+      NS,
+      () => [],
+    );
+    expect(await cat.feed({ source: 'trending' }, null)).toEqual({ items: [] });
+    expect(await cat.feed({ source: 'shorts' }, null)).toEqual({ items: [] });
+    expect(t.asked).toEqual([]);
+  });
+});
+
+describe('MergedCatalog', () => {
+  it('an NFX failure lists the NIP-71 videos alone, and is logged', async () => {
+    const pool = new nostr.FakeRelayPool();
+    const creator = new kit.TestSigner();
+    const client = new nostr.NostrClient({
+      pool,
+      relays: [{ url: 'wss://a.test' as RelayUrl, read: true, write: true }],
+    });
+    const seeded = await seedVideos(kit, pool, creator, [fixture('hohmann')]);
+    const down = (): Promise<never> => Promise.reject(new Error('relay down'));
+    const failing: NfxSource = { feed: down, search: down, video: down };
+    const log = memoryLogger('debug');
+    const merged = new MergedCatalog(new NostrCatalog(() => client), failing, log);
+    const page = await merged.feed({ source: 'tags', tags: ['space'] }, null);
+    expect(page.items.map((v) => v.id)).toEqual([seeded[0]!.video.id]);
+    expect(log.lines.some((l) => l.msg.includes('nfx catalog read failed'))).toBe(true);
+  });
+});

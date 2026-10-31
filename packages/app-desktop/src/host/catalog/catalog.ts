@@ -4,7 +4,10 @@
  * comes back here from a relay went through `NostrClient` → `verifyIncoming` (L1, T9).
  */
 import type {
+  CatalogVideo,
   FeedQuery,
+  NfxAddress,
+  NfxVideo,
   NostrEventId,
   NostrPubkey,
   Page,
@@ -21,12 +24,17 @@ export interface SearchQuery {
 }
 
 export interface CatalogSource {
-  /** `viewer` is the signed-in pubkey (subscriptions feed), or `null`. */
-  feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<VideoManifest>>;
+  /**
+   * `viewer` is the signed-in pubkey (subscriptions feed), or `null`. Contracts v9: NFX videos
+   * appear only from a source that lists them (`MergedCatalog`).
+   */
+  feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<CatalogVideo>>;
   video(id: NostrEventId): Promise<VideoManifest | null>;
+  /** Contracts v9: an NFX video by address, `null` from a source without NFX. */
+  nfxVideo(addr: NfxAddress): Promise<NfxVideo | null>;
   videos(ids: readonly NostrEventId[]): Promise<VideoManifest[]>;
   related(id: NostrEventId, limit: number): Promise<readonly VideoManifest[]>;
-  search(q: SearchQuery): Promise<Page<VideoManifest>>;
+  search(q: SearchQuery): Promise<Page<CatalogVideo>>;
   profile(pubkey: NostrPubkey): Promise<Profile | null>;
   /**
    * `VideoStats.seedersOnline`: a count only when the source KNOWS it, `undefined` otherwise
@@ -74,6 +82,11 @@ export class NostrCatalog implements CatalogSource {
 
   video(id: NostrEventId): Promise<VideoManifest | null> {
     return nostr.fetchVideo(this.client(), id);
+  }
+
+  /** The NIP-71 catalogue has no NFX videos; `MergedCatalog` adds them. */
+  nfxVideo(_addr: NfxAddress): Promise<NfxVideo | null> {
+    return Promise.resolve(null);
   }
 
   videos(ids: readonly NostrEventId[]): Promise<VideoManifest[]> {

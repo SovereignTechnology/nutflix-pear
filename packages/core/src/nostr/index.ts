@@ -30,6 +30,14 @@ export {
   nowSeconds,
 } from './event.js';
 export { NostrClient, NoSignerError, PublishError } from './client.js';
+export {
+  fetchNfxVideo,
+  nfxAuthorsFeed,
+  nfxTagsFeed,
+  nfxVideoPage,
+  searchNfxVideos,
+  type NfxReadOptions,
+} from './nfx-feeds.js';
 export type { PublishReport } from './client.js';
 export { SimplePoolAdapter, toWireFilter } from './simple-pool-adapter.js';
 export type { PoolBackend } from './simple-pool-adapter.js';

@@ -23,6 +23,7 @@ import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 
 import type {
+  CatalogVideo,
   Comment,
   FeedQuery,
   MintUrl,
@@ -78,6 +79,8 @@ import type {
 import type { CatalogSource, SearchQuery } from './catalog/catalog.js';
 import { NostrCatalog } from './catalog/catalog.js';
 import type { FixtureCatalog } from './catalog/fixture-catalog.js';
+import { MergedCatalog } from './catalog/merged-catalog.js';
+import { NfxCatalog } from './catalog/nfx-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
 import type { NfxStored } from './nfx/publish.js';
@@ -151,6 +154,13 @@ export interface DesktopAdapterOptions {
    * (beside the write relays). None in production until slice 5's settings; tests set it.
    */
   readonly nfxScopedRelays?: (namespace: string) => readonly RelayUrl[];
+  /**
+   * Slice 4b (ADR 0020): the NFX network whose free videos the catalogue lists beside the NIP-71
+   * ones, read from the read relays first and `nfxScopedRelays` as the fallback. Absent: no NFX
+   * source and no NFX query at all, as in production until slice 5's settings choose a network.
+   * A namespace NFX-01 refuses throws at construction.
+   */
+  readonly nfxCatalogNamespace?: string;
 }
 
 /** Per page in the in-memory paged lists (history). */
@@ -185,7 +195,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     readonly signer: unknown;
     readonly client: nostr.NostrClient;
   } | null = null;
-  private readonly nostrCatalog: NostrCatalog;
+  /** The relay catalogue: NIP-71, merged with one NFX network when `nfxCatalogNamespace` is set. */
+  private readonly nostrCatalog: CatalogSource;
   private readonly seederListeners = new Set<(s: SeederStatus) => void>();
   /** uploadId → the owner (webContents) that started it. */
   private readonly uploads = new Map<string, { readonly owner: number }>();
@@ -207,7 +218,20 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     );
     this.now = opts.now ?? nostr.nowSeconds;
     this.wallet = opts.wallet.wallet;
-    this.nostrCatalog = new NostrCatalog(() => this.client());
+    const nip71 = new NostrCatalog(() => this.client());
+    const ns = opts.nfxCatalogNamespace;
+    this.nostrCatalog =
+      ns === undefined
+        ? nip71
+        : new MergedCatalog(
+            nip71,
+            new NfxCatalog(
+              () => this.client(),
+              ns,
+              () => opts.nfxScopedRelays?.(ns) ?? [],
+            ),
+            this.log.child('nfx-catalog'),
+          );
     this.wallet.onChange((e) => {
       if (e.type === 'balance') this.logAutoTopUpDue(e.mint, e.balance);
     });
@@ -389,7 +413,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   // ---- catalog ---------------------------------------------------------------------------
 
-  async feed(q: FeedQuery): Promise<Page<VideoManifest>> {
+  async feed(q: FeedQuery): Promise<Page<CatalogVideo>> {
     const viewer = await this.me();
     return this.fromCatalog((cat) => cat.feed(q, viewer));
   }
@@ -398,9 +422,9 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     return this.fromCatalog((cat) => cat.video(id));
   }
 
-  /** Contracts v9: no NFX catalog source yet (slice 4b-2), so no NFX video is known. */
-  nfxVideo(_addr: NfxAddress): Promise<NfxVideo | null> {
-    return Promise.resolve(null);
+  /** Contracts v9: `null` unless the catalogue lists an NFX network (`nfxCatalogNamespace`). */
+  nfxVideo(addr: NfxAddress): Promise<NfxVideo | null> {
+    return this.fromCatalog((cat) => cat.nfxVideo(addr));
   }
 
   async stats(id: NostrEventId): Promise<VideoStats> {
@@ -437,7 +461,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     readonly text: string;
     readonly cursor?: string;
     readonly filters?: SearchFilters;
-  }): Promise<Page<VideoManifest>> {
+  }): Promise<Page<CatalogVideo>> {
     const query: SearchQuery = q;
     return this.fromCatalog((cat) => cat.search(query));
   }
@@ -759,11 +783,14 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     myVideos: async (cursor?: string): Promise<Page<VideoManifest>> => {
       const me = await this.me();
       if (me === null) return { items: [] };
-      return this.feed({
+      const page = await this.feed({
         source: 'author',
         author: me,
         ...(cursor === undefined ? {} : { cursor }),
       });
+      // Studio manages NIP-71 uploads; an NFX copy is the same upload's other announcement.
+      const items = page.items.filter((v): v is VideoManifest => v.kind !== 38504);
+      return page.next === undefined ? { items } : { items, next: page.next };
     },
     analytics: async (videoId: NostrEventId): Promise<AnalyticsResult> => {
       // Real per-rendition sats need Stage 2 receipts; an empty map is the honest answer.

@@ -9,6 +9,20 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The NFX catalogue (ADR 0020, slice 4b-2). Given an NFX network, the host lists that network's
+  free videos beside the NIP-71 ones. They appear in the subscriptions, tags and author feeds and
+  in search, newest first under one cursor. `nfxVideo(addr)` finds one by address.
+  - Reads go to the read relays first and to the network's scoped relays only as the fallback
+    (NFX-04 §4).
+  - A listing shows each address's current revision, ignoring one more than 15 minutes ahead
+    (NFX-02 §4). It drops a manifest its author deleted (NFX-02 §6), so every page asks for the
+    deletions of the addresses it shows.
+  - It shows free videos only: `license open`, no price hint.
+  - When an NFX manifest's `e` names a NIP-71 event by the same author that still exists, the
+    NFX copy is dropped.
+  - If the NFX side fails, the NIP-71 videos are listed alone.
+  - No network is chosen yet, so production makes no NFX query; slice 5's settings choose one.
+    `--dev-fixtures` lists two mock NFX videos.
 - Contracts version 9: an NFX video's identity (ADR 0020). `NfxAddress` (`38504:<author>:<d>`)
   names an NFX manifest across its revisions. `NfxVideo` is a free kind-38504 manifest for
   listing, with no price and no Hyperblob renditions. `feed` and `search` return `CatalogVideo`,
