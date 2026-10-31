@@ -294,6 +294,7 @@ export class Host {
     this.topics.dropWc(wc);
     this.inflight.delete(wc);
     await this.adapter.sessions.closeOwner(wc);
+    await this.adapter.closeNfxOwner(wc);
   }
 
   private async serveImage(req: number, id: string): Promise<void> {
