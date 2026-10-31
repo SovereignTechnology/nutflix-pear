@@ -137,8 +137,7 @@ export function planNfxPlayback(o: {
  * lead, and its `tfdt` where the plan put it.
  */
 export function checkNfxSegment(plan: NfxPlayPlan, index: number, bytes: Uint8Array): boolean {
-  const entry = plan.segments[index];
-  if (entry === undefined || bytes.length !== entry.size) return false;
+  if (bytes.length !== plan.segments[index]?.size) return false;
   if (segmentLead(bytes) !== plan.lead) return false;
   try {
     return segmentStart(bytes, plan.track.trackId) === plan.starts[index];
