@@ -146,7 +146,8 @@ export const WATCH_RETRY_MAX_MS = 10 * 60_000;
 export const RELAY_RUN_WAIT_MS = 3 * RELAY_PUBLISH_WORST_MS;
 
 export interface RecoveryTimers {
-  setTimeout(fn: () => void, ms: number): unknown;
+  /** `fn` returns the work it started (tests' manual timers await it; real timers ignore it). */
+  setTimeout(fn: () => unknown, ms: number): unknown;
   clearTimeout(handle: unknown): void;
 }
 
@@ -1216,7 +1217,7 @@ export class RecoveryService {
     const r = { pubkey, attempt, timer: null as unknown };
     r.timer = this.timers.setTimeout(() => {
       r.timer = null;
-      void this.relayRetryNow(r);
+      return this.relayRetryNow(r);
     }, delay);
     this.retry = r;
   }
