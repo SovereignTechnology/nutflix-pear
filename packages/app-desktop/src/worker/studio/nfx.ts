@@ -2,13 +2,14 @@
  * The NFX side of a Studio upload (contracts v8 `UploadInput.nfx`, ADR 0020 Phase 1): after the
  * legacy upload has published, the H.264 renditions it encoded are packaged as NFX-05 CMAF by
  * stream copy (`media.packageNfx`, no second encode) and kept in the seeder's NFX store, which
- * shares the disk cap with the legacy blobs and joins no swarm. Nothing is published here:
- * slice 4 announces the stored video (kind 38504 + beacons), slice 5 shows its status.
+ * shares the disk cap with the legacy blobs and joins no swarm. Nothing is published here: the
+ * host announces the stored video's manifest (kind 38504, `host/nfx/publish.ts`); beacons come
+ * with slice 5's transport, which also shows the status.
  *
  * Free videos only: the guards refuse `nfx` on a priced upload, and this module checks again.
  * Every failure is a typed `NfxUploadStatusWire`, never a throw into the legacy upload.
  */
-import type { FsAdapter, ProcessRunner, TranscodeOutput } from '@sovit/core';
+import type { FsAdapter, ProcessRunner, Sha256Hex, TranscodeOutput } from '@sovit/core';
 import { media, nfx } from '@sovit/core';
 import type { Logger, NfxStore } from '@sovit/seeder';
 
@@ -20,26 +21,19 @@ import type { NfxUploadFailure, NfxUploadStatusWire } from '../../ipc/worker-pro
  */
 export const NFX_DEFAULT_NAMESPACE = 'nfx:testnet:1' as const;
 
-/** Prefix of the video ids this app derives (`nutflix-<32 hex>`, 40 characters). */
-const VIDEO_ID_PREFIX = 'nutflix-';
-
 /**
  * The NFX address of the video a legacy NIP-71 event published: `<namespace>:nutflix-<first 32
- * hex of the event id>`. Deterministic (the same legacy video always maps to the same address,
- * so slice 4 can link the two with `["a", …]`), and inside NFX-02's `[a-z0-9][a-z0-9-]{6,62}`.
- * 128 bits of the id keep two of this node's videos from colliding.
+ * hex of the event id>` (`nfx.legacyVideoAddr`, in core so that the host, which checks it before
+ * announcing the video, derives the same one). Throws on a bad id or namespace.
  */
 export function nfxVideoAddrFor(
   legacyEventId: string,
   namespace: string = NFX_DEFAULT_NAMESPACE,
 ): nfx.VideoAddr {
-  if (!/^[0-9a-f]{64}$/.test(legacyEventId)) {
-    throw new TypeError('nfx: a legacy event id is 64 lowercase hex');
-  }
   const ns = nfx.Namespace.parse(namespace);
   if (!ns.ok) throw new TypeError('nfx: not an NFX-01 namespace');
-  const addr = nfx.VideoAddr.of(ns.value, `${VIDEO_ID_PREFIX}${legacyEventId.slice(0, 32)}`);
-  if (!addr.ok) throw new TypeError('nfx: the derived video id is invalid');
+  const addr = nfx.legacyVideoAddr(ns.value, legacyEventId);
+  if (!addr.ok) throw new TypeError(`nfx: ${addr.error.reason}`);
   return addr.value;
 }
 
@@ -130,6 +124,9 @@ export async function packageUploadForNfx(
       segs: put.record.segs,
       deduplicated: put.deduplicated,
     });
+    // The manifest's `thumb` (NFX-02): the JPEG the packager listed with role `thumb`. Its hash
+    // is the packager's own sha256, 64 lowercase hex (re-checked by the guard on the hop).
+    const thumb = packaged.hashList.files.find((f) => f.role === 'thumb');
     return {
       state: 'stored',
       video: put.record.video,
@@ -137,6 +134,9 @@ export async function packageUploadForNfx(
       segs: put.record.segs,
       renditions: packaged.hashList.renditions.length,
       bytes,
+      ...(thumb !== undefined
+        ? { thumb: { sha256: thumb.sha256 as Sha256Hex, mime: 'image/jpeg' } }
+        : {}),
     };
   } catch {
     return failed('store-failed');

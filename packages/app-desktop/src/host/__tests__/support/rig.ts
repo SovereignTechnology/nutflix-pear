@@ -61,6 +61,8 @@ export interface RigOptions {
    * suites pass a pass-through spy of it (`support/real-recovery.ts`).
    */
   readonly recoveryCore?: HostOptions['recoveryCore'];
+  /** Slice 4a: a namespace's NFX-04 scoped relays. */
+  readonly nfxScopedRelays?: HostOptions['nfxScopedRelays'];
 }
 
 /** Polls `check` every few ms until it returns a value, or fails with `what` after `ms`. */
@@ -109,6 +111,7 @@ export async function rig(o: RigOptions = {}): Promise<Rig> {
     ...(o.nip46 === undefined ? {} : { nip46: o.nip46 }),
     ...(o.topUp === undefined ? {} : { topUp: o.topUp }),
     ...(o.recoveryCore === undefined ? {} : { recoveryCore: o.recoveryCore }),
+    ...(o.nfxScopedRelays === undefined ? {} : { nfxScopedRelays: o.nfxScopedRelays }),
     imageTransport: o.imageTransport ?? (() => Promise.reject(new Error('no network in tests'))),
   });
   late.host = host;
