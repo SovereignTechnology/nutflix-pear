@@ -116,13 +116,16 @@ interface World {
 
 /** Timers a test fires by hand (W8a: the relay copy retry). */
 interface ManualTimers extends RecoveryTimers {
-  readonly armed: { readonly ms: number; readonly fn: () => void }[];
-  /** Fire the next armed timer; resolves once what it started has settled. */
-  fire(): Promise<void>;
+  readonly armed: { readonly ms: number; readonly fn: () => unknown }[];
+  /**
+   * Fire the next armed timer; resolves once what it started has settled — or, for work a test
+   * holds on purpose (`hangs`), after a few turns.
+   */
+  fire(o?: { readonly hangs?: boolean }): Promise<void>;
 }
 
 function manualTimers(): ManualTimers {
-  const armed: { ms: number; fn: () => void }[] = [];
+  const armed: { ms: number; fn: () => unknown }[] = [];
   return {
     armed,
     setTimeout: (fn, ms) => {
@@ -131,13 +134,16 @@ function manualTimers(): ManualTimers {
       return h;
     },
     clearTimeout: (h) => {
-      const i = armed.indexOf(h as { ms: number; fn: () => void });
+      const i = armed.indexOf(h as { ms: number; fn: () => unknown });
       if (i >= 0) armed.splice(i, 1);
     },
-    fire: async () => {
+    fire: async (o = {}) => {
       const h = armed.shift();
       if (h === undefined) throw new Error('no timer armed');
-      h.fn();
+      // The retry it started, then a few turns for what that schedules (a fixed wall-clock wait
+      // alone flaked on a loaded CI runner).
+      const work = h.fn();
+      if (o.hangs !== true) await work;
       for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 10));
     },
   };
@@ -1659,7 +1665,7 @@ describe('fix round 8: F55, F56, the relay retry and the flows', () => {
     expect((await readEnvelope(path))?.relayCopy).toBe(false);
     refuse = false;
     expect(w.timers.armed).toHaveLength(1);
-    await w.timers.fire(); // the retry starts; its publish hangs
+    await w.timers.fire({ hangs: true }); // the retry starts; its publish hangs
     await vi.waitFor(() => {
       expect(held).toBe(true);
     });
@@ -1982,7 +1988,7 @@ describe('fix round 9: watched mints, the reopen, the bounded wait', () => {
       return new Promise<never>(() => undefined);
     };
     expect(w.timers.armed).toHaveLength(1);
-    await w.timers.fire(); // the retry starts; its signing hangs
+    await w.timers.fire({ hangs: true }); // the retry starts; its signing hangs
     await vi.waitFor(() => {
       expect(signing).toBe(true);
     });
