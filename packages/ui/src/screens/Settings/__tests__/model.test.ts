@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AUTO_TOP_UP_MAX_SATS as CORE_TOP_UP_MAX,
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
+  MAX_NFX_IROH_RELAYS,
   MAX_NFX_SCOPED_RELAYS,
   NFX_NETWORKS,
 } from '@sovit/core';
@@ -22,8 +23,10 @@ import {
   parseTopUpAmountSats,
   signerTitle,
   validateMintUrl,
+  UI_MAX_NFX_IROH_RELAYS,
   UI_MAX_NFX_SCOPED_RELAYS,
   UI_NFX_NETWORK,
+  validateIrohRelayUrl,
   validateRelayUrl,
   validateScopedRelayUrl,
 } from '../model.js';
@@ -56,6 +59,63 @@ describe('validateScopedRelayUrl (contracts v10)', () => {
     expect(validateScopedRelayUrl('wss://a.example', ['wss://a.example']).ok).toBe(false);
     expect(validateScopedRelayUrl('https://a.example').ok).toBe(false);
     expect(validateScopedRelayUrl('').ok).toBe(false);
+  });
+});
+
+describe('validateIrohRelayUrl (contracts v12)', () => {
+  const err = (s: string, existing: readonly string[] = []): string => {
+    const r = validateIrohRelayUrl(s, existing);
+    if (r.ok) throw new Error(`expected ${s} to be rejected`);
+    return r.error;
+  };
+
+  it('mirrors core: the same relay cap', () => {
+    expect(UI_MAX_NFX_IROH_RELAYS).toBe(MAX_NFX_IROH_RELAYS);
+  });
+
+  it("writes iroh's normal form: lower case, default port dropped, one trailing slash", () => {
+    for (const [raw, value] of [
+      ['HTTPS://Relay.Example', 'https://relay.example/'],
+      [' https://relay.example/ ', 'https://relay.example/'],
+      ['https://relay.example:443', 'https://relay.example/'],
+      ['https://Relay.Example:8443/', 'https://relay.example:8443/'],
+      ['https://[2001:DB8::1]/', 'https://[2001:db8::1]/'],
+      ['http://127.0.0.1:3340', 'http://127.0.0.1:3340/'],
+      ['HTTP://LocalHost:3340/', 'http://localhost:3340/'],
+      ['http://[::1]:3340', 'http://[::1]:3340/'],
+    ] as const) {
+      expect(validateIrohRelayUrl(raw)).toEqual({ ok: true, value });
+    }
+  });
+
+  it('refuses a path, a ? or # part, user-info, and cleartext off this computer', () => {
+    expect(err('')).toMatch(/Enter a relay address/);
+    expect(err('relay.example')).toMatch(/start with https:\/\//);
+    expect(err('https://relay .example')).toMatch(/spaces/);
+    expect(err('https://relay.example/relay')).toMatch(/no path/);
+    expect(err('https://relay.example//')).toMatch(/no path/);
+    expect(err('https://relay.example/?x=1')).toMatch(/no \? or # part/);
+    expect(err('https://relay.example/#x')).toMatch(/no \? or # part/);
+    expect(err('https://u:p@relay.example')).toMatch(/user name or password/);
+    expect(err('http://relay.example')).toMatch(
+      /http:\/\/ is allowed only for a relay on this computer/,
+    );
+    expect(err('http://192.168.1.10:3340')).toMatch(/only for a relay on this computer/);
+    expect(err('wss://relay.example')).toBe('iroh relays use https://, not wss://');
+    expect(err('ws://127.0.0.1:3340')).toBe('iroh relays use https://, not ws://');
+    expect(err('https://relay.example:0')).toMatch(/not a valid relay address/);
+    expect(err('https://relay.example./')).toMatch(/not a valid relay address/);
+    expect(err(`https://${'a'.repeat(600)}.example`)).toMatch(/too long/);
+  });
+
+  it('refuses a duplicate in normal form', () => {
+    expect(err('HTTPS://Relay.Example', ['https://relay.example/'])).toBe(
+      'That relay is already in the list.',
+    );
+    expect(err('http://127.0.0.1:3340', ['http://127.0.0.1:3340/'])).toBe(
+      'That relay is already in the list.',
+    );
+    expect(validateIrohRelayUrl('https://other.example', ['https://relay.example/']).ok).toBe(true);
   });
 });
 

@@ -59,7 +59,8 @@ export function isSettingsPatch(patch: unknown): patch is Partial<Settings> {
  * A stored settings object → `Settings`, or `null`. Unknown keys (e.g. written by a newer
  * build) are ignored; missing keys take their defaults; every present key must be valid —
  * except `nfx` (contracts v10), which is checked on its own: an invalid one (say, a network a
- * newer build added) is dropped, so NFX is off, and leaves the rest of the file standing.
+ * newer build added, or a bad v12 `irohRelays`) is dropped, so NFX is off, and leaves the rest of
+ * the file standing. A v10/v11 `nfx` (no `irohRelays`) is still valid.
  */
 export function parseStoredSettings(raw: unknown): StoredSettings | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;

@@ -9,6 +9,18 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- Settings › NFX network lists the network's own iroh relays (contracts version 12, ADR 0020
+  slice 5e-2, ADR 0021).
+  - **What they are:** every NFX network runs its own iroh relays (NFX-06 §1). They are the only
+    relays the app's iroh helper will use, and the only ones its beacons will name.
+  - **A local setting:** the list is set here and never taken from a beacon; a relay a ticket
+    names that is not on it is dropped.
+  - **The form:** `https://host[:port]/`, as iroh writes it (the field normalises what is typed),
+    or `http://` to this computer only, for a local relay. At most 4, and no duplicates.
+  - **Without one:** iroh connects directly or not at all.
+  - **Stored settings:** an NFX setting from an earlier build stays valid. A bad iroh relay list
+    turns NFX off and leaves every other setting standing.
+  - **Not used yet:** the worker hands them to the iroh helper with slice 5e-3.
 - Free uploads go to NFX (ADR 0020 slice 5d-4).
   - **In Studio:** while the NFX setting is on, a video can be free (a price of 0), and a free
     video always goes to the NFX network too.

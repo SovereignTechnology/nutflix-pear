@@ -3,7 +3,7 @@
  * only), unit conversion for the seeding disk cap, the prefetch ("buffer = money") and
  * auto-top-up bounds, signer copy and error copy. No React, no adapter calls.
  */
-import type { MintUrl, RelayUrl, SignerStatus } from '@sovit/core';
+import type { IrohRelayUrl, MintUrl, RelayUrl, SignerStatus } from '@sovit/core';
 import {
   UI_AUTO_TOP_UP_MAX_SATS,
   UI_AUTO_TOP_UP_PER_DAY_SATS,
@@ -103,6 +103,56 @@ export function validateScopedRelayUrl(
     return ok(url as RelayUrl);
   }
   return validateRelayUrl(raw, existing);
+}
+
+/** Contracts v12: core's `MAX_NFX_IROH_RELAYS`. */
+export const UI_MAX_NFX_IROH_RELAYS = 4;
+
+/** A host as `URL` prints it, in the shape the IPC guard admits: DNS labels or `[IPv6]`. */
+const IROH_HOST_RE =
+  /^(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?)*|\[[0-9a-f:]{2,39}\])$/;
+
+/** `HTTPS://Relay.Example` → `https://relay.example/`, iroh's normal form (scheme, host, port, `/`). */
+export function normaliseIrohRelayUrl(input: string): string {
+  const u = parse(input.trim());
+  if (!u) return input.trim();
+  return `${u.protocol}//${u.host}/`;
+}
+
+/**
+ * iroh relay check for Settings › NFX (contracts v12, NFX-06 §1), written in iroh's normal form,
+ * `https://host[:port]/`, so a ticket's relay matches it as a string. `http://` to this computer
+ * only (a local relay). A relay sees which nodes talk to whom, so a cleartext one anywhere else
+ * would show that to the network, and could be swapped for another on the way.
+ */
+export function validateIrohRelayUrl(
+  input: string,
+  existing: readonly string[] = [],
+): Validation<IrohRelayUrl> {
+  const raw = input.trim();
+  if (raw === '') return fail('Enter a relay address, for example https://relay.example/');
+  if (raw.length > MAX_URL_LENGTH) return fail('That address is too long to be a relay.');
+  if (/\s/.test(raw)) return fail('A relay address cannot contain spaces.');
+  const scheme = schemeOf(raw);
+  if (scheme === undefined)
+    return fail('iroh relay addresses start with https:// — for example https://relay.example/');
+  if (scheme !== 'https' && scheme !== 'http')
+    return fail(`iroh relays use https://, not ${scheme}://`);
+  const u = parse(raw);
+  if (!u) return fail('That is not a valid relay address.');
+  if (scheme === 'http' && !LOOPBACK_HOSTS.includes(u.hostname))
+    return fail('Use https:// — http:// is allowed only for a relay on this computer.');
+  if (!IROH_HOST_RE.test(u.hostname) || u.port === '0')
+    return fail('That is not a valid relay address.');
+  if (u.username !== '' || u.password !== '')
+    return fail('Remove the user name or password from the address.');
+  if (u.pathname !== '/') return fail('An iroh relay address has no path, only the server.');
+  if (u.search !== '' || u.hash !== '') return fail('An iroh relay address has no ? or # part.');
+  const url = normaliseIrohRelayUrl(raw);
+  if (url.length > MAX_URL_LENGTH) return fail('That address is too long to be a relay.');
+  if (existing.some((e) => normaliseIrohRelayUrl(e) === url))
+    return fail('That relay is already in the list.');
+  return ok(url as IrohRelayUrl);
 }
 
 /** `https://Mint.Example/` → `https://mint.example` (contract: `MintUrl` has no trailing slash). */

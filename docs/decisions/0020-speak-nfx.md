@@ -162,3 +162,21 @@ off means no NFX query, listing, seeding or beacon.
 - **Paging.** A merged page holds nothing older than the oldest item of a side that has more,
   so dropping twins never loses a video. A page left empty by twins is stepped past (at most 3
   times).
+
+## Amendment 2026-10-31: the network's iroh relays (slice 5e-2)
+
+Contracts version 12 adds the network's own iroh relays to the NFX setting, as `irohRelays`.
+Every NFX network runs its own `iroh-relay` (NFX-06 §1, NFX-11 §4), and a client dials only its
+own network's relays ([ADR 0021](0021-speak-iroh-through-a-helper.md): "the network's relays
+only").
+- **A local setting.** The user lists them, as with the scoped relays. A beacon or a ticket never
+  adds one: a relay a ticket names that is not on the list is dropped.
+- **iroh's normal form only:** `https://host[:port]/`, lower-case, with the trailing slash and no
+  path, so a ticket's relay is matched as a string.
+  - `http://` only to a loopback address, for a local relay (CI, a local nfxd setup). A relay sees
+    which nodes talk to whom, so a cleartext one elsewhere would show that to the path, which
+    could also swap it for its own.
+- **At most 4, unique, and optional.** Absent or empty means none: iroh then connects directly or
+  not at all. A stored version 10 or 11 setting stays valid.
+- **Not used yet.** The worker hands them to the iroh helper in slice 5e-3, and its beacons name
+  them from then on.

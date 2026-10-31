@@ -20,6 +20,7 @@ import {
   isGrantFileMsg,
   isHostIn,
   isHostOut,
+  isIrohRelayUrl,
   MAX_NFX_ADDRESS,
   isMintUrl,
   isNfxAddress,
@@ -576,6 +577,116 @@ describe('NFX settings (contracts v10)', () => {
         const r = ui.validateScopedRelayUrl(raw);
         if (r.ok) expect(isScopedRelayUrl(r.value), `${raw} → ${String(r.value)}`).toBe(true);
       }),
+      { numRuns: 300 },
+    );
+  });
+});
+
+describe('NFX iroh relays (contracts v12)', () => {
+  const nfx = (over: Record<string, unknown> = {}): unknown => ({
+    enabled: true,
+    network: 'nfx:testnet:1',
+    scopedRelays: ['wss://scoped.example'],
+    irohRelays: ['https://relay.example/', 'http://127.0.0.1:3340/'],
+    ...over,
+  });
+  const patch = (x: unknown): boolean => validateArgs.updateSettings([{ nfx: x }]);
+
+  it("iroh's normal form only: https anywhere, http to loopback only", () => {
+    for (const ok of [
+      'https://relay.example/',
+      'https://relay.example:8443/',
+      'https://iroh-relay.example/',
+      'https://10.0.0.1/',
+      'https://[2001:db8::1]:443/',
+      'http://127.0.0.1:3340/',
+      'http://[::1]:3340/',
+      'http://localhost/',
+    ])
+      expect(isIrohRelayUrl(ok), ok).toBe(true);
+    for (const bad of [
+      'HTTPS://relay.example/',
+      'https://Relay.Example/',
+      'https://[2001:DB8::1]/',
+      'https://relay.example',
+      'https://relay.example/relay',
+      'https://relay.example//',
+      'https://relay.example/?x=1',
+      'https://relay.example/#x',
+      'https://u@relay.example/',
+      'https://u:p@relay.example/',
+      ' https://relay.example/',
+      'https://relay.example/ ',
+      'https://relay.example/\n',
+      'https://relay .example/',
+      'https://relay.example:08443/',
+      'http://relay.example/',
+      'http://192.168.1.10:3340/',
+      'http://127.0.0.2/',
+      'http://localhost.example/',
+      'HTTP://127.0.0.1/',
+      'wss://relay.example/',
+      'ws://127.0.0.1:3340/',
+      'https:///',
+      `https://${`${'a'.repeat(63)}.`.repeat(8)}example/`, // 528 chars, over the 512 cap
+      42,
+      null,
+    ])
+      expect(isIrohRelayUrl(bad), String(bad)).toBe(false);
+  });
+
+  it('a patch may carry up to 4 unique iroh relays, or none at all (v10/v11)', () => {
+    expect(patch(nfx())).toBe(true);
+    expect(patch(nfx({ irohRelays: [] }))).toBe(true);
+    // A v10/v11 value, stored or patched, has no `irohRelays`.
+    expect(
+      patch({ enabled: true, network: 'nfx:testnet:1', scopedRelays: ['wss://scoped.example'] }),
+    ).toBe(true);
+    const five = Array.from({ length: 5 }, (_, i) => `https://r${String(i)}.example/`);
+    expect(patch(nfx({ irohRelays: five }))).toBe(false);
+    expect(patch(nfx({ irohRelays: five.slice(0, 4) }))).toBe(true);
+    expect(patch(nfx({ irohRelays: ['https://relay.example/', 'https://relay.example/'] }))).toBe(
+      false,
+    );
+    expect(patch(nfx({ irohRelays: ['http://relay.example/'] }))).toBe(false);
+    expect(patch(nfx({ irohRelays: ['https://relay.example'] }))).toBe(false);
+    expect(patch(nfx({ irohRelays: 'https://relay.example/' }))).toBe(false);
+    expect(patch(nfx({ irohRelays: undefined }))).toBe(false);
+  });
+
+  it('every iroh relay the Settings validator accepts is accepted here', async () => {
+    const ui = (await import(
+      /* @vite-ignore */ new URL('../../../../ui/src/screens/Settings/model.ts', import.meta.url)
+        .href
+    )) as {
+      validateIrohRelayUrl(s: string): { ok: boolean; value?: string };
+      UI_MAX_NFX_IROH_RELAYS: number;
+    };
+    expect(ui.UI_MAX_NFX_IROH_RELAYS).toBe(LIMITS.maxNfxIrohRelays);
+    const host = fc.constantFrom(
+      '127.0.0.1',
+      '[::1]',
+      'localhost',
+      'LocalHost',
+      'relay.example',
+      'Relay.Example',
+      '[2001:DB8::1]',
+      '10.0.0.1',
+    );
+    const port = fc.option(fc.integer({ min: 0, max: 65535 }), { nil: undefined });
+    const path = fc.constantFrom('', '/', '/relay', '/relay/', '//', '/?x=1', '/#x');
+    fc.assert(
+      fc.property(
+        fc.constantFrom('https', 'HTTPS', 'http', 'HTTP', 'wss', 'ws'),
+        host,
+        port,
+        path,
+        (sc, h, p, pa) => {
+          const raw = `${sc}://${h}${p === undefined ? '' : `:${String(p)}`}${pa}`;
+          const r = ui.validateIrohRelayUrl(raw);
+          if (r.ok) expect(isIrohRelayUrl(r.value), `${raw} → ${String(r.value)}`).toBe(true);
+        },
+      ),
       { numRuns: 300 },
     );
   });
