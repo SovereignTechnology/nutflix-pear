@@ -16,7 +16,7 @@ import { spawn } from 'bare-subprocess';
 import type { OsName } from '../ffmpeg.js';
 import { utf8 } from '../../ipc/codec.js';
 import type { SpawnDleqThread } from '../pay/dleq-thread.js';
-import type { StateFs, WorkerRuntime } from '../runtime.js';
+import type { HttpRequestHandler, HttpServerLike, StateFs, WorkerRuntime } from '../runtime.js';
 import type { BareSpawn } from '../transcode/index.js';
 import { createBareProcessRunner } from '../transcode/index.js';
 import { DLEQ_THREAD_ENTRY } from '../worker-root.js';
@@ -232,12 +232,26 @@ export function bareDleqThread(entry: URL = DLEQ_THREAD_ENTRY): SpawnDleqThread 
   };
 }
 
+/**
+ * `WorkerRuntime.createHttpServer` on bare-http1 (slice 5d), whose server, request and response
+ * mirror node:http's — the shapes `../runtime.ts` names. Imported on the first call, not at the
+ * top: it loads bare-tcp and bare-dns, native addons that cannot load under Node, which imports
+ * this module in tests (`bare-state-fs.test.ts`).
+ */
+async function bareHttpServer(onRequest: HttpRequestHandler): Promise<HttpServerLike> {
+  const http = (await import('bare-http1')).default;
+  return http.createServer({}, (req, res) => {
+    onRequest(req, res);
+  });
+}
+
 export function bareRuntime(): WorkerRuntime {
   const dleqThread = bareDleqThread();
   return {
     stateFs: bareStateFs,
     seederFs: bareSeederFs,
     mediaFs: bareMediaFs,
+    createHttpServer: bareHttpServer,
     runner: createBareProcessRunner(spawn as unknown as BareSpawn),
     env: (name) => os.getEnv(name),
     isExecutable,

@@ -9,6 +9,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The worker plays a free NFX video (ADR 0020 slice 5d-2), as `nfx.play.open` / `nfx.play.close`.
+  - **What it does:** it dials the seeders it is given over HyperDHT and fetches the hash list,
+    the playlist, the init and the first segment, each file sha256-checked. It then plans layout C
+    and serves it from a loopback range server, while fetching the rest ahead of the player.
+  - **Checking:** each later segment is held to the plan.
+  - **Connections:** one refcounted connection per seeder, shared by every session of a run.
+  - **Without a wallet:** this works without payment providers too, from a DHT node of its own.
+  - **Not yet reachable:** the host and the player come with slice 5d-3.
 - Core plans how a remote NFX rendition plays (ADR 0020 slice 5d, spike S-E's layout C):
   `media.planNfxPlayback` predicts the global `sidx`, and every segment's `tfdt` and served size,
   from the verified hash list, the init and the first segment alone.

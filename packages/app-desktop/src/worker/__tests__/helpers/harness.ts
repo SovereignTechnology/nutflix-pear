@@ -36,7 +36,7 @@ import type {
 import type { LoopbackPayHub } from '../../dev/loopback-pay.js';
 import type { WorkerHostOptions } from '../../host.js';
 import { WorkerHost } from '../../host.js';
-import type { StateFs, WorkerRuntime } from '../../runtime.js';
+import type { HttpRequestHandler, HttpServerLike, StateFs, WorkerRuntime } from '../../runtime.js';
 import { WorkerRpc } from '../../rpc.js';
 
 /** `StateFs` on node:fs (tests; production is `adapters/bare.ts`). */
@@ -96,11 +96,21 @@ export const nodeStateFs: StateFs = {
   },
 };
 
+/** `WorkerRuntime.createHttpServer` on node:http (tests; production is bare-http1). */
+export function nodeHttpServer(onRequest: HttpRequestHandler): Promise<HttpServerLike> {
+  return Promise.resolve(
+    http.createServer((req, res) => {
+      onRequest(req, res);
+    }),
+  );
+}
+
 export function nodeRuntime(): WorkerRuntime {
   return {
     stateFs: nodeStateFs,
     seederFs: nodeFs,
     mediaFs: (tmpDir) => nodeFsAdapter({ tmpDir }),
+    createHttpServer: nodeHttpServer,
     runner: nodeProcessRunner(),
     env: (name) => process.env[name],
     monotonicNow: () => performance.now(),

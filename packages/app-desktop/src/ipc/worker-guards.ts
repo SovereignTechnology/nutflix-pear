@@ -62,7 +62,13 @@ import type {
   WorkerMethodTable,
   WorkerToHost,
 } from './worker-protocol.js';
-import { NFX_UPLOAD_FAILURES, WORKER_V } from './worker-protocol.js';
+import {
+  MAX_NFX_PLAY_PEERS,
+  MAX_NFX_RENDITIONS,
+  NFX_RESOLUTION,
+  NFX_UPLOAD_FAILURES,
+  WORKER_V,
+} from './worker-protocol.js';
 
 const anyValue = (_x: unknown): _x is unknown => true;
 
@@ -169,6 +175,25 @@ const isStudioUpload = obj(
   { thumbnailChoice: union(int(0, 63), isThumbnailHex) },
 );
 
+const isNfxHyperdhtEndpoint = obj({
+  t: literal('hyperdht'),
+  peer: matches(/^[0-9a-f]{64}$/, 64),
+  bind: matches(/^[0-9a-f]{128}$/, 128),
+});
+
+/** Slice 5d: a free NFX video to watch, from the seeders that beacon it. */
+const isNfxPlayOpen = obj(
+  {
+    sid: isSessionId,
+    video: isNfxVideoAddr,
+    root: isSha256,
+    segs: int(1, Number.MAX_SAFE_INTEGER),
+    peers: arrayOf(isNfxHyperdhtEndpoint, MAX_NFX_PLAY_PEERS, 1),
+    prefetchSeconds: isPrefetch,
+  },
+  { rendition: isLabel },
+);
+
 /** Arguments of every host → worker request. */
 export const validateWorkerArgs: {
   readonly [M in WorkerMethod]: Guard<WorkerMethodTable[M][0]>;
@@ -186,6 +211,8 @@ export const validateWorkerArgs: {
   'nfx.configure': safe(obj({ enabled: bool })),
   'nfx.endpoint': safe(obj({ seeder: isPubkey })),
   'nfx.videos': safe(obj({}) as Guard<Record<string, never>>),
+  'nfx.play.open': safe(isNfxPlayOpen),
+  'nfx.play.close': safe(isSid),
   'studio.ffmpeg': safe(obj({ recheck: bool }, { path: isAbsolutePath })),
   'studio.upload': safe(isStudioUpload),
   'image.fetch': safe(obj({ url: isHyperImageUrl, sha256: isSha256, size: isImageSize })),
@@ -219,17 +246,28 @@ const isFfmpegStatus = obj(
 /** Slice 5b: the most NFX videos one `nfx.videos` lists. */
 export const MAX_NFX_STORED_VIDEOS = 4096;
 
-const isNfxHyperdhtEndpoint = obj({
-  t: literal('hyperdht'),
-  peer: matches(/^[0-9a-f]{64}$/, 64),
-  bind: matches(/^[0-9a-f]{128}$/, 128),
-});
-
 const isNfxStoredVideo = obj({
   video: isNfxVideoAddr,
   root: isSha256,
   segs: int(1, Number.MAX_SAFE_INTEGER),
 });
+
+/** Slice 5d: a rendition's id comes from a peer's hash list: a label, nothing longer. */
+export const isNfxRenditionWire = obj(
+  { id: isLabel, bandwidth: int(1, Number.MAX_SAFE_INTEGER) },
+  { resolution: matches(NFX_RESOLUTION, 13) },
+);
+
+const isNfxPlayOpenShape = obj({
+  link: isLoopbackLink,
+  rendition: isLabel,
+  renditions: arrayOf(isNfxRenditionWire, MAX_NFX_RENDITIONS, 1),
+});
+/** The rendition served is one of those listed. */
+const isNfxPlayOpenResult = safe(
+  (x: unknown): x is WorkerMethodTable['nfx.play.open'][1] =>
+    isNfxPlayOpenShape(x) && x.renditions.some((r) => r.id === x.rendition),
+);
 
 /** Results of every host → worker request (checked by the host). */
 export const validateWorkerResult: {
@@ -250,6 +288,8 @@ export const validateWorkerResult: {
   'nfx.configure': isVoid,
   'nfx.endpoint': safe(obj({ endpoint: union(isNfxHyperdhtEndpoint, literal(null)) })),
   'nfx.videos': safe(obj({ videos: arrayOf(isNfxStoredVideo, MAX_NFX_STORED_VIDEOS) })),
+  'nfx.play.open': isNfxPlayOpenResult,
+  'nfx.play.close': isVoid,
   'studio.ffmpeg': safe(isFfmpegStatus),
   'studio.upload': safe(isVideoManifest),
   // At most the image cap as hex (two characters a byte).

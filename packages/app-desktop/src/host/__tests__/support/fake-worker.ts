@@ -16,6 +16,7 @@ import type {
   HostMethod,
   HostMethodTable,
   HostToWorker,
+  NfxPlayOpenArgs,
   PlayOpenArgs,
   WorkerMethod,
   WorkerMethodTable,
@@ -71,6 +72,8 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
   readonly received: Received[] = [];
   /** Open play sessions (sid → args). */
   readonly sessions = new Map<string, PlayOpenArgs>();
+  /** Slice 5d: open NFX play sessions (sid → args). */
+  readonly nfxSessions = new Map<string, NfxPlayOpenArgs>();
   destroyed = false;
   private readonly o: FakeWorkerOptions;
   private readonly decoder: FrameDecoder;
@@ -221,6 +224,20 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
         return Promise.resolve({ endpoint: null });
       case 'nfx.videos':
         return Promise.resolve({ videos: [] });
+      // Slice 5d: one 720p rendition, served at a link of the shape the worker's range server uses.
+      case 'nfx.play.open': {
+        const args = a as NfxPlayOpenArgs;
+        this.nfxSessions.set(args.sid, args);
+        const id = args.rendition ?? '720p';
+        return Promise.resolve({
+          link: `http://127.0.0.1:${String(this.o.port ?? 45_000)}/${'e'.repeat(32)}/${args.sid}`,
+          rendition: id,
+          renditions: [{ id, bandwidth: 2_500_000, resolution: '1280x720' }],
+        });
+      }
+      case 'nfx.play.close':
+        this.nfxSessions.delete((a as { sid: string }).sid);
+        return Promise.resolve(undefined);
       case 'play.open': {
         const args = a as PlayOpenArgs;
         this.sessions.set(args.sid, args);
