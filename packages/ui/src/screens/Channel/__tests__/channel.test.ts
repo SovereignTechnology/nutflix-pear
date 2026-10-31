@@ -8,12 +8,12 @@ import { act, createElement, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
 import type {
+  CatalogVideo,
   FeedQuery,
   NetworkAdapter,
   NostrPubkey,
   Playlist,
   Profile,
-  VideoManifest,
   Page,
 } from '@sovit/core';
 import { formatSats, renditionPriceSats } from '../../../components/index.js';
@@ -101,7 +101,7 @@ function withProfile(
 
 /** Author feed rejects (relays answer metadata but not the catalog). */
 function withFailingAuthorFeed(base: mocks.MockNetworkAdapter, err: Error): NetworkAdapter {
-  return withOverride(base, 'feed', (q: FeedQuery): Promise<Page<VideoManifest>> =>
+  return withOverride(base, 'feed', (q: FeedQuery): Promise<Page<CatalogVideo>> =>
     q.source === 'author' ? Promise.reject(err) : base.feed(q),
   );
 }
@@ -474,7 +474,7 @@ describe('Channel — paging the author feed', () => {
   it('a failed page keeps the loaded cards and offers Retry', async () => {
     const base = adapterWith();
     let fail = true;
-    const adapter = withOverride(base, 'feed', (q: FeedQuery): Promise<Page<VideoManifest>> =>
+    const adapter = withOverride(base, 'feed', (q: FeedQuery): Promise<Page<CatalogVideo>> =>
       q.cursor !== undefined && fail
         ? Promise.reject(new Error('relay-down: no relays reachable'))
         : base.feed(q),

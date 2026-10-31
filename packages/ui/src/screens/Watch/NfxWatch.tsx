@@ -54,17 +54,18 @@ export function NfxWatch({
   const [gen, setGen] = useState(0);
 
   useEffect(() => {
-    let alive = true;
+    const ac = new AbortController();
+    const gone = (): boolean => ac.signal.aborted;
     setPhase({ status: 'loading' });
     void (async (): Promise<void> => {
       let video: NfxVideo | null;
       try {
         video = await adapter.nfxVideo(videoId);
       } catch (error: unknown) {
-        if (alive) setPhase({ status: 'error', error });
+        if (!gone()) setPhase({ status: 'error', error });
         return;
       }
-      if (!alive) return;
+      if (gone()) return;
       if (video === null) {
         setPhase({ status: 'missing' });
         return;
@@ -72,15 +73,15 @@ export function NfxWatch({
       setPhase({ status: 'ready', video, channel: null, avatar: undefined });
       // The channel row fills in when the profile arrives; a failure leaves the short pubkey.
       const channel = await adapter.profile(video.author).catch(() => null);
-      if (!alive) return;
+      if (gone()) return;
       setPhase({ status: 'ready', video, channel, avatar: undefined });
       const avatar = await (avatarSrc(adapter, channel) ?? Promise.resolve(undefined)).catch(
         () => undefined,
       );
-      if (alive && avatar !== undefined) setPhase({ status: 'ready', video, channel, avatar });
+      if (!gone() && avatar !== undefined) setPhase({ status: 'ready', video, channel, avatar });
     })();
     return () => {
-      alive = false;
+      ac.abort();
     };
   }, [adapter, videoId, gen]);
 

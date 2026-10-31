@@ -8,7 +8,14 @@
 import { act, createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { mocks } from '@sovit/core';
-import type { NetworkAdapter, NostrEventId, Page, PlaySession, VideoManifest } from '@sovit/core';
+import type {
+  CatalogVideo,
+  NetworkAdapter,
+  NostrEventId,
+  Page,
+  PlaySession,
+  VideoManifest,
+} from '@sovit/core';
 import { click, fire, keydown, render, type Rendered } from '../../../components/testing/render.js';
 import { renditionPriceSats } from '../../../components/index.js';
 import type { Route } from '../../shared/route.js';
@@ -674,7 +681,7 @@ describe('Shorts — moving between shorts', () => {
   it('loads the next page near the end with the cursor; a failed page shows Retry in the tail', async () => {
     const base = adapterWith();
     let fail = true;
-    const feed = vi.fn((q: Parameters<NetworkAdapter['feed']>[0]): Promise<Page<VideoManifest>> =>
+    const feed = vi.fn((q: Parameters<NetworkAdapter['feed']>[0]): Promise<Page<CatalogVideo>> =>
       q.cursor !== undefined && fail
         ? Promise.reject(new Error('relay-down: no relays reachable'))
         : base.feed(q),

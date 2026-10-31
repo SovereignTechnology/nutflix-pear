@@ -638,9 +638,7 @@ describe('isNfxAddress (contracts v9) agrees with core', () => {
     ...vectorAddresses,
     NFX_ADDR,
     ...mocks.NFX_VIDEOS.map((v) => v.id),
-    ...((INVALID.nfxVideo ?? [])
-      .map((args) => args[0])
-      .filter((a) => typeof a === 'string') as string[]),
+    ...(INVALID.nfxVideo ?? []).map((args) => args[0]).filter((a) => typeof a === 'string'),
     `38504:${pk}:nfx:testnet:18446744073709551615:lagrange-points`,
     `38504:${pk}:nfx:${'n'.repeat(32)}:18446744073709551615:${'v'.repeat(63)}`,
     `38504:${pk}:nfx:${'n'.repeat(33)}:1:lagrange-points`,

@@ -6,7 +6,7 @@
 import { act, createElement, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
-import type { NetworkAdapter, Page, VideoManifest } from '@sovit/core';
+import type { CatalogVideo, NetworkAdapter, Page, VideoManifest } from '@sovit/core';
 import { click, fire, keydown, render, type Rendered } from '../../../components/testing/render.js';
 import type { Route } from '../../shared/route.js';
 import { HOME_TABS, Home, describeError, previewCostSats, type HomeProps } from '../Home.js';
@@ -39,7 +39,7 @@ function adapterWith(opts: Opts = {}): mocks.MockNetworkAdapter {
 
 function withFeed(
   base: NetworkAdapter,
-  feed: (q: Parameters<NetworkAdapter['feed']>[0]) => Promise<Page<VideoManifest>>,
+  feed: (q: Parameters<NetworkAdapter['feed']>[0]) => Promise<Page<CatalogVideo>>,
 ): NetworkAdapter {
   return new Proxy(base, {
     get(target, prop, receiver): unknown {
