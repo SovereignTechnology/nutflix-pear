@@ -10,6 +10,7 @@ import type {
   NfxAddress,
   NfxVideo,
   NostrEvent,
+  NostrEventId,
   NostrFilter,
   NostrPubkey,
   Page,
@@ -146,6 +147,36 @@ export function searchNfxVideos(
       (min === undefined || v.durationSec >= min) && (max === undefined || v.durationSec <= max)
     );
   });
+}
+
+/** The most NIP-71 events one `nfxTwinsOf` call asks about (a page's worth). */
+export const MAX_TWIN_LOOKUP = MAX_PAGE;
+
+/**
+ * The listed NFX copies of NIP-71 videos (ADR 0020 slice 5d-4): manifests in `namespace` whose one
+ * `e` names an event of `legacy` and whose author is that event's author (a link from anyone else
+ * is not a twin). One query, `#e` and `authors` bounded by `legacy` (at most `MAX_TWIN_LOOKUP`).
+ */
+export async function nfxTwinsOf(
+  client: NostrClient,
+  namespace: string,
+  legacy: readonly { readonly id: NostrEventId; readonly author: NostrPubkey }[],
+  opts: { readonly relays?: readonly RelayUrl[] | undefined } = {},
+): Promise<NfxVideo[]> {
+  const authorOf = new Map(legacy.slice(0, MAX_TWIN_LOOKUP).map((v) => [v.id, v.author]));
+  if (authorOf.size === 0) return [];
+  const events = await client.query(
+    {
+      kinds: [KIND_MANIFEST],
+      authors: [...new Set(authorOf.values())],
+      '#n': [namespace],
+      '#e': [...authorOf.keys()],
+      limit: MAX_PAGE,
+    },
+    opts.relays,
+  );
+  const videos = await listed(client, namespace, events, opts.relays);
+  return videos.filter((v) => v.legacyId !== undefined && authorOf.get(v.legacyId) === v.author);
 }
 
 /**

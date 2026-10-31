@@ -184,6 +184,8 @@ export function Studio({
   // Mints offered: Settings.defaultMints (pre-selected) ∪ wallet mints ∪ added ones.
   const [knownMints, setKnownMints] = useState<readonly MintUrl[]>([]);
   const [defaultMints, setDefaultMints] = useState<readonly MintUrl[]>([]);
+  // Slice 5d-4: a free video (price 0) only while NFX is on.
+  const [nfxOn, setNfxOn] = useState(false);
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
@@ -192,6 +194,7 @@ export function Studio({
         if (cancelled) return;
         const defaults = settings.status === 'fulfilled' ? settings.value.defaultMints : [];
         const held = wallet.status === 'fulfilled' ? wallet.value : [];
+        setNfxOn(settings.status === 'fulfilled' && settings.value.nfx?.enabled === true);
         setDefaultMints(defaults);
         setKnownMints((prev) => [...new Set([...defaults, ...held, ...prev])]);
         if (!mintsTouched.current)
@@ -330,10 +333,10 @@ export function Studio({
     [adapter, reloadVideos],
   );
   const publish = useCallback((): void => {
-    const input = toUploadInput(draft);
+    const input = toUploadInput(draft, { nfxOn });
     if (input === undefined || draft.file === undefined) return;
     startUpload(input, draft.file);
-  }, [draft, startUpload]);
+  }, [draft, nfxOn, startUpload]);
   const retry = useCallback((): void => {
     if (run.phase !== 'idle') startUpload(run.input, run.file);
   }, [run, startUpload]);
@@ -391,6 +394,7 @@ export function Studio({
             onChooseFile={onChooseFile}
             knownMints={knownMints}
             onAddMint={onAddMint}
+            nfxOn={nfxOn}
             run={run}
             ffmpeg={ffmpeg}
             onRecheckFfmpeg={onRecheckFfmpeg}

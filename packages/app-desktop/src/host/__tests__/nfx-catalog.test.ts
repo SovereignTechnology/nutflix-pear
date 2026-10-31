@@ -4,7 +4,8 @@
  *
  * - Dormant: without `Settings.nfx` enabled the host never asks for an NFX event.
  * - Merged feeds: newest first under one time cursor, nothing lost or repeated across pages.
- * - Twins: a same-author NFX copy of a NIP-71 video is dropped, also across pages.
+ * - Twins: a same-author NFX copy of a NIP-71 video is dropped, also across pages; slice 5d-4,
+ *   when the network can play (scoped relays): a free NIP-71 video gives way to its copy instead.
  * - NFX-04 §4: the read relays first, the scoped relays only as the fallback.
  * - An NFX failure lists the NIP-71 videos alone.
  */
@@ -18,6 +19,8 @@ import type {
   NostrFilter,
   NetworkAdapter,
   RelayUrl,
+  Sats,
+  VideoManifest,
 } from '@sovit/core';
 import { mocks, nostr } from '@sovit/core';
 
@@ -212,6 +215,85 @@ describe('twins (ADR 0020: same author only)', () => {
   });
 });
 
+describe('twins when the network can play (slice 5d-4)', () => {
+  const PLAYABLE = { ...NFX_ON, scopedRelays: ['wss://scoped.test' as RelayUrl] };
+  const free = (v: VideoManifest): VideoManifest => ({
+    ...v,
+    price: { ...v.price, satsPerBlock: 0 as Sats },
+  });
+
+  it('a free NIP-71 video lists as its NFX copy, also when the two are pages apart', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfx: PLAYABLE });
+    const [hohmann, raku] = await seedVideos(kit, r.pool, creator, [
+      fixture('hohmann'),
+      free(fixture('raku')),
+    ]);
+    await storeNfx(r.pool, creator, 'raku-on-nfx', 1, [['e', raku!.event.id]]);
+    const got = await allPages(r.host.adapter, {
+      source: 'author',
+      author: creator.pubkey,
+      limit: 1,
+    });
+    expect(got.map((v) => v.id)).toEqual([addr(creator.pubkey, 'raku-on-nfx'), hohmann!.video.id]);
+    const one = await r.host.adapter.feed({ source: 'author', author: creator.pubkey });
+    expect(one.items.map((v) => v.id)).toEqual([
+      addr(creator.pubkey, 'raku-on-nfx'),
+      hohmann!.video.id,
+    ]);
+  });
+
+  it('a priced NIP-71 video keeps its card; its free copy is dropped', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfx: PLAYABLE });
+    const [hohmann] = await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
+    await storeNfx(r.pool, creator, 'hohmann-on-nfx', 1, [['e', hohmann!.event.id]]);
+    const got = await allPages(r.host.adapter, { source: 'tags', tags: ['space'], limit: 1 });
+    expect(got.map((v) => v.id)).toEqual([hohmann!.video.id]);
+  });
+
+  it('a tag feed drops a free NIP-71 video only for a copy the same feed lists', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfx: PLAYABLE });
+    const [raku] = await seedVideos(kit, r.pool, creator, [free(fixture('raku'))]);
+    // The copy is tagged `space` only: a `ceramics` feed never lists it, so raku stays there.
+    await storeNfx(r.pool, creator, 'raku-on-nfx', 1, [['e', raku!.event.id]]);
+    const ceramics = await allPages(r.host.adapter, { source: 'tags', tags: ['ceramics'] });
+    expect(ceramics.map((v) => v.id)).toEqual([raku!.video.id]);
+    const either = await allPages(r.host.adapter, { source: 'tags', tags: ['ceramics', 'space'] });
+    expect(either.map((v) => v.id)).toEqual([addr(creator.pubkey, 'raku-on-nfx')]);
+  });
+
+  it('dropped twins lose and repeat nothing across short pages', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfx: PLAYABLE });
+    // Priced 'space' videos at 3 h, 12 h and 100 h, each with a newer free copy (dropped), and
+    // two NFX-only videos between them.
+    const legacy = await seedVideos(kit, r.pool, creator, [
+      fixture('hohmann'),
+      fixture('short-launch'),
+      fixture('orbit-decay'),
+    ]);
+    for (const [i, s] of legacy.entries()) {
+      const ageHours = (mocks.FIXTURE_NOW - s.event.created_at) / HOUR;
+      await storeNfx(r.pool, creator, `twin-copy-${String(i)}`, ageHours - 0.5, [
+        ['e', s.event.id],
+      ]);
+    }
+    const only = [
+      await storeNfx(r.pool, creator, 'nfx-only-six', 6),
+      await storeNfx(r.pool, creator, 'nfx-only-fifty', 50),
+    ];
+    const expected = [...legacy.map((s) => s.event), ...only].sort(nostr.byNewest).map((e) => e.id);
+    // The copies are real, listable NFX videos: only the twin rule keeps them off the pages.
+    expect(await r.host.adapter.nfxVideo(addr(creator.pubkey, 'twin-copy-0'))).not.toBeNull();
+    for (const limit of [1, 2, 3]) {
+      const got = await allPages(r.host.adapter, { source: 'tags', tags: ['space'], limit });
+      expect(got.map((v) => (v.kind === 38504 ? v.eventId : v.id))).toEqual(expected);
+    }
+  });
+});
+
 describe('NfxCatalog (NFX-04 §4)', () => {
   const PUBLIC = 'wss://public.test' as RelayUrl;
   const SCOPED = 'wss://scoped.test' as RelayUrl;
@@ -307,7 +389,13 @@ describe('MergedCatalog', () => {
     });
     const seeded = await seedVideos(kit, pool, creator, [fixture('hohmann')]);
     const down = (): Promise<never> => Promise.reject(new Error('relay down'));
-    const failing: NfxSource = { feed: down, search: down, video: down };
+    const failing: NfxSource = {
+      feed: down,
+      search: down,
+      video: down,
+      twinsOf: down,
+      playable: () => true,
+    };
     const log = memoryLogger('debug');
     const merged = new MergedCatalog(new NostrCatalog(() => client), failing, log);
     const page = await merged.feed({ source: 'tags', tags: ['space'] }, null);

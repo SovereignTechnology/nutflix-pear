@@ -31,9 +31,11 @@ export {
 } from './event.js';
 export { NostrClient, NoSignerError, PublishError } from './client.js';
 export {
+  MAX_TWIN_LOOKUP,
   fetchNfxVideo,
   nfxAuthorsFeed,
   nfxTagsFeed,
+  nfxTwinsOf,
   nfxVideoPage,
   searchNfxVideos,
   type NfxReadOptions,

@@ -140,3 +140,25 @@ off means no NFX query, listing, seeding or beacon.
     verified root, and is not deleted (NFX-02 §6). This is rechecked every 10 minutes.
   - The author of each seeded video is recorded when it becomes known, because the store keeps
     files by address only.
+
+## Amendment 2026-10-31: free uploads and twins (slice 5d-4)
+
+- **Free uploads.** Studio allows a price of 0 only while the NFX setting is on.
+  - A free upload always goes to NFX too, so there is no separate choice. A priced upload never
+    does: every boundary still refuses `nfx` on a priced video.
+  - The NIP-71 event is still published, with a price of 0, so legacy clients see the video.
+- **Twins.** An NFX manifest whose one `e` names a NIP-71 event by the same author is that
+  event's copy, and only one of the two is listed.
+  - **The NFX copy wins** when the network's videos can play here (its scoped relays are set,
+    because beacons are read only there) and the NIP-71 video is free. The copy plays from the
+    network's seeders without a wallet. Its comments stay the NIP-71 event's (`legacyId`).
+  - **The NIP-71 video stays** otherwise. A priced one is never undercut by a free copy, and
+    without scoped relays the copy cannot play.
+  - **When the two are pages apart,** a free NIP-71 video is dropped only when its copy is sure
+    to be listed by the same feed: author and subscription feeds, and a tag feed when the copy
+    carries one of its tags. Search pairs within a page only, since a relay's search may not
+    find the copy. Each page asks once, in one bounded `#e` query, for the copies of its free
+    NIP-71 videos.
+- **Paging.** A merged page holds nothing older than the oldest item of a side that has more,
+  so dropping twins never loses a video. A page left empty by twins is stepped past (at most 3
+  times).

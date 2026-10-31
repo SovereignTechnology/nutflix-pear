@@ -382,6 +382,30 @@ describe('Studio — publishing', () => {
     expect(r.get('.nf-studio__drop')).toBeTruthy();
   });
 
+  it('slice 5d-4: a free video needs NFX on, and then always goes to NFX', async () => {
+    const off = adapterWith();
+    const refused = vi.spyOn(off.studio, 'upload');
+    const first = await withForm(off);
+    typeInto(first.r.get('input[name="price"]'), '0');
+    click(first.r.get('button[type="submit"]'));
+    await flush();
+    expect(refused).not.toHaveBeenCalled();
+    expect(first.r.container.textContent).toContain('from 1 to');
+
+    const on = adapterWith();
+    await on.updateSettings({ nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } });
+    const upload = vi.spyOn(on.studio, 'upload');
+    const { r } = await withForm(on);
+    expect(r.get('input[name="price"]').getAttribute('min')).toBe('0');
+    expect(r.all('input[name="nfx"]')).toHaveLength(0); // no choice: free means NFX too
+    typeInto(r.get('input[name="price"]'), '0');
+    expect(r.container.textContent).toContain('Free videos go to the NFX network too');
+    expect(r.get('.nf-studio__preview-kicker').textContent).toContain('Free on NFX');
+    click(r.get('button[type="submit"]'));
+    await flush();
+    expect(upload.mock.calls[0]?.[0]).toMatchObject({ satsPerBlock: 0, nfx: true });
+  });
+
   it('passes a custom thumbnail as thumbnailChoice', async () => {
     const a = adapterWith();
     const upload = vi.spyOn(a.studio, 'upload');

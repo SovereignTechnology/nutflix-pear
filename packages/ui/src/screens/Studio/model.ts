@@ -210,12 +210,18 @@ export interface StudioDraft {
   readonly seeder: string;
   readonly creator: string;
   readonly thumbnail: ThumbnailDraft;
-  /**
-   * Also publish on NFX (ADR 0020). Offered only for a free video (`nfxEligible`); absent =
-   * off.
-   */
-  readonly nfx?: boolean;
 }
+
+/** Slice 5d-4: what Studio knows of the NFX network while drafting. */
+export interface DraftContext {
+  /**
+   * `Settings.nfx.enabled`. Only then can a video be free (a price of 0, issue #15), and a free
+   * video always goes to NFX too: its seeders serve it without a wallet (ADR 0020).
+   */
+  readonly nfxOn: boolean;
+}
+
+const NFX_OFF: DraftContext = { nfxOn: false };
 
 export const EMPTY_DRAFT: StudioDraft = {
   file: undefined,
@@ -251,12 +257,14 @@ export function parseSplit(
   return { seeder: s, creator: c };
 }
 
-export function parsePrice(text: string): number | undefined {
+/** Sats per block from 1 to `PRICE_MAX`, or 0 (free) while NFX is on. */
+export function parsePrice(text: string, ctx: DraftContext = NFX_OFF): number | undefined {
   const n = wholeNumber(text);
+  if (n === 0) return ctx.nfxOn ? 0 : undefined;
   return n !== undefined && n >= 1 && n <= PRICE_MAX ? n : undefined;
 }
 
-export function validateDraft(d: StudioDraft): DraftErrors {
+export function validateDraft(d: StudioDraft, ctx: DraftContext = NFX_OFF): DraftErrors {
   const e: DraftErrors = {};
   if (!d.file) e.file = 'Choose a video file to upload.';
   const title = d.title.trim();
@@ -271,8 +279,11 @@ export function validateDraft(d: StudioDraft): DraftErrors {
     e.tags = `Keep each tag under ${TAG_MAX_CHARS} characters.`;
   }
   if (d.mints.length === 0) e.mints = 'Pick at least one mint viewers can pay at.';
-  if (parsePrice(d.price) === undefined) {
-    e.price = `Enter a whole number of sats from 1 to ${PRICE_MAX.toLocaleString('en-US')}.`;
+  if (parsePrice(d.price, ctx) === undefined) {
+    const max = PRICE_MAX.toLocaleString('en-US');
+    e.price = ctx.nfxOn
+      ? `Enter a whole number of sats from 0 (free) to ${max}.`
+      : `Enter a whole number of sats from 1 to ${max}.`;
   }
   if (parseSplit(d.seeder, d.creator) === undefined) {
     e.split = 'Seeders and creator must be whole percentages that add up to 100.';
@@ -284,20 +295,23 @@ export function validateDraft(d: StudioDraft): DraftErrors {
 }
 
 /**
- * Whether the draft may also go to NFX: free videos only (a price of 0, issue #15), so the free
- * NFX path never undercuts a paid video (ADR 0020). Until free videos can be uploaded (#15) no
- * draft is eligible, and the choice is not shown.
+ * Whether the draft goes to NFX: free videos only (a price of 0, issue #15), so the free NFX path
+ * never undercuts a paid video (ADR 0020). Slice 5d-4: every free one does, and a draft can be
+ * free only while NFX is on (`parsePrice`).
  */
 export function nfxEligible(d: StudioDraft): boolean {
   return wholeNumber(d.price) === 0;
 }
 
 /** The contract input for a valid draft, or `undefined` when `validateDraft` has errors. */
-export function toUploadInput(d: StudioDraft): UploadInput | undefined {
-  const price = parsePrice(d.price);
+export function toUploadInput(
+  d: StudioDraft,
+  ctx: DraftContext = NFX_OFF,
+): UploadInput | undefined {
+  const price = parsePrice(d.price, ctx);
   const split = parseSplit(d.seeder, d.creator);
   if (!d.file || price === undefined || split === undefined) return undefined;
-  if (Object.keys(validateDraft(d)).length > 0) return undefined;
+  if (Object.keys(validateDraft(d, ctx)).length > 0) return undefined;
   return {
     file: d.file.source,
     title: d.title.trim(),
@@ -307,8 +321,8 @@ export function toUploadInput(d: StudioDraft): UploadInput | undefined {
     mints: d.mints,
     satsPerBlock: price as Sats,
     split,
-    // Contracts v8: only for an eligible (free) draft; the host and the worker check it again.
-    ...(d.nfx === true && nfxEligible(d) ? { nfx: true } : {}),
+    // Contracts v8: a free draft only, always (slice 5d-4); the host and the worker check again.
+    ...(price === 0 ? { nfx: true } : {}),
     ...(d.thumbnail.mode === 'custom' && d.thumbnail.image !== undefined
       ? { thumbnailChoice: d.thumbnail.image }
       : {}),

@@ -9,6 +9,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- Free uploads go to NFX (ADR 0020 slice 5d-4).
+  - **In Studio:** while the NFX setting is on, a video can be free (a price of 0), and a free
+    video always goes to the NFX network too.
+  - **One card per video:** when the network can play here (scoped relays set), a free NIP-71
+    video and its NFX copy show as one card, the NFX one, which plays without a wallet. A priced
+    video keeps its card, and its free copy is never listed.
+  - **Core:** `nostr.nfxTwinsOf` finds the same-author NFX copies of NIP-71 events in one
+    bounded query.
 - Free NFX videos play (contracts version 11, ADR 0020 slice 5d-3).
   - **Finding seeders:** `playNfx(addr)` reads the video's live beacons from the network's scoped
     relays. Each must pass core's `parseBeacon`, name this manifest's author and address, and be
@@ -144,6 +152,8 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Fixed
 
+- Merged NIP-71 and NFX feeds no longer skip a video when twins are dropped mid-page. A page
+  stops at the oldest item of a side that has more, and a page left empty steps on.
 - A video request the player drops now ends main's fetch from the worker too. Before, after a
   reload or a quick switch of video, those requests stayed open, holding the 6 connections main
   keeps to the worker, so the next video's requests never reached it and the worker's paid

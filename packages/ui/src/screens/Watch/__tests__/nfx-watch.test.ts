@@ -1,6 +1,7 @@
 /**
- * NfxWatch (contracts v9, ADR 0020): a free NFX video's page shows what it is and says plainly
- * that this build cannot play it. Nothing on it plays, pays, reacts or saves.
+ * NfxWatch (ADR 0020): a free NFX video's page shows what it is (contracts v9) and plays it, free,
+ * from its seeders (v11). Nothing on it pays, reacts or saves; a same-author NIP-71 twin's
+ * comments show (slice 5d-4).
  */
 import { act, createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -75,6 +76,32 @@ describe('NfxWatch', () => {
     expect(play).not.toHaveBeenCalled();
     expect(stats).not.toHaveBeenCalled();
     expect(comments).not.toHaveBeenCalled();
+  });
+
+  it("slice 5d-4: a NIP-71 video's NFX copy shows that event's comments, same author only", async () => {
+    const legacy = mocks.VIDEOS.find((v) => v.author !== NFX.author)!;
+    const same = new MockNetworkAdapter({ nfx: true });
+    vi.spyOn(same, 'nfxVideo').mockResolvedValue({
+      ...NFX,
+      author: legacy.author,
+      legacyId: legacy.id,
+    });
+    const asked = vi.spyOn(same, 'comments');
+    const first = mount(same);
+    await flush();
+    expect(first.r.get('.nf-watch__comments')).toBeTruthy();
+    expect(asked.mock.calls[0]?.[0]).toBe(legacy.id);
+    first.r.unmount();
+    mounted = undefined;
+
+    // Another author's event: no thread at all, and nothing asked for it.
+    const other = new MockNetworkAdapter({ nfx: true });
+    vi.spyOn(other, 'nfxVideo').mockResolvedValue({ ...NFX, legacyId: legacy.id });
+    const notAsked = vi.spyOn(other, 'comments');
+    const { r } = mount(other);
+    await flush();
+    expect(r.container.querySelector('.nf-watch__comments')).toBeNull();
+    expect(notAsked).not.toHaveBeenCalled();
   });
 
   it('switching quality closes the session and opens the other rendition', async () => {
