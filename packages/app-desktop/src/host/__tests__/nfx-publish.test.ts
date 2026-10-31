@@ -12,7 +12,7 @@ import type {
   UnixSeconds,
   VideoManifest,
 } from '@sovit/core';
-import { nfx } from '@sovit/core';
+import { NFX_NETWORKS, nfx } from '@sovit/core';
 
 import { NFX_DEFAULT_NAMESPACE } from '../../worker/studio/nfx.js';
 import type { NfxStored } from '../nfx/publish.js';
@@ -66,8 +66,10 @@ const stored = (over: Partial<NfxStored> = {}): NfxStored => ({
 
 describe('nfxManifestFor', () => {
   it('announces on the network the worker packages for', () => {
-    // Two constants until slice 5's settings: this pins them together (a test is not bundled).
+    // Contracts v10 speaks one network, so the worker and the host each name it as a constant;
+    // this pins both to the contract's (a test is not bundled).
     expect(NFX_PUBLISH_NAMESPACE).toBe(NFX_DEFAULT_NAMESPACE);
+    expect(NFX_NETWORKS).toEqual([NFX_PUBLISH_NAMESPACE]);
   });
 
   it('builds the NFX-02 tags, the thumb, and one `e` link back to the legacy event', () => {

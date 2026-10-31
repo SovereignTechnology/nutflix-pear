@@ -29,6 +29,7 @@ import type {
   MintUrl,
   NetworkAdapter,
   NfxAddress,
+  NfxSettings,
   NfxVideo,
   Notification,
   NostrEventId,
@@ -149,18 +150,6 @@ export interface DesktopAdapterOptions {
   readonly now?: () => UnixSeconds;
   /** Relay wait per query, ms. */
   readonly maxWaitMs?: number;
-  /**
-   * Slice 4a: the NFX-04 scoped relays of a namespace, where a free upload's manifest also goes
-   * (beside the write relays). None in production until slice 5's settings; tests set it.
-   */
-  readonly nfxScopedRelays?: (namespace: string) => readonly RelayUrl[];
-  /**
-   * Slice 4b (ADR 0020): the NFX network whose free videos the catalogue lists beside the NIP-71
-   * ones, read from the read relays first and `nfxScopedRelays` as the fallback. Absent: no NFX
-   * source and no NFX query at all, as in production until slice 5's settings choose a network.
-   * A namespace NFX-01 refuses throws at construction.
-   */
-  readonly nfxCatalogNamespace?: string;
 }
 
 /** Per page in the in-memory paged lists (history). */
@@ -195,8 +184,10 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     readonly signer: unknown;
     readonly client: nostr.NostrClient;
   } | null = null;
-  /** The relay catalogue: NIP-71, merged with one NFX network when `nfxCatalogNamespace` is set. */
-  private readonly nostrCatalog: CatalogSource;
+  /** The NIP-71 relay catalogue. */
+  private readonly nip71Catalog: NostrCatalog;
+  /** Contracts v10: the merged catalogue for the current `Settings.nfx`, rebuilt when it changes. */
+  private merged: { readonly nfx: NfxSettings; readonly catalog: CatalogSource } | null = null;
   private readonly seederListeners = new Set<(s: SeederStatus) => void>();
   /** uploadId → the owner (webContents) that started it. */
   private readonly uploads = new Map<string, { readonly owner: number }>();
@@ -218,20 +209,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     );
     this.now = opts.now ?? nostr.nowSeconds;
     this.wallet = opts.wallet.wallet;
-    const nip71 = new NostrCatalog(() => this.client());
-    const ns = opts.nfxCatalogNamespace;
-    this.nostrCatalog =
-      ns === undefined
-        ? nip71
-        : new MergedCatalog(
-            nip71,
-            new NfxCatalog(
-              () => this.client(),
-              ns,
-              () => opts.nfxScopedRelays?.(ns) ?? [],
-            ),
-            this.log.child('nfx-catalog'),
-          );
+    this.nip71Catalog = new NostrCatalog(() => this.client());
     this.wallet.onChange((e) => {
       if (e.type === 'balance') this.logAutoTopUpDue(e.mint, e.balance);
     });
@@ -260,7 +238,32 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   }
 
   private catalog(): CatalogSource {
-    return this.o.fixtures ?? this.nostrCatalog;
+    return this.o.fixtures ?? this.relayCatalog();
+  }
+
+  /**
+   * The relay catalogue: NIP-71, merged with the NFX network when `Settings.nfx` is enabled
+   * (contracts v10, ADR 0020). Off, it makes no NFX query at all.
+   */
+  private relayCatalog(): CatalogSource {
+    const nfx = this.o.settings.get().nfx;
+    if (nfx === undefined || !nfx.enabled) return this.nip71Catalog;
+    if (this.merged?.nfx !== nfx) {
+      const source = new NfxCatalog(
+        () => this.client(),
+        nfx.network,
+        () => nfx.scopedRelays,
+      );
+      const catalog = new MergedCatalog(this.nip71Catalog, source, this.log.child('nfx-catalog'));
+      this.merged = { nfx, catalog };
+    }
+    return this.merged.catalog;
+  }
+
+  /** Contracts v10: the scoped relays of `namespace` while NFX is on for it; otherwise none. */
+  private nfxScopedRelays(namespace: string): readonly RelayUrl[] {
+    const nfx = this.o.settings.get().nfx;
+    return nfx?.enabled === true && nfx.network === namespace ? nfx.scopedRelays : [];
   }
 
   /** L1 errors → the prefixes the screens classify by. */
@@ -287,7 +290,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   /** A catalogue read: the fixture catalogue needs no relay. */
   private async fromCatalog<T>(fn: (cat: CatalogSource) => Promise<T>): Promise<T> {
     if (this.o.fixtures) return fn(this.o.fixtures);
-    return this.read(() => fn(this.nostrCatalog));
+    return this.read(() => fn(this.relayCatalog()));
   }
 
   /** A signed write. The signer check comes first: nothing is fetched or built without one. */
@@ -422,7 +425,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     return this.fromCatalog((cat) => cat.video(id));
   }
 
-  /** Contracts v9: `null` unless the catalogue lists an NFX network (`nfxCatalogNamespace`). */
+  /** Contracts v9: `null` unless the catalogue lists an NFX network (`Settings.nfx`). */
   nfxVideo(addr: NfxAddress): Promise<NfxVideo | null> {
     return this.fromCatalog((cat) => cat.nfxVideo(addr));
   }
@@ -903,7 +906,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
         if (me !== legacy.author) return null;
         const relays = nfxManifestRelays(
           c.writeRelays,
-          this.o.nfxScopedRelays?.(draft.manifest.addr.namespace.toString()) ?? [],
+          this.nfxScopedRelays(draft.manifest.addr.namespace.toString()),
         );
         const report = await c.publish(draft.event, relays);
         return { report, relays: relays.length };

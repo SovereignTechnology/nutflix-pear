@@ -104,3 +104,17 @@ data surviving.
 Readers follow NFX-02 §4 (the current revision; one more than 15 minutes ahead is ignored),
 NFX-02 §6 (a valid deletion by the author withdraws the manifest), and NFX-04 §4 (public relays
 first, scoped relays as the fallback).
+
+## Amendment 2026-10-31: the NFX setting (slice 5a)
+
+Taking part in an NFX network is a user setting, contracts version 10. It is off by default, and
+off means no NFX query, listing, seeding or beacon.
+- **One network in Phase 1:** `nfx:testnet:1`, the only member of `NFX_NETWORKS`.
+- **Scoped relays:**
+  - `wss://`, or `ws://` to a loopback address only, so a local node's embedded relay (which nfxd
+    serves without TLS) can be used. Beacons never leave this computer in cleartext.
+  - At most 8, and unique.
+  - Not checked for private addresses: a scoped relay on the LAN or a tailnet is a legitimate
+    setup, the same rule as for ordinary relays.
+- **NIP-66 discovery** (kind 30166) waits until someone publishes it; nfxd does not.
+

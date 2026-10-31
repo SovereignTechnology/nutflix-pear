@@ -434,7 +434,7 @@ describe("slice 4a: a free upload's NFX manifest (kind 38504)", () => {
     r = await rig({
       flags: { devMocks: true },
       identity: new SignerIdentity(viewer),
-      nfxScopedRelays: (ns) => (ns === 'nfx:testnet:1' ? [SCOPED] : []),
+      nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [SCOPED] },
       ...(opts.pool === undefined ? {} : { pool: opts.pool }),
       worker: {
         handlers: {

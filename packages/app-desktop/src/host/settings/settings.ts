@@ -47,6 +47,7 @@ const SETTINGS_KEYS: readonly (keyof Settings)[] = [
   'loadRemoteImages',
   'theme',
   'autoTopUp',
+  'nfx',
 ];
 
 /** True when `patch` is a valid `Partial<Settings>` — the same guard main and the host run on IPC. */
@@ -56,7 +57,9 @@ export function isSettingsPatch(patch: unknown): patch is Partial<Settings> {
 
 /**
  * A stored settings object → `Settings`, or `null`. Unknown keys (e.g. written by a newer
- * build) are ignored; missing keys take their defaults; every present key must be valid.
+ * build) are ignored; missing keys take their defaults; every present key must be valid —
+ * except `nfx` (contracts v10), which is checked on its own: an invalid one (say, a network a
+ * newer build added) is dropped, so NFX is off, and leaves the rest of the file standing.
  */
 export function parseStoredSettings(raw: unknown): StoredSettings | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
@@ -67,8 +70,11 @@ export function parseStoredSettings(raw: unknown): StoredSettings | null {
   const picked: Record<string, unknown> = {};
   for (const k of SETTINGS_KEYS)
     if (Object.prototype.hasOwnProperty.call(s, k)) picked[k] = (s as Record<string, unknown>)[k];
-  if (!isSettingsPatch(picked)) return null;
-  return { v: FILE_V, settings: { ...DEFAULT_SETTINGS, ...picked } };
+  const { nfx, ...rest } = picked;
+  if (!isSettingsPatch(rest)) return null;
+  const nfxPatch: unknown = nfx === undefined ? {} : { nfx };
+  const kept = isSettingsPatch(nfxPatch) ? nfxPatch : {};
+  return { v: FILE_V, settings: { ...DEFAULT_SETTINGS, ...rest, ...kept } };
 }
 
 /** What `settings.json` holds. */

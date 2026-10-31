@@ -29,6 +29,7 @@ import { AppearanceSection } from './AppearanceSection.js';
 import { PlaybackSection } from './PlaybackSection.js';
 import { RecoverySection, type RecoveryControls } from './RecoverySection.js';
 import type { TopUpHoldControls } from './TopUpHolds.js';
+import { NfxSection } from './NfxSection.js';
 import { RelaysSection } from './RelaysSection.js';
 import { SeedingSection, useSeederStatus } from './SeedingSection.js';
 import { SignerSection, useSigner } from './SignerSection.js';
@@ -37,7 +38,7 @@ import { describeLoadError, type SignerKind } from './model.js';
 import { useSettingsStore, type FailureNotice } from './useSettingsStore.js';
 
 export type SettingsSectionId =
-  'account' | 'appearance' | 'playback' | 'relays' | 'mints' | 'recovery' | 'seeding';
+  'account' | 'appearance' | 'playback' | 'relays' | 'mints' | 'recovery' | 'seeding' | 'nfx';
 
 export const SETTINGS_SECTIONS: readonly {
   readonly id: SettingsSectionId;
@@ -50,6 +51,7 @@ export const SETTINGS_SECTIONS: readonly {
   { id: 'mints', label: 'Mints and top-up' },
   { id: 'recovery', label: 'Recovery phrase' },
   { id: 'seeding', label: 'Seeding' },
+  { id: 'nfx', label: 'NFX network' },
 ];
 
 export interface SettingsProps extends ScreenProps {
@@ -285,6 +287,7 @@ export function Settings({
           navigate={navigate}
           headingRef={refFor('seeding')}
         />
+        <NfxSection id={sectionId('nfx')} {...common} headingRef={refFor('nfx')} />
       </>
     );
   };

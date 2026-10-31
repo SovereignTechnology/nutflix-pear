@@ -68,6 +68,43 @@ export function validateRelayUrl(
   return ok(url as RelayUrl);
 }
 
+/** Contracts v10: core's `NFX_NETWORKS[0]`, the one NFX network (the UI imports no core runtime code; a test pins the two). */
+export const UI_NFX_NETWORK = 'nfx:testnet:1';
+/** Contracts v10: core's `MAX_NFX_SCOPED_RELAYS`. */
+export const UI_MAX_NFX_SCOPED_RELAYS = 8;
+
+const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', '[::1]', 'localhost'];
+
+/**
+ * Scoped relay check for Settings › NFX (NFX-04). `wss://` as for any relay, or `ws://` to this
+ * computer only (a local node's embedded relay, which nfxd serves without TLS). Beacons go to
+ * these relays, so `ws://` anywhere else would put them on the network in cleartext.
+ */
+export function validateScopedRelayUrl(
+  input: string,
+  existing: readonly string[] = [],
+): Validation<RelayUrl> {
+  const raw = input.trim();
+  if (raw === '') return fail('Enter a relay address, for example wss://relay.example');
+  if (raw.length > MAX_URL_LENGTH) return fail('That address is too long to be a relay.');
+  if (/\s/.test(raw)) return fail('A relay address cannot contain spaces.');
+  const scheme = schemeOf(raw);
+  if (scheme === 'ws') {
+    const u = parse(raw);
+    if (!u || !LOOPBACK_HOSTS.includes(u.hostname)) {
+      return fail('Use wss:// — ws:// is allowed only for a relay on this computer.');
+    }
+    if (u.username !== '' || u.password !== '' || u.hash !== '' || u.search !== '') {
+      return fail('That is not a valid relay address.');
+    }
+    const url = normaliseRelayUrl(raw);
+    if (existing.some((e) => normaliseRelayUrl(e) === url))
+      return fail('That relay is already in the list.');
+    return ok(url as RelayUrl);
+  }
+  return validateRelayUrl(raw, existing);
+}
+
 /** `https://Mint.Example/` → `https://mint.example` (contract: `MintUrl` has no trailing slash). */
 export function normaliseMintUrl(input: string): string {
   const u = parse(input.trim());

@@ -64,6 +64,31 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parsed?.settings).toEqual({ ...DEFAULT_SETTINGS, theme: 'dark' });
   });
 
+  it('contracts v10: a valid `nfx` is kept; an invalid one is dropped alone (NFX off)', () => {
+    const nfx = {
+      enabled: true,
+      network: 'nfx:testnet:1',
+      scopedRelays: ['wss://scoped.example', 'ws://127.0.0.1:7777'],
+    };
+    expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      theme: 'dark',
+      nfx,
+    });
+    // A network a newer build added, or a cleartext relay off this computer: only `nfx` goes.
+    for (const bad of [
+      { ...nfx, network: 'nfx:mainnet:1' },
+      { ...nfx, scopedRelays: ['ws://scoped.example'] },
+      'on',
+    ]) {
+      const parsed = parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx: bad } });
+      expect(parsed?.settings).toEqual({ ...DEFAULT_SETTINGS, theme: 'dark' });
+    }
+    // Every other key still fails the whole file, as before.
+    expect(parseStoredSettings({ v: 1, settings: { theme: 'neon', nfx } })).toBeNull();
+    expect(DEFAULT_SETTINGS.nfx).toBeUndefined();
+  });
+
   it('refuses an invalid patch and keeps the old settings (nothing written)', async () => {
     const s = new SettingsStore(dir, memoryLogger());
     await s.load();
