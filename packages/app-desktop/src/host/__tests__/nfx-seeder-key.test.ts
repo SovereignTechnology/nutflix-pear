@@ -82,7 +82,7 @@ describe('NfxSeederKey', () => {
     expect(ev.pubkey).toBe(key.pubkey);
     expect(ev.kind).toBe(20464);
     await expect(
-      key.signBeacon({ kind: 1 as never, created_at: 1, tags: [], content: 'hi' }),
+      key.signBeacon({ kind: 1, created_at: 1, tags: [], content: 'hi' }),
     ).rejects.toThrow(/beacons only/);
   });
 

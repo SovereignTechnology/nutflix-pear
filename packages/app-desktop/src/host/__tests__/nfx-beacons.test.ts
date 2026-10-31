@@ -3,6 +3,7 @@
  * serves, only for a video whose current manifest by the recorded author names the stored root,
  * and each one passes core's `parseBeacon` (free, `price_hint` 0, `chunks` all, TTL 120 s).
  */
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +18,6 @@ import type {
 } from '@sovit/core';
 import { nfx } from '@sovit/core';
 import { hyperdhtEndpoint } from '@sovit/seeder';
-import DHT from 'hyperdht';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { memoryLogger } from '../log.js';
@@ -33,6 +33,15 @@ const ROOT = 'ab'.repeat(32) as Sha256Hex;
 const VIDEO = `${NS}:nutflix-${'c'.repeat(32)}`;
 const CREATOR = 'd'.repeat(64) as NostrPubkey;
 const ADDRESS = `38504:${CREATOR}:${VIDEO}` as NfxAddress;
+
+/** An Ed25519 key pair in sodium's form (secret = seed ‖ public), as a HyperDHT key is. */
+function peerKeyPair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const jwk = privateKey.export({ format: 'jwk' });
+  const seed = Buffer.from(jwk.d!, 'base64url');
+  const pub = Buffer.from(jwk.x!, 'base64url');
+  return { publicKey: new Uint8Array(pub), secretKey: new Uint8Array(Buffer.concat([seed, pub])) };
+}
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -57,7 +66,7 @@ async function setup(over: Partial<NfxBeaconDeps> = {}): Promise<{
   manifests: NfxAddress[];
 }> {
   const key = await seederKey();
-  const peer = DHT.keyPair();
+  const peer = peerKeyPair();
   const sent: { event: NostrEvent; relays: readonly RelayUrl[] }[] = [];
   const manifests: NfxAddress[] = [];
   const beacons = new NfxBeacons({

@@ -28,9 +28,9 @@ const MAX_SEALED_FILE_BYTES = 8192;
 /** What the user's signer is asked for: sealing the passphrase to the user's own key. */
 export type SealingSigner = Pick<Signer, 'nip44Encrypt' | 'nip44Decrypt'>;
 
-/** A kind-20464 draft; anything else is refused. */
+/** A beacon draft: `kind` is checked at run time, and anything but 20464 is refused. */
 export interface BeaconDraft {
-  readonly kind: typeof nfx.KIND_BEACON;
+  readonly kind: number;
   readonly created_at: number;
   readonly tags: readonly (readonly string[])[];
   readonly content: string;

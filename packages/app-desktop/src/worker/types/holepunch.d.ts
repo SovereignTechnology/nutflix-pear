@@ -172,6 +172,7 @@ declare module 'hyperblobs' {
 
 declare module 'hyperswarm' {
   import type { EventEmitter } from 'node:events';
+  import type DHT from 'hyperdht';
   import type { ReplicationStream } from 'hypercore';
 
   export interface PeerInfo {
@@ -208,7 +209,7 @@ declare module 'hyperswarm' {
     constructor(opts?: HyperswarmOptions);
     readonly keyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
     /** The swarm's DHT node; NFX-12 servers listen on it too (slice 5b). */
-    readonly dht: import('hyperdht').default;
+    readonly dht: DHT;
     readonly peers: ReadonlyMap<string, PeerInfo>;
     readonly connections: ReadonlySet<SwarmConnection>;
     readonly destroyed: boolean;

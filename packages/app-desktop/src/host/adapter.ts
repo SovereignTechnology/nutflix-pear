@@ -327,7 +327,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     if (nfx?.enabled !== true || signer === undefined) return null;
     const user = await signer.getPublicKey();
     let held = this.seederKey;
-    if (held === null || held.user !== user || held.network !== nfx.network) {
+    if (held?.user !== user || held.network !== nfx.network) {
       if (held !== null) void held.key.then((k) => k.lock()).catch(() => undefined);
       const key = NfxSeederKey.open({
         dir,

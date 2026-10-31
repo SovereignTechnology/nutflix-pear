@@ -91,8 +91,9 @@ export class NfxBeacons {
   /** One round (rounds never overlap); never throws. */
   round(): Promise<BeaconRound> {
     this.running ??= this.doRound()
-      .catch((err: unknown): BeaconRound => {
-        this.d.log.warn('nfx beacons: the round failed', { error: err });
+      .catch((): BeaconRound => {
+        // A worker or relay failure; the next round tries again. No fields: nothing to redact.
+        this.d.log.warn('nfx beacons: the round failed');
         return { published: 0 };
       })
       .finally(() => {
@@ -128,7 +129,7 @@ export class NfxBeacons {
     const now = this.d.now();
     const held = this.checked.get(address);
     if (held !== undefined && now - held.at < MANIFEST_CHECK_S) return held.ok;
-    let ok = false;
+    let ok: boolean;
     try {
       const m = await this.d.manifest(address);
       ok = m !== null && m.root === root;
