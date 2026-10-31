@@ -29,6 +29,7 @@ import type {
   MintUrl,
   NetworkAdapter,
   NfxAddress,
+  NfxPlaySession,
   NfxSettings,
   NfxVideo,
   Notification,
@@ -85,6 +86,7 @@ import { NfxCatalog } from './catalog/nfx-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
 import { NfxBeacons } from './nfx/beacons.js';
+import { NfxHostSession, beaconFilter, beaconPeers, videoOf } from './nfx/play.js';
 import type { NfxStored } from './nfx/publish.js';
 import { SeededVideos } from './nfx/seeded.js';
 import { NfxSeederKey } from './nfx/seeder-key.js';
@@ -203,6 +205,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly pendingNfx = new PendingNfxUploads();
   /** Slice 5c: whose manifest each seeded NFX video is (with `nfxDir`). */
   private readonly seeded: SeededVideos | null;
+  /** Slice 5d: the free NFX play sessions, by sid (each with its owner). */
+  private readonly nfxSessions = new Map<string, NfxHostSession>();
   /** Slice 5c: the beacon publisher (with `nfxDir`). */
   private readonly beacons: NfxBeacons | null;
   /** Slice 5c: the seeder key of the current user and network, opened on first need. */
@@ -703,6 +707,81 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     return this.openSession(0, videoId, rendition);
   }
 
+  /** Contracts v11: a free NFX session for an in-process caller (owner 0). */
+  async playNfx(addr: NfxAddress, rendition?: string): Promise<NfxPlaySession> {
+    const s = await this.openNfxSession(0, addr, rendition);
+    return {
+      videoId: s.videoId,
+      rendition: s.rendition,
+      renditions: s.renditions,
+      source: s.source,
+      close: () => s.close(),
+    };
+  }
+
+  /**
+   * Slice 5d (ADR 0020): opens a free NFX session for `owner` from the seeders the video's live
+   * beacons name on the network's scoped relays. No balance check and no money plane: Phase 1
+   * plays free videos only, and nothing here can pay. `no-seeders` when no beacon names one.
+   */
+  async openNfxSession(
+    owner: number,
+    addr: NfxAddress,
+    rendition?: string,
+  ): Promise<NfxHostSession> {
+    const settings = this.o.settings.get();
+    const scoped = settings.nfx?.enabled === true ? settings.nfx.scopedRelays : [];
+    const video = await this.nfxVideo(addr);
+    const d = videoOf(addr);
+    if (video === null || d === null) fail('not-found', 'no such free NFX video');
+    const events =
+      scoped.length === 0 ? [] : await this.read((c) => c.query(beaconFilter(video), scoped));
+    const peers = beaconPeers(video, events, this.now());
+    if (peers.length === 0) fail('no-seeders', 'nobody seeding this NFX video is online');
+    const sid = this.hex(16) as HostPlaySession['sid'];
+    const token = this.hex(32);
+    const res = await this.o.worker('nfx.play.open', {
+      sid,
+      video: d,
+      root: video.root,
+      segs: video.segs,
+      ...(rendition === undefined ? {} : { rendition }),
+      peers,
+      prefetchSeconds: settings.prefetchSeconds,
+    });
+    const s = new NfxHostSession({
+      sid,
+      owner,
+      token,
+      videoId: addr,
+      rendition: res.rendition,
+      renditions: res.renditions,
+      close: (x) => this.endNfxSession(x, true),
+    });
+    this.nfxSessions.set(sid, s);
+    // Main learns the link before the reply that names its token (as for paid sessions).
+    this.o.mediaLink(token, res.link);
+    return s;
+  }
+
+  /** Slice 5d: closes `owner`'s NFX session `sid`; a no-op for any other (idempotent). */
+  async closeNfxSession(owner: number, sid: string): Promise<void> {
+    const s = this.nfxSessions.get(sid);
+    if (s?.owner === owner) await s.close();
+  }
+
+  /** Slice 5d: a webContents went away — its NFX sessions go too. */
+  async closeNfxOwner(owner: number): Promise<void> {
+    const mine = [...this.nfxSessions.values()].filter((s) => s.owner === owner);
+    await Promise.all(mine.map((s) => s.close()));
+  }
+
+  private async endNfxSession(s: NfxHostSession, viaWorker: boolean): Promise<void> {
+    this.nfxSessions.delete(s.sid);
+    this.o.mediaLink(s.linkToken, null);
+    if (viaWorker) await this.o.worker('nfx.play.close', { sid: s.sid }).catch(() => undefined);
+  }
+
   /**
    * Opens a paid session for `owner` (a webContents id; 0 = in-process). Backstop: every other
    * unpaused session of the same owner is paused before the worker opens this one, and again
@@ -1171,11 +1250,16 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   /** The worker died: its sessions died with it (links revoked, nothing asked of it). */
   onWorkerDown(): void {
     this.sessions.dropAll();
+    // Slice 5d: the worker's NFX sessions died with it; revoke their links.
+    for (const s of [...this.nfxSessions.values()]) void this.endNfxSession(s, false);
   }
 
   /** Fix round 4 (quit): close every play session through the worker — each tail paid first. */
-  closeAllSessions(): Promise<void> {
-    return this.sessions.closeAll();
+  async closeAllSessions(): Promise<void> {
+    await Promise.all([
+      this.sessions.closeAll(),
+      ...[...this.nfxSessions.values()].map((s) => s.close()),
+    ]);
   }
 
   /**

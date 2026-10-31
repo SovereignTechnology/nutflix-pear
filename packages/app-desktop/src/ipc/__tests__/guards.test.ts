@@ -87,8 +87,8 @@ describe('validateArgs — coverage', () => {
     // 49 + the five `desktop.signer.*` shell methods (ADR 0013) + `setProfilePicture` (v6, ADR 0015)
     // + `wallet.inputFeePpk` (v6: mint fees shown in the price) + the four
     // `desktop.wallet.recovery.*` shell methods (ADR 0016) + `desktop.wallet.topUp.holds` and
-    // `.resume` (R5-R1) + `nfxVideo` (contracts v9, ADR 0020).
-    expect(METHODS.length).toBe(63);
+    // `.resume` (R5-R1) + `nfxVideo` (contracts v9, ADR 0020) + `playNfx` (v11).
+    expect(METHODS.length).toBe(64);
   });
 
   it('D3: wallet.send / wallet.receive (and the engine-internal wallet calls) are not methods', () => {

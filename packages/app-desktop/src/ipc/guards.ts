@@ -533,6 +533,7 @@ export const validateArgs: { readonly [M in Method]: Guard<MethodTable[M][0]> } 
   'library.savePlaylist': tuple([isSavePlaylist]),
   'library.liked': tuple([]),
   play: tuple([isEventId], [isLabel]),
+  playNfx: tuple([isNfxAddress], [isLabel]),
   image: tuple([isImageSource], [isSha256, int(1, LIMITS.maxThumbnailBytes)]),
   'session.pause': tuple([isSessionId]),
   'session.resume': tuple([isSessionId]),

@@ -87,5 +87,8 @@
  *       (`enabled`, `network`, `scopedRelays`), `NFX_NETWORKS` (`nfx:testnet:1` only) and
  *       `MAX_NFX_SCOPED_RELAYS` (8). Absent or not `enabled` = no NFX activity. Every v9 consumer
  *       compiles.
+ *  11 — 2026-10-31 (ADR 0020, Phase 1 slice 5d). Additive: `NetworkAdapter.playNfx(addr,
+ *       rendition?)` → `NfxPlaySession` (`videoId`, `rendition`, `renditions`, `source`, `close`) and
+ *       `NfxRenditionInfo`. A free session: no `PricePolicy`, spend or peers; `play` is unchanged.
  */
-export const CONTRACTS_VERSION = 10 as const;
+export const CONTRACTS_VERSION = 11 as const;

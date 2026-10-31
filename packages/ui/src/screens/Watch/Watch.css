@@ -1191,3 +1191,34 @@
   background: none;
   cursor: pointer;
 }
+
+.nf-nfxwatch__start {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--nf-space-8);
+}
+
+.nf-nfxwatch__note {
+  margin: 0;
+  font-size: var(--nf-text-sm);
+  color: var(--nf-color-text-secondary);
+}
+
+.nf-nfxwatch__player {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-space-8);
+}
+
+.nf-nfxwatch__video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--nf-radius-lg);
+  background: #000;
+}
+
+.nf-nfxwatch__quality {
+  align-self: flex-end;
+  font-size: var(--nf-text-sm);
+}

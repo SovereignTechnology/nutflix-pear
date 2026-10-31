@@ -17,6 +17,16 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     video keeps its card, and its free copy is never listed.
   - **Core:** `nostr.nfxTwinsOf` finds the same-author NFX copies of NIP-71 events in one
     bounded query.
+- Free NFX videos play (contracts version 11, ADR 0020 slice 5d-3).
+  - **Finding seeders:** `playNfx(addr)` reads the video's live beacons from the network's scoped
+    relays. Each must pass core's `parseBeacon`, name this manifest's author and address, and be
+    free, and only each seeder's newest counts.
+  - **Opening:** the host passes those seeders to the worker's `nfx.play.open` and hands main the
+    media link.
+  - **No money:** there is no balance check, and the session never reaches the money plane.
+  - **On the Watch page:** NfxWatch has *Play — free*, the video with a quality picker, and
+    *No seeders online* with Retry.
+  - **Closing:** a session closes with the page, its webContents, or the worker.
 - The worker plays a free NFX video (ADR 0020 slice 5d-2), as `nfx.play.open` / `nfx.play.close`.
   - **What it does:** it dials the seeders it is given over HyperDHT and fetches the hash list,
     the playlist, the init and the first segment, each file sha256-checked. It then plans layout C
