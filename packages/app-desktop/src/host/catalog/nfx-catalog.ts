@@ -7,7 +7,15 @@
  *
  * Built only while `Settings.nfx` is enabled (contracts v10); off by default.
  */
-import type { FeedQuery, NfxAddress, NfxVideo, NostrPubkey, Page, RelayUrl } from '@sovit/core';
+import type {
+  FeedQuery,
+  NfxAddress,
+  NfxVideo,
+  NostrEventId,
+  NostrPubkey,
+  Page,
+  RelayUrl,
+} from '@sovit/core';
 import { nfx, nostr } from '@sovit/core';
 import { FEED_PAGE, type SearchQuery } from './catalog.js';
 
@@ -17,6 +25,18 @@ export interface NfxSource {
   search(q: SearchQuery): Promise<Page<NfxVideo>>;
   /** `null` for an address outside this source's network. */
   video(addr: NfxAddress): Promise<NfxVideo | null>;
+  /**
+   * Slice 5d-4: the same-author NFX copies of these NIP-71 events (one bounded query), from the
+   * read relays only — where a feed finds a copy — so a copy found here is one a feed lists.
+   */
+  twinsOf(
+    legacy: readonly { readonly id: NostrEventId; readonly author: NostrPubkey }[],
+  ): Promise<NfxVideo[]>;
+  /**
+   * Slice 5d-4: whether this network's videos can play here, which needs its scoped relays (the
+   * only place beacons are read). The catalog prefers an NFX copy only when it can.
+   */
+  playable(): boolean;
 }
 
 export class NfxCatalog implements NfxSource {
@@ -101,6 +121,19 @@ export class NfxCatalog implements NfxSource {
         }),
       (p) => p.items.length === 0,
     );
+  }
+
+  twinsOf(
+    legacy: readonly { readonly id: NostrEventId; readonly author: NostrPubkey }[],
+  ): Promise<NfxVideo[]> {
+    if (legacy.length === 0) return Promise.resolve([]);
+    // Not `publicFirst`: a copy only the scoped relays hold is missed by a feed whose read relays
+    // list other NFX videos, and then its NIP-71 video must stay (a duplicate, never a gap).
+    return nostr.nfxTwinsOf(this.client(), this.namespace, legacy);
+  }
+
+  playable(): boolean {
+    return this.scopedRelays().length > 0;
   }
 
   video(addr: NfxAddress): Promise<NfxVideo | null> {

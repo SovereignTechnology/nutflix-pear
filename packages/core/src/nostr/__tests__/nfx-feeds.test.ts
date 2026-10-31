@@ -4,11 +4,12 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { NfxAddress, NostrEvent } from '../../contracts/index.js';
+import type { NfxAddress, NostrEvent, NostrEventId } from '../../contracts/index.js';
 import {
   fetchNfxVideo,
   nfxAuthorsFeed,
   nfxTagsFeed,
+  nfxTwinsOf,
   nfxVideoPage,
   searchNfxVideos,
 } from '../nfx-feeds.js';
@@ -171,5 +172,50 @@ describe('fetchNfxVideo', () => {
     expect(await fetchNfxVideo(r.client, a)).toBeNull();
     expect(await fetchNfxVideo(r.client, addr(creator.pubkey, 'never-published'))).toBeNull();
     expect(await fetchNfxVideo(r.client, 'not-an-address' as NfxAddress)).toBeNull();
+  });
+});
+
+describe('nfxTwinsOf (slice 5d-4)', () => {
+  const legacyId = (n: number): NostrEventId => String(n).repeat(64).slice(0, 64) as NostrEventId;
+
+  it('finds the same-author copies of the given events in one bounded query', async () => {
+    const r = rig();
+    const creator = new TestSigner();
+    const other = new TestSigner();
+    const twin = await sign(creator, {
+      ...manifestDraft('twin', T0 - 20),
+      tags: [...manifestDraft('twin', T0 - 20).tags, ['e', legacyId(1)]],
+    });
+    // Another author's link to the same event is not a twin; nor is a copy of an event not asked.
+    const impostor = await sign(other, {
+      ...manifestDraft('impostor', T0 - 10),
+      tags: [...manifestDraft('impostor', T0 - 10).tags, ['e', legacyId(1)]],
+    });
+    const unasked = await sign(creator, {
+      ...manifestDraft('unasked', T0 - 5),
+      tags: [...manifestDraft('unasked', T0 - 5).tags, ['e', legacyId(2)]],
+    });
+    for (const ev of [twin, impostor, unasked]) r.pool.store(ev);
+    const query = vi.spyOn(r.pool, 'query');
+    const got = await nfxTwinsOf(r.client, NS, [
+      { id: legacyId(1), author: creator.pubkey },
+      { id: legacyId(3), author: creator.pubkey },
+    ]);
+    expect(got.map((v) => v.id)).toEqual([addr(creator.pubkey, 'twin')]);
+    expect(got[0]?.legacyId).toBe(legacyId(1));
+    const [first] = query.mock.calls.map((c) => c[1]);
+    expect(first).toMatchObject({
+      kinds: [38504],
+      authors: [creator.pubkey],
+      '#n': [NS],
+      '#e': [legacyId(1), legacyId(3)],
+    });
+  });
+
+  it('asks nothing for no events', async () => {
+    const r = rig();
+    const query = vi.spyOn(r.pool, 'query');
+    expect(await nfxTwinsOf(r.client, NS, [])).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
   });
 });

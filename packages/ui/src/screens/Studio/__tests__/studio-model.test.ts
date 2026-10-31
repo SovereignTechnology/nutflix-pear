@@ -166,10 +166,19 @@ describe('draft → UploadInput', () => {
     expect(nfxEligible({ ...draft, price: '0' })).toBe(true);
     expect(nfxEligible({ ...draft, price: ' 0 ' })).toBe(true);
     expect(nfxEligible({ ...draft, price: '00x' })).toBe(false);
-    // A priced draft drops a stale choice instead of sending it.
-    expect(toUploadInput({ ...draft, nfx: true })).not.toHaveProperty('nfx');
-    // Issue #15: a zero price is not valid yet, so no draft reaches NFX until it is.
-    expect(toUploadInput({ ...draft, price: '0', nfx: true })).toBeUndefined();
+    expect(toUploadInput(draft, { nfxOn: true })).not.toHaveProperty('nfx');
+  });
+
+  it('a free video needs NFX on, and then always goes to NFX (slice 5d-4)', () => {
+    const free = { ...draft, price: '0' };
+    expect(Object.keys(validateDraft(free))).toEqual(['price']);
+    expect(validateDraft(free).price).toMatch(/from 1 to/);
+    expect(toUploadInput(free)).toBeUndefined();
+    expect(validateDraft(free, { nfxOn: true })).toEqual({});
+    expect(toUploadInput(free, { nfxOn: true })).toMatchObject({ satsPerBlock: 0, nfx: true });
+    expect(validateDraft({ ...draft, price: '-1' }, { nfxOn: true }).price).toMatch(
+      /from 0 \(free\) to/,
+    );
   });
 });
 

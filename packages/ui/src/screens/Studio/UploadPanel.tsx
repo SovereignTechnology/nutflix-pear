@@ -71,6 +71,8 @@ export interface UploadPanelProps {
   /** Mints offered as chips: `Settings.defaultMints` ∪ wallet mints ∪ added ones. */
   readonly knownMints: readonly MintUrl[];
   readonly onAddMint: (mint: MintUrl) => void;
+  /** Slice 5d-4: `Settings.nfx.enabled` — a price of 0 (free, on NFX) is allowed. */
+  readonly nfxOn: boolean;
   readonly run: UploadRun;
   readonly ffmpeg: FfmpegStatus | undefined;
   readonly onRecheckFfmpeg: (() => void) | undefined;
@@ -267,10 +269,12 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
   const [mintText, setMintText] = useState('');
   const [mintError, setMintError] = useState<string | undefined>(undefined);
   const thumbInput = useRef<HTMLInputElement>(null);
-  const errors = submitted ? validateDraft(draft) : {};
+  const ctx = { nfxOn: props.nfxOn };
+  const errors = submitted ? validateDraft(draft, ctx) : {};
   const errorCount = Object.keys(errors).length;
 
-  const price = parsePrice(draft.price);
+  const price = parsePrice(draft.price, ctx);
+  const priced = price !== undefined && price > 0 ? price : undefined;
   const split = parseSplit(draft.seeder, draft.creator);
   const tags = parseTags(draft.tags);
 
@@ -285,7 +289,7 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
   const onSubmit = (e: SyntheticEvent<HTMLFormElement>): void => {
     e.preventDefault();
     setSubmitted(true);
-    if (Object.keys(validateDraft(draft)).length > 0) {
+    if (Object.keys(validateDraft(draft, ctx)).length > 0) {
       setFocusRequest((n) => n + 1);
       return;
     }
@@ -513,7 +517,7 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
                 className="nf-studio__input nf-studio__input--num"
                 type="number"
                 inputMode="numeric"
-                min={1}
+                min={props.nfxOn ? 0 : 1}
                 max={PRICE_MAX}
                 step={1}
                 value={draft.price}
@@ -522,37 +526,25 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
                 }}
                 {...fieldProps(id, 'price', errors, true)}
               />
-              {price !== undefined ? <SatsBadge sats={price} suffix="per block" size="md" /> : null}
+              {priced !== undefined ? (
+                <SatsBadge sats={priced} suffix="per block" size="md" />
+              ) : null}
             </div>
             <p id={`${id}-price-hint`} className="nf-studio__hint">
               A block is {BLOCK_SIZE / 1024} KiB of video. Viewers pay per block as they stream,
               only for what they watch.
+              {props.nfxOn ? ' Set it to 0 to make the video free.' : ''}
             </p>
             <FieldError id={id} field="price" errors={errors} />
-            {price !== undefined ? <PriceEstimate satsPerBlock={price} /> : null}
+            {priced !== undefined ? <PriceEstimate satsPerBlock={priced} /> : null}
+            {props.nfxOn && price === 0 && nfxEligible(draft) ? (
+              <p className="nf-studio__hint">
+                Free videos go to the NFX network too: its seeders, and other apps on that network,
+                can play it without anyone paying. Its NFX files are kept on this computer and count
+                toward your disk cap.
+              </p>
+            ) : null}
           </div>
-
-          {nfxEligible(draft) ? (
-            <div className="nf-studio__field">
-              <label className="nf-studio__choice">
-                <input
-                  type="checkbox"
-                  name="nfx"
-                  checked={draft.nfx === true}
-                  onChange={(e) => {
-                    onDraft({ nfx: e.currentTarget.checked });
-                  }}
-                />
-                <span>
-                  <span className="nf-studio__choice-title">Also publish on NFX (free)</span>
-                  <span className="nf-studio__choice-text">
-                    Packages the video for NFX too, so apps on that network can play it. Its files
-                    are kept on this computer and count toward your disk cap.
-                  </span>
-                </span>
-              </label>
-            </div>
-          ) : null}
 
           <div className="nf-studio__field" role="group" aria-labelledby={`${id}-split`}>
             <span id={`${id}-split`} className="nf-studio__label">
@@ -599,8 +591,8 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
               share is rounded up and you get the rest.
             </p>
             <FieldError id={id} field="split" errors={errors} />
-            {split !== undefined && price !== undefined ? (
-              <SplitExamples satsPerBlock={price} split={split} />
+            {split !== undefined && priced !== undefined ? (
+              <SplitExamples satsPerBlock={priced} split={split} />
             ) : null}
             {/* ADR 0007 (a), lands with the Stage 2 payment code: the creator's fractional
                 remainder carries across PAYs and PAYs have a minimum size. The table above
@@ -707,12 +699,13 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
           <div className="nf-studio__preview-body">
             <p className="nf-studio__preview-kicker">
               {draft.kind === 22 ? 'Short' : 'Video'}
+              {price === 0 ? ' · Free on NFX' : ''}
               {file?.size !== undefined ? ` · ${formatBytes(file.size)}` : ''}
             </p>
             <h2 className="nf-studio__preview-title">
               {draft.title.trim() || <span className="nf-studio__muted">Untitled</span>}
             </h2>
-            {price !== undefined ? <SatsBadge sats={price} suffix="per block" size="sm" /> : null}
+            {priced !== undefined ? <SatsBadge sats={priced} suffix="per block" size="sm" /> : null}
             {tags.length > 0 ? (
               <p className="nf-studio__preview-tags">{tags.map((t) => `#${t}`).join(' ')}</p>
             ) : null}
