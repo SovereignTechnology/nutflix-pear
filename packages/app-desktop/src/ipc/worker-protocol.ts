@@ -242,6 +242,8 @@ export type NfxUploadStatusWire =
       readonly renditions: number;
       /** Bytes the store holds for the video's files (shared files counted once). */
       readonly bytes: number;
+      /** The hash list's role-`thumb` file, when the upload had one: the manifest's `thumb`. */
+      readonly thumb?: { readonly sha256: Sha256Hex; readonly mime: 'image/jpeg' };
     }
   | { readonly state: 'failed'; readonly reason: NfxUploadFailure };
 

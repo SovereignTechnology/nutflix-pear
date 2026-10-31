@@ -8,8 +8,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { UploadProgress, VideoManifest } from '@sovit/core';
-import { mocks } from '@sovit/core';
+import type { NostrEvent, RelayUrl, UploadProgress, VideoManifest } from '@sovit/core';
+import { mocks, nfx, nostr } from '@sovit/core';
 
 import type { IpcError } from '../../ipc/errors.js';
 import type { PublishDraft, StudioUploadArgs } from '../../ipc/worker-protocol.js';
@@ -17,7 +17,7 @@ import { SignerIdentity } from '../identity.js';
 import { coreTestKit } from './support/core-helpers.js';
 import type { FakeWorker } from './support/fake-worker.js';
 import type { Rig } from './support/rig.js';
-import { eventually, rig } from './support/rig.js';
+import { RELAY_A, eventually, rig } from './support/rig.js';
 
 const kit = await coreTestKit();
 
@@ -391,5 +391,153 @@ describe('--dev-fixtures (design §5a)', () => {
       () => r!.log.lines.find((l) => l.msg.startsWith('dev.fixtures from the worker ignored')),
       'ignored',
     );
+  });
+});
+
+describe("slice 4a: a free upload's NFX manifest (kind 38504)", () => {
+  const SCOPED = 'wss://scoped.test' as RelayUrl;
+  const FREE = {
+    file: '/home/alice/Videos/in.mp4',
+    title: 'A free video',
+    description: 'Made with **ffmpeg**.',
+    tags: ['diy'],
+    kind: 21 as const,
+    mints: [mocks.MINTS.a],
+    satsPerBlock: 0 as never,
+    split: { seeder: 50, creator: 50 },
+  };
+
+  const storedFor = (video: VideoManifest, over: object = {}): object => ({
+    state: 'stored',
+    video: `nfx:testnet:1:nutflix-${video.id.slice(0, 32)}`,
+    root: 'ef'.repeat(32),
+    segs: '3',
+    renditions: 1,
+    bytes: 1000,
+    thumb: { sha256: 'cd'.repeat(32), mime: 'image/jpeg' },
+    ...over,
+  });
+
+  /**
+   * A rig whose worker publishes the legacy event, returns, and then (as the real worker, whose
+   * NFX packaging finishes later) reports `status(video)`.
+   */
+  async function nfxUpload(
+    status: (video: VideoManifest) => object,
+    opts: {
+      readonly nfx?: boolean;
+      readonly pool?: nostr.FakeRelayPool;
+      readonly beforeStatus?: (viewer: InstanceType<typeof kit.TestSigner>) => Promise<void>;
+    } = {},
+  ): Promise<{ viewer: InstanceType<typeof kit.TestSigner>; video: VideoManifest }> {
+    const viewer = new kit.TestSigner();
+    r = await rig({
+      flags: { devMocks: true },
+      identity: new SignerIdentity(viewer),
+      nfxScopedRelays: (ns) => (ns === 'nfx:testnet:1' ? [SCOPED] : []),
+      ...(opts.pool === undefined ? {} : { pool: opts.pool }),
+      worker: {
+        handlers: {
+          'studio.upload': async (a: StudioUploadArgs, w: FakeWorker) => {
+            const video = (await w.request('studio.publish', draftFor(a))) as VideoManifest;
+            setTimeout(() => {
+              void (async () => {
+                await opts.beforeStatus?.(viewer);
+                w.event({ e: 'upload.nfx', uploadId: a.uploadId, status: status(video) });
+              })();
+            }, 20);
+            return video;
+          },
+        },
+      },
+    });
+    await r.ready();
+    const video = await r.host.adapter.studio.upload(
+      { ...FREE, ...(opts.nfx === false ? {} : { nfx: true }) },
+      () => undefined,
+    );
+    return { viewer, video };
+  }
+
+  const manifests = (): NostrEvent[] =>
+    (r?.pool.published ?? []).filter((p) => p.event.kind === 38504).map((p) => p.event);
+  const refused = (reason: string): boolean =>
+    r?.log.lines.some((l) => l.msg === 'NFX manifest not published' && l['reason'] === reason) ??
+    false;
+  /** Lets anything the host would still do happen first (it publishes within a few ms). */
+  const settle = (): Promise<void> => new Promise((ok) => setTimeout(ok, 100));
+
+  it('once stored, the creator signs it and it goes to the write and scoped relays', async () => {
+    const { viewer, video } = await nfxUpload((v) => storedFor(v));
+    const [ev] = await eventually(() => {
+      const m = manifests();
+      return m.length > 0 ? m : undefined;
+    }, 'the manifest');
+    expect(ev?.pubkey).toBe(viewer.pubkey);
+    const parsed = nfx.parseManifest(ev);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.addr.toString()).toBe(`nfx:testnet:1:nutflix-${video.id.slice(0, 32)}`);
+    expect(parsed.value).toMatchObject({
+      title: 'A free video',
+      description: 'Made with **ffmpeg**.',
+      root: 'ef'.repeat(32),
+      segs: 3n,
+      duration: 6n,
+      thumb: { sha256: 'cd'.repeat(32), mime: 'image/jpeg' },
+      license: { mode: 'open' },
+      hashtags: ['diy'],
+    });
+    expect(parsed.value.priceHint).toBeUndefined();
+    // The link back to the legacy event (4b de-duplicates on it, same author only).
+    expect(ev?.tags).toContainEqual(['e', video.id]);
+    // The read-only relay is not written to.
+    expect(r?.pool.published.find((p) => p.event.id === ev?.id)?.relays).toEqual([RELAY_A, SCOPED]);
+    await eventually(
+      () => r?.log.lines.some((l) => l.msg === 'NFX manifest published'),
+      'the published line',
+    );
+    expect(manifests()).toHaveLength(1);
+  });
+
+  it('a failed packaging publishes nothing', async () => {
+    await nfxUpload(() => ({ state: 'failed', reason: 'disk-cap' }));
+    await eventually(
+      () => r?.log.lines.some((l) => l.msg === 'upload not packaged for NFX'),
+      'the failure line',
+    );
+    await settle();
+    expect(manifests()).toEqual([]);
+  });
+
+  it("a stored video that is not this upload's is never signed", async () => {
+    const { viewer } = await nfxUpload((v) =>
+      storedFor(v, { video: `nfx:testnet:1:nutflix-${'0'.repeat(32)}` }),
+    );
+    const signs = (): number => viewer.calls.filter((c) => c.method === 'signEvent').length;
+    const before = signs();
+    await eventually(() => refused('address-mismatch'), 'the refusal');
+    expect(manifests()).toEqual([]);
+    expect(signs()).toBe(before);
+  });
+
+  it('an upload that did not ask for NFX is not announced, whatever the worker reports', async () => {
+    await nfxUpload((v) => storedFor(v), { nfx: false });
+    await eventually(() => refused('no-legacy-event'), 'the refusal');
+    expect(manifests()).toEqual([]);
+  });
+
+  it('no signer by then, or every relay refusing it: logged, never thrown', async () => {
+    await nfxUpload((v) => storedFor(v), { beforeStatus: (viewer) => viewer.lock() });
+    await eventually(() => refused('no-signer'), 'the no-signer refusal');
+    expect(manifests()).toEqual([]);
+    await r?.close();
+    r = undefined;
+
+    const pool = new nostr.FakeRelayPool({
+      rejectPublish: (e) => (e.kind === 38504 ? 'blocked: out of scope' : null),
+    });
+    await nfxUpload((v) => storedFor(v), { pool });
+    await eventually(() => refused('relay-down'), 'the relay refusal');
   });
 });

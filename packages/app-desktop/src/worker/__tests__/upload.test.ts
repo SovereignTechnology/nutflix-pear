@@ -229,6 +229,10 @@ describe.skipIf(!hasFfmpeg)('studio.upload with the system ffmpeg', () => {
       for (const f of verified.value.files) {
         expect(seeder.nfx.file(addr.value, f.sha256)?.size).toBe(Number(f.size));
       }
+      // The manifest's thumb (slice 4a): the hash list's role-`thumb` file, a JPEG.
+      const thumb = verified.value.files.find((f) => f.role === 'thumb');
+      expect(thumb).toBeDefined();
+      expect(ev.status.thumb).toEqual({ sha256: thumb?.sha256, mime: 'image/jpeg' });
       expect(seeder.diskCap.usedBytes - before).toBeGreaterThanOrEqual(ev.status.bytes);
       expect(w.invalid).toEqual([]);
     },

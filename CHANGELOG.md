@@ -9,6 +9,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- A free upload packaged for NFX is announced with its kind-38504 manifest (NFX-02). The creator
+  signs it with the same signer as the legacy event, and it goes to the write relays and the NFX
+  network's scoped relays. It carries the hash list's `root`, the thumbnail, and an `e` tag back
+  to the legacy event. The host signs only the creator's own upload: the stored video must be the
+  one the legacy event derives, and the signer must be its author. In practice nothing is
+  announced yet, because Studio still refuses a price of 0 (#15); beacons come with slice 5's
+  transport.
 - Spike S-E: an NFX rendition as one progressive fMP4 (`nfx.renditionMembers`,
   `nfx.progressiveLayout`, `nfx.locate`; `media.buildSidx` and friends for a global `sidx`),
   played by Electron's Chromium through the app's own `nf-media:` proxy and CSP in a new e2e

@@ -22,6 +22,7 @@ import { dehydrate } from '../ipc/wiremap.js';
 import type { WorkerInit } from '../ipc/worker-protocol.js';
 import { WORKER_V } from '../ipc/worker-protocol.js';
 import { hostError } from './errors.js';
+import type { DesktopAdapterOptions } from './adapter.js';
 import { DesktopNetworkAdapter } from './adapter.js';
 import { FixtureCatalog } from './catalog/fixture-catalog.js';
 import type { HandlerTable } from './dispatch.js';
@@ -101,6 +102,8 @@ export interface HostOptions {
    * before it merges). Tests inject fakes; `null` = explicitly none.
    */
   readonly recoveryCore?: RecoveryCore | null;
+  /** Slice 4a, tests: a namespace's NFX-04 scoped relays (none in production until slice 5). */
+  readonly nfxScopedRelays?: DesktopAdapterOptions['nfxScopedRelays'];
 }
 
 /**
@@ -647,6 +650,7 @@ export async function createHost(o: HostOptions): Promise<Host> {
     ...(fixtures === undefined ? {} : { fixtures }),
     ...(o.random === undefined ? {} : { random: o.random }),
     ...(o.now === undefined ? {} : { now: o.now }),
+    ...(o.nfxScopedRelays === undefined ? {} : { nfxScopedRelays: o.nfxScopedRelays }),
   });
   const host = new Host({
     adapter,

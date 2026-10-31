@@ -34,6 +34,7 @@ import type {
   Playlist,
   PlaySession,
   Profile,
+  RelayUrl,
   Sats,
   SearchFilters,
   SeederStatus,
@@ -77,6 +78,13 @@ import { NostrCatalog } from './catalog/catalog.js';
 import type { FixtureCatalog } from './catalog/fixture-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
+import type { NfxStored } from './nfx/publish.js';
+import {
+  PendingNfxUploads,
+  isSignedManifest,
+  nfxManifestFor,
+  nfxManifestRelays,
+} from './nfx/publish.js';
 import type { DesktopSigner } from './signer/desktop-signer.js';
 import type { RecoveryService } from './recovery/service.js';
 import { QuoteHandles } from './quote-handles.js';
@@ -136,6 +144,11 @@ export interface DesktopAdapterOptions {
   readonly now?: () => UnixSeconds;
   /** Relay wait per query, ms. */
   readonly maxWaitMs?: number;
+  /**
+   * Slice 4a: the NFX-04 scoped relays of a namespace, where a free upload's manifest also goes
+   * (beside the write relays). None in production until slice 5's settings; tests set it.
+   */
+  readonly nfxScopedRelays?: (namespace: string) => readonly RelayUrl[];
 }
 
 /** Per page in the in-memory paged lists (history). */
@@ -174,6 +187,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly seederListeners = new Set<(s: SeederStatus) => void>();
   /** uploadId → the owner (webContents) that started it. */
   private readonly uploads = new Map<string, { readonly owner: number }>();
+  /** Slice 4a: legacy events of NFX uploads until their `upload.nfx` (bounded, expiring). */
+  private readonly pendingNfx = new PendingNfxUploads();
   /** `${owner}:${uploadId}` → progress listeners (subscribed before the upload starts). */
   private readonly uploadListeners = new Map<string, Set<(p: UploadProgress) => void>>();
   private readonly topUpLogged = new Map<string, number>();
@@ -769,7 +784,10 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     if (this.uploads.has(input.uploadId)) fail('invalid-argument', 'upload id already in use');
     this.uploads.set(input.uploadId, { owner });
     try {
-      return await this.o.worker('studio.upload', input);
+      const video = await this.o.worker('studio.upload', input);
+      // Slice 4a: its NFX copy is announced once the worker has stored it (`upload.nfx`).
+      if (input.meta.nfx === true) this.pendingNfx.remember(input.uploadId, video, this.now());
+      return video;
     } finally {
       this.uploads.delete(input.uploadId);
     }
@@ -825,6 +843,49 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       if (!parsed?.ok) fail('internal', 'published event did not verify');
       return parsed.value;
     });
+  }
+
+  /**
+   * Slice 4a (ADR 0020): announce a stored NFX upload's kind-38504 manifest, signed by the
+   * user's signer and published to the write relays and the namespace's scoped relays. Only the
+   * creator's own upload is signed: the stored video must be the one its legacy event derives,
+   * and the signer must be that event's author. Logs the outcome; never throws.
+   */
+  private async publishNfx(uploadId: string, stored: NfxStored): Promise<void> {
+    const reason = await this.tryPublishNfx(uploadId, stored);
+    if (reason !== null)
+      this.log.warn('NFX manifest not published', { video: stored.video, reason });
+  }
+
+  /** `publishNfx`'s work: `null` once published, else why not. */
+  private async tryPublishNfx(uploadId: string, stored: NfxStored): Promise<string | null> {
+    const legacy = this.pendingNfx.take(uploadId, this.now());
+    if (legacy === undefined) return 'no-legacy-event';
+    const built = nfxManifestFor(legacy, stored, this.now());
+    if (!built.ok) return built.reason;
+    const { draft } = built;
+    try {
+      const out = await this.write(async (c, me) => {
+        if (me !== legacy.author) return null;
+        const relays = nfxManifestRelays(
+          c.writeRelays,
+          this.o.nfxScopedRelays?.(draft.manifest.addr.namespace.toString()) ?? [],
+        );
+        const report = await c.publish(draft.event, relays);
+        return { report, relays: relays.length };
+      });
+      if (out === null) return 'not-author';
+      if (!isSignedManifest(out.report.event, draft, legacy.author)) return 'did-not-verify';
+      this.log.info('NFX manifest published', {
+        video: stored.video,
+        event: out.report.event.id,
+        accepted: out.report.results.filter((r) => r.ok).length,
+        relays: out.relays,
+      });
+      return null;
+    } catch (e) {
+      return e instanceof IpcError ? e.code : 'internal';
+    }
   }
 
   /** `desktop.ffmpeg` (pre-v5 `studio.ffmpeg()`): the worker probes the configured binary. */
@@ -945,14 +1006,16 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
         this.onUploadEvent(ev.uploadId, ev.progress);
         return;
       case 'upload.nfx':
-        // Contracts v8 (ADR 0020). Recorded only: publishing it is slice 4, showing it slice 5.
+        // Contracts v8 (ADR 0020). Slice 4a announces a stored one; slice 5 shows the status.
         if (ev.status.state === 'stored') {
           this.log.info('upload packaged for NFX', {
             video: ev.status.video,
             segs: ev.status.segs,
             renditions: ev.status.renditions,
           });
+          void this.publishNfx(ev.uploadId, ev.status);
         } else {
+          this.pendingNfx.take(ev.uploadId, this.now());
           this.log.warn('upload not packaged for NFX', { reason: ev.status.reason });
         }
         return;

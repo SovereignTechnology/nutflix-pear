@@ -149,14 +149,17 @@ const isNfxVideoAddr = matches(
 );
 
 const isNfxUploadStatusWire = union(
-  obj({
-    state: literal('stored'),
-    video: isNfxVideoAddr,
-    root: isSha256,
-    segs: matches(/^(?:0|[1-9][0-9]{0,19})$/, 20),
-    renditions: int(1, 16),
-    bytes: isCount,
-  }),
+  obj(
+    {
+      state: literal('stored'),
+      video: isNfxVideoAddr,
+      root: isSha256,
+      segs: matches(/^(?:0|[1-9][0-9]{0,19})$/, 20),
+      renditions: int(1, 16),
+      bytes: isCount,
+    },
+    { thumb: obj({ sha256: isSha256, mime: literal('image/jpeg') }) },
+  ),
   obj({ state: literal('failed'), reason: oneOf(NFX_UPLOAD_FAILURES) }),
 );
 
