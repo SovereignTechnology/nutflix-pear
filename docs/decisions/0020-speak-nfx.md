@@ -271,3 +271,17 @@ A play session also fetches over NFX-06, so this app can watch a seeder that spe
   executable.
 - **A choice, never an omission.** `packaging/cli.ts` refuses to run without `--iroh-helper
   <file>` or `--without-iroh-helper`.
+
+## Amendment 2026-11-06: beacons are read live (found by the exit run)
+
+NFX-04 keeps beacons ephemeral: a scoped relay forwards kind 20464 to live subscribers and never
+stores it. Slice 5d-3 read beacons with a one-shot query, which against nfxd's embedded relay, or
+any conforming one, finds nothing whoever is seeding. Our tests had hidden it: core's fake relay
+stored every kind.
+- **A play waits on a live subscription** (`host/nfx/beacon-watch.ts`) on the scoped relays and
+  opens as soon as a beacon names a source, at most one republish interval (62 s: seeders republish
+  at TTL/2, NFX-03 §3, and TTL is at most 120 s); `no-seeders` after that.
+- **The Watch page opens it early.** The renderer's `nfxVideo` starts the video's subscription,
+  and beacons seen are kept for their lifetime (at most 16 videos and 64 beacons each), so Play
+  usually opens at once.
+- **The fake relay follows NIP-01:** kinds 20000–29999 reach live subscriptions only.

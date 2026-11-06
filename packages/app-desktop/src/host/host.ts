@@ -90,6 +90,8 @@ export interface HostOptions {
   readonly timers?: Timers;
   readonly restart?: RestartPolicy;
   readonly random?: (n: number) => Uint8Array;
+  /** TESTS ONLY: how long an NFX play waits for a live beacon (`NFX_BEACON_WAIT_MS`). */
+  readonly nfxBeaconWaitMs?: number;
   readonly now?: () => UnixSeconds;
   readonly workerStartTimeoutMs?: number;
   /** Tests: the auto top-up's wall clock (ms, shared with its ledger) and target polling. */
@@ -661,6 +663,7 @@ export async function createHost(o: HostOptions): Promise<Host> {
     ...(o.random === undefined ? {} : { random: o.random }),
     ...(o.now === undefined ? {} : { now: o.now }),
     nfxDir: join(o.userData, NFX_DIR),
+    ...(o.nfxBeaconWaitMs === undefined ? {} : { nfxBeaconWaitMs: o.nfxBeaconWaitMs }),
   });
   const host = new Host({
     adapter,
