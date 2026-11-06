@@ -507,6 +507,14 @@ describe('scripts/release-manifest.mjs — one release, only this make (independ
     expect(code).toContain(
       `echo '${x64?.sha256 ?? '?'}  packages/app-desktop/out/appimage-runtime/`,
     );
+    // Slice 5e-5: the app ships the iroh helper built in this job, from this commit and its
+    // Cargo.lock, with the crate's pinned toolchain, and never from a cache.
+    expect(code).toContain('grep -qx "channel = \\"${RUST_VERSION}\\"" crates/iroh-helper/');
+    expect(code).toContain('cargo build --release --locked');
+    expect(code).toMatch(
+      /make -- --platform linux --arch x64 --targets deb,appimage \\\n\s+--iroh-helper "\$GITHUB_WORKSPACE\/crates\/iroh-helper\/target\/release\/nutflix-iroh-helper"/,
+    );
+    expect(code).not.toContain('actions/cache@');
   });
 });
 

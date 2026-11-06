@@ -14,7 +14,10 @@ decision stay in JavaScript.
 
 Status: from **spike S-D** (`docs/spikes/S-D-iroh-helper.md`). Since slice 5e-3 the worker runs
 one to serve its NFX videos (`packages/app-desktop/src/worker/nfx/iroh.ts` and `iroh-seeding.ts`);
-fetching through it is slice 5e-4, packaging it 5e-5. Built and tested only in CI.
+fetching through it is slice 5e-4. Since slice 5e-5 a packaged app ships one, built for its
+target by the release job (`.github/workflows/release.yml`) and staged as
+`app.asar.unpacked/iroh/nutflix-iroh-helper` (`packaging/stage.ts` checks it is an executable
+for the target); the worker then never reads `NUTFLIX_IROH_HELPER`. Built and tested only in CI.
 
 ## How the worker uses it (slice 5e-3)
 

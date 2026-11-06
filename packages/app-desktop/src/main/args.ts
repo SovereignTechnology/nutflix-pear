@@ -91,24 +91,53 @@ export function workerEntryFor(distDir: string, archive: string | undefined): st
     : join(unpacked, PACKAGED_WORKER_ENTRY);
 }
 
+/**
+ * Relative to `app.asar.unpacked/`: the PACKAGED iroh helper (slice 5e-5, ADR 0021), `.exe` on
+ * Windows. Must equal `PACKAGED_IROH_HELPER` in packaging/identity.ts; a test pins the two.
+ */
+export const PACKAGED_IROH_HELPER = 'iroh/nutflix-iroh-helper';
+
+/**
+ * The iroh helper main hands the host: in a packaged build the copy beside the archive (even if
+ * that build shipped none: the worker then finds no executable and speaks HyperDHT only, which
+ * it logs), so `NUTFLIX_IROH_HELPER` can never swap it; `undefined` in a dev build, where the
+ * host reads that variable instead.
+ */
+export function irohHelperFor(
+  distDir: string,
+  archive: string | undefined,
+  platform: string,
+): string | undefined {
+  const unpacked = asarUnpacked(distDir, archive);
+  if (unpacked === undefined) return undefined;
+  return join(
+    unpacked,
+    platform === 'win32' ? `${PACKAGED_IROH_HELPER}.exe` : PACKAGED_IROH_HELPER,
+  );
+}
+
 /** The absolute paths main hands the host. */
 export interface HostPaths {
   /** Electron's `userData` directory. */
   readonly userData: string;
   /** `<dist>/` + `WORKER_ENTRY`, resolved from main's own location. */
   readonly workerEntry: string;
+  /** Slice 5e-5: a packaged build's own iroh helper (`irohHelperFor`). */
+  readonly irohHelper?: string;
   /** ADR 0013: main found a real OS keychain (`keychainUsable`); the host may offer it. */
   readonly keychain?: boolean;
 }
 
 /**
  * The host's argv: exactly what the host's strict `parseHostArgs` (`src/host/flags.ts`)
- * accepts — `--user-data-dir=<abs>`, `--worker-entry=<abs>`, then only the dev flags. Anything
+ * accepts — `--user-data-dir=<abs>`, `--worker-entry=<abs>`, a packaged build's
+ * `--iroh-helper=<abs>`, then only the dev flags. Anything
  * else makes the host exit 2 and main respawn it until its budget is spent (every respawn
  * reloads the window), so `host-link.test.ts` round-trips this through the host's real parser.
  */
 export function hostArgs(opts: MainOptions, paths: HostPaths): string[] {
   const args = [`--user-data-dir=${paths.userData}`, `--worker-entry=${paths.workerEntry}`];
+  if (paths.irohHelper !== undefined) args.push(`--iroh-helper=${paths.irohHelper}`);
   if (paths.keychain === true) args.push('--keychain');
   if (opts.devMocks) args.push('--dev-mocks');
   if (opts.devFixtures) args.push('--dev-fixtures');

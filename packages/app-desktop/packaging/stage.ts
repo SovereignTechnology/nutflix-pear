@@ -18,12 +18,16 @@
  *                             bundle finds it at `./pay/` from itself (src/worker/worker-root.ts)
  *   node_modules/             the lockfile runtime closure (closure.ts), native prebuilds for the
  *                             target platform only, workspace packages as real directories
+ *   iroh/nutflix-iroh-helper  the iroh helper the worker spawns (slice 5e-5, ADR 0021), built for
+ *                             the target and checked to be one (`stageIrohHelper`); only when
+ *                             `irohHelper` is given
  *
- * `worker/` and `node_modules/` are unpacked from the asar (identity.ts `UNPACKED_DIRS`).
+ * `worker/`, `node_modules/` and `iroh/` are unpacked from the asar (identity.ts `UNPACKED_DIRS`).
  * Needs `npm run build` first (tsc, ui css, scripts/bundle.ts), and refuses to stage when that
  * build is older than its sources (`assertCurrentBuild`). Never writes outside `out`.
  *
  *   node packaging/stage.ts [--out <dir>] [--platform <p>] [--arch <a>]
+ *                           (--iroh-helper <file> | --without-iroh-helper)
  */
 import { build, type Metafile, type Plugin } from 'esbuild';
 import ts from 'typescript';
@@ -59,6 +63,7 @@ import {
   PRELOAD_FILES,
   PROMPT_FILES,
   RENDERER_FILES,
+  packagedIrohHelper,
 } from './identity.ts';
 import { PROMPT_NPM_IMPORTS } from './prompt-npm.ts';
 
@@ -88,9 +93,78 @@ export interface StageOptions {
   readonly out: string;
   readonly platform: string;
   readonly arch: string;
+  /**
+   * Slice 5e-5: the iroh helper built for this target (`crates/iroh-helper`), staged as
+   * `PACKAGED_IROH_HELPER`; absent, the app ships none and its worker speaks HyperDHT only.
+   * `cli.ts` makes the choice explicit (`--iroh-helper <file>` or `--without-iroh-helper`).
+   */
+  readonly irohHelper?: string;
   /** Defaults: this package and the repo root it belongs to. */
   readonly pkgDir?: string;
   readonly repoRoot?: string;
+}
+
+/** The most bytes a staged iroh helper may have (the release build is about 11 MB). */
+export const MAX_IROH_HELPER_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Why `head` (a file's first 64 bytes) is not an executable for `platform`-`arch`, or `null`:
+ * an ELF64 little-endian of the right machine on Linux, a 64-bit Mach-O of the right CPU (or a
+ * universal one) on macOS, a PE (`MZ`) on Windows. Catches a helper built for the build
+ * machine instead of the target, which would only fail on a user's computer.
+ */
+export function irohHelperFormatProblem(
+  head: Uint8Array,
+  platform: string,
+  arch: string,
+): string | null {
+  const u16 = (o: number): number => (head[o] ?? 0) | ((head[o + 1] ?? 0) << 8);
+  const u32 = (o: number): number => (u16(o) | (u16(o + 2) << 16)) >>> 0;
+  if (platform === 'linux') {
+    const elf = head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46;
+    if (!elf) return 'not an ELF executable';
+    if (head[4] !== 2 || head[5] !== 1) return 'not a 64-bit little-endian ELF';
+    const machine = u16(18);
+    const want = arch === 'x64' ? 62 : arch === 'arm64' ? 183 : -1;
+    return machine === want ? null : `an ELF for machine ${String(machine)}, not ${arch}`;
+  }
+  if (platform === 'darwin') {
+    if (u32(0) === 0xbebafeca) return null; // universal (fat), big-endian magic read LE
+    if (u32(0) !== 0xfeedfacf) return 'not a 64-bit Mach-O';
+    const cpu = u32(4);
+    const want = arch === 'x64' ? 0x01000007 : arch === 'arm64' ? 0x0100000c : -1;
+    return cpu === want ? null : `a Mach-O for CPU ${cpu.toString(16)}, not ${arch}`;
+  }
+  if (platform === 'win32') return head[0] === 0x4d && head[1] === 0x5a ? null : 'not a PE';
+  return `no iroh helper format for ${platform}`;
+}
+
+/**
+ * Copy the iroh helper to `<out>/<packagedIrohHelper(platform)>` (0755), after checking it is a
+ * regular file (never a symlink), executable here, at most `MAX_IROH_HELPER_BYTES`, and built
+ * for the target.
+ */
+export function stageIrohHelper(src: string, out: string, platform: string, arch: string): void {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(src);
+  } catch {
+    fail(`the iroh helper ${src} does not exist`);
+  }
+  if (st.isSymbolicLink()) fail(`the iroh helper ${src} is a symlink; give the file itself`);
+  if (!st.isFile()) fail(`the iroh helper ${src} is not a regular file`);
+  if (st.size > MAX_IROH_HELPER_BYTES)
+    fail(
+      `the iroh helper ${src} is ${String(st.size)} bytes, over ${String(MAX_IROH_HELPER_BYTES)}`,
+    );
+  if ((st.mode & 0o100) === 0) fail(`the iroh helper ${src} is not executable`);
+  const head = readFileSync(src).subarray(0, 64);
+  const problem = irohHelperFormatProblem(head, platform, arch);
+  if (problem !== null) fail(`the iroh helper ${src} is ${problem} (target ${platform}-${arch})`);
+  const dst = join(out, packagedIrohHelper(platform));
+  mkdirSync(dirname(dst), { recursive: true });
+  copyFileSync(src, dst);
+  chmodSync(dst, 0o755);
 }
 
 export interface StageReport {
@@ -98,6 +172,8 @@ export interface StageReport {
   readonly packages: readonly ClosureEntry[];
   readonly files: number;
   readonly bytes: number;
+  /** Slice 5e-5: whether the iroh helper was staged (`StageOptions.irohHelper`). */
+  readonly irohHelper: boolean;
   /** Bare specifiers the bundles import (each resolves in `node_modules/`). */
   readonly externals: {
     readonly host: readonly string[];
@@ -860,6 +936,9 @@ export async function stageApp(o: StageOptions): Promise<StageReport> {
       `DLEQ thread bundle may only contain src/worker/pay and src/ipc:\n  ${dleqBad.join('\n  ')}`,
     );
 
+  // ---- the iroh helper (slice 5e-5) ------------------------------------------------------
+  if (o.irohHelper !== undefined) stageIrohHelper(o.irohHelper, out, o.platform, o.arch);
+
   // ---- every external the bundles import must be a shipped package ----------------------
   const externals = {
     host: externalPackages(hostBuild.metafile).filter((n) => n !== 'electron'),
@@ -891,7 +970,7 @@ export async function stageApp(o: StageOptions): Promise<StageReport> {
     }
   };
   count(out);
-  return { out, packages, files, bytes, externals };
+  return { out, packages, files, bytes, irohHelper: o.irohHelper !== undefined, externals };
 }
 
 function arg(argv: readonly string[], name: string): string | undefined {
@@ -899,12 +978,38 @@ function arg(argv: readonly string[], name: string): string | undefined {
   return i === -1 ? undefined : argv[i + 1];
 }
 
+/**
+ * Slice 5e-5: `--iroh-helper <file>` (resolved), or `null` for `--without-iroh-helper`. Exactly
+ * one of them: an app staged without the helper speaks HyperDHT only, which must be a choice,
+ * never an omission.
+ */
+export function irohHelperArg(argv: readonly string[]): string | null {
+  const file = arg(argv, '--iroh-helper');
+  const without = argv.includes('--without-iroh-helper');
+  if (argv.includes('--iroh-helper') && (file === undefined || file.startsWith('--')))
+    throw new StageError('--iroh-helper needs a file');
+  if (file !== undefined && without)
+    throw new StageError('give --iroh-helper <file> or --without-iroh-helper, not both');
+  if (file === undefined && !without)
+    throw new StageError(
+      'give --iroh-helper <file> (crates/iroh-helper, built for the target) or --without-iroh-helper',
+    );
+  return file === undefined ? null : resolve(file);
+}
+
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const argv = process.argv.slice(2);
   const platform = arg(argv, '--platform') ?? process.platform;
   const arch = arg(argv, '--arch') ?? process.arch;
   const out = arg(argv, '--out') ?? join(PKG_DIR, 'out', `stage-${platform}-${arch}`);
-  stageApp({ out, platform, arch }).then(
+  let irohHelper: string | null;
+  try {
+    irohHelper = irohHelperArg(argv);
+  } catch (err) {
+    process.stderr.write(`stage: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(2);
+  }
+  stageApp({ out, platform, arch, ...(irohHelper === null ? {} : { irohHelper }) }).then(
     (r) => {
       process.stdout.write(
         `stage: ${r.out}: ${String(r.packages.length)} packages, ${String(r.files)} files, ${(r.bytes / 1e6).toFixed(1)} MB\n`,
