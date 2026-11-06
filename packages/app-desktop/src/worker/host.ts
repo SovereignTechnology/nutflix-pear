@@ -12,7 +12,9 @@
  *   - the ffmpeg probe and Studio uploads (L8's runner, `studio.publish` asked of the host);
  *   - slice 5b/5d (ADR 0020): NFX seeding over HyperDHT, and free NFX play sessions
  *     (`nfx/watching.ts`), which need no payment providers — without them the worker has no
- *     swarm, and NFX play dials from a DHT node of its own.
+ *     swarm, and NFX play dials from a DHT node of its own;
+ *   - slice 5e-3 (ADR 0021): with an iroh helper (`init.irohHelper`), the same NFX videos over
+ *     iroh too (`nfx/iroh-seeding.ts`), through ONE helper process (`nfx/iroh.ts`).
  *
  * Every request arrives already validated by `validateWorkerArgs` (the rpc layer runs the
  * L6-0 guards); failures are thrown as `<code>: …` errors that the rpc layer turns into
@@ -20,6 +22,7 @@
  */
 import type {
   CoreKeyHex,
+  IrohRelayUrl,
   MintUrl,
   NostrPubkey,
   PeerSpend,
@@ -76,6 +79,8 @@ import {
   getWorkerProviders,
 } from './providers.js';
 import type { WorkerRuntime } from './runtime.js';
+import { NFX_IROH_DIR, NfxIrohNode } from './nfx/iroh.js';
+import { NfxIrohSeeding } from './nfx/iroh-seeding.js';
 import { NfxSeeding } from './nfx/seeding.js';
 import { NFX_PLAY_DIR, NfxWatching } from './nfx/watching.js';
 import { NFX_DEFAULT_NAMESPACE } from './studio/nfx.js';
@@ -227,6 +232,10 @@ export class WorkerHost {
   private nfxEnabled = false;
   /** Slice 5b: NFX-12 seeding of the store's NFX videos (with the net). */
   private nfxSeeding: NfxSeeding | null = null;
+  /** Slice 5e-3: `Settings.nfx.irohRelays`, as the host last said. */
+  private nfxIrohRelays: readonly IrohRelayUrl[] = [];
+  /** Slice 5e-3: NFX-06 seeding of the same videos (with the net and an iroh helper). */
+  private nfxIroh: NfxIrohSeeding | null = null;
   /** Slice 5d: free NFX play sessions (with or without the net). */
   private nfxWatch: NfxWatching | null = null;
   private readonly sessions = new Map<string, Session>();
@@ -328,10 +337,14 @@ export class WorkerHost {
         return undefined;
       case 'nfx.configure':
         this.nfxEnabled = req.a.enabled;
+        this.nfxIrohRelays = req.a.irohRelays;
         await this.applyNfxSeeding();
         return undefined;
       case 'nfx.endpoint':
-        return { endpoint: (await this.nfxSeeding?.endpoint(req.a.seeder)) ?? null };
+        return {
+          hyperdht: (await this.nfxSeeding?.endpoint(req.a.seeder)) ?? null,
+          iroh: this.nfxIroh?.endpoint(req.a.video) ?? null,
+        };
       case 'nfx.videos':
         return { videos: this.nfxVideos() };
       case 'nfx.play.open':
@@ -379,6 +392,7 @@ export class WorkerHost {
     await fs.mkdir(tmpDir, { recursive: true });
     this.seeding = a.seeding;
     this.nfxEnabled = a.nfx?.enabled === true;
+    this.nfxIrohRelays = a.nfx?.irohRelays ?? [];
     if (a.ffmpeg !== undefined) this.ffmpeg = a.ffmpeg;
 
     const server = new PlaybackServer({ logger: log, randomHex });
@@ -525,6 +539,27 @@ export class WorkerHost {
       },
       NFX_DEFAULT_NAMESPACE,
     );
+    // Slice 5e-3 (ADR 0021): with a helper, over iroh as well. Its store is a cache under `tmp/`
+    // (emptied above); its key is derived like the listener's, under its own name. Without a
+    // helper the worker speaks HyperDHT only.
+    const irohHelper = a.irohHelper ?? null;
+    if (irohHelper !== null)
+      this.nfxIroh = new NfxIrohSeeding({
+        node: new NfxIrohNode(
+          {
+            file: irohHelper,
+            spawn: runtime.spawnHelper,
+            isExecutable: (p) => runtime.isExecutable(p),
+            stateDir: fs.join(tmpDir, NFX_IROH_DIR),
+            rmTree: (p) => runtime.mediaFs(a.storage).rm(p, { recursive: true }),
+            keyPair: (name) => seeder.blobs.store.createKeyPair(name),
+            logger: log,
+          },
+          NFX_DEFAULT_NAMESPACE,
+        ),
+        store: seeder.nfx,
+        logger: log,
+      });
     // Listening announces on the DHT, which can take a while: `ready` does not wait for it.
     void this.applyNfxSeeding();
     // ADR 0015: our own profile core (avatar, thumbnails) is served free while seeding.
@@ -1057,9 +1092,13 @@ export class WorkerHost {
     this.pushStatusSoon();
   }
 
-  /** Slice 5b: NFX videos are served while seeding AND NFX are both on, and only then. */
-  private applyNfxSeeding(): Promise<void> {
-    return this.nfxSeeding?.set(this.seeding.enabled && this.nfxEnabled) ?? Promise.resolve();
+  /**
+   * Slice 5b: NFX videos are served while seeding AND NFX are both on, and only then. Slice 5e-3:
+   * over iroh too, with the network's iroh relays (its imports go on in the background).
+   */
+  private async applyNfxSeeding(): Promise<void> {
+    const on = this.seeding.enabled && this.nfxEnabled;
+    await Promise.all([this.nfxSeeding?.set(on), this.nfxIroh?.set(on, this.nfxIrohRelays)]);
   }
 
   /** Slice 5b: what the store holds, for the host's beacons (a `segs` past 2^53 is skipped). */
@@ -1162,6 +1201,8 @@ export class WorkerHost {
       await this.nfxWatch?.shutdown();
       // Slice 5b: the NFX-12 listener lives on the swarm's DHT, so it closes first.
       await this.nfxSeeding?.close();
+      // Slice 5e-3: the iroh helper (its stdin ends, it exits), before the store it reads.
+      await this.nfxIroh?.close();
       try {
         await this.net?.node.destroy();
       } finally {

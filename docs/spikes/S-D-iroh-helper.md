@@ -142,6 +142,11 @@ appear in the worker's configuration, where the IPC pipe is always held. **The w
 the helper**, as ADR 0021 §2 says; the host fallback is not needed. The sidecar runs stay in CI as
 a regression check (`bare-subprocess.test.ts`).
 
+Since slice 5e-3, this spike's own Bare check (`spike-iroh.yml`) starts `bare-smoke.mjs` the same
+way, through bare-sidecar (`spikes/iroh/bare-sidecar-run.mjs`), and judges that one run. The
+plain-`bare` runs, the io_uring-off run and the strace run are gone: they chased finding 10, which
+the paragraphs above settle.
+
 An upstream report (holepunchto/bare or bare-subprocess) is drafted, not filed: posting it is
 Cameron's call.
 

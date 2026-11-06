@@ -364,8 +364,11 @@ const IROH_RELAY_RE = new RegExp(
 export const isIrohRelayUrl = safe(
   branded<IrohRelayUrl>(matches(IROH_RELAY_RE, LIMITS.maxServerUrl)),
 );
-/** Contracts v12: unique iroh relays, at most `LIMITS.maxNfxIrohRelays`. */
-const isIrohRelays: Guard<readonly IrohRelayUrl[]> = (x): x is readonly IrohRelayUrl[] =>
+/**
+ * Contracts v12: unique iroh relays, at most `LIMITS.maxNfxIrohRelays`. Slice 5e-3: the worker
+ * guards take the same rule for `nfx.configure` and `init`.
+ */
+export const isIrohRelays: Guard<readonly IrohRelayUrl[]> = (x): x is readonly IrohRelayUrl[] =>
   arrayOf(isIrohRelayUrl, LIMITS.maxNfxIrohRelays)(x) && new Set(x).size === x.length;
 export const isMintUrl = safe(branded<MintUrl>(matches(HTTPS_SERVER_RE, LIMITS.maxServerUrl)));
 export const isNfMediaImgUrl = matches(NF_IMG_RE, 150) as Guard<NfMediaImgUrl>;

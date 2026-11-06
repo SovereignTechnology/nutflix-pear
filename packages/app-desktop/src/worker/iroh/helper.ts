@@ -17,8 +17,9 @@
  *   does not run is dropped; the helper drops it again);
  * - the iroh secret, if any, is held in a private field and only ever sent in `init`.
  *
- * Unwired (spike S-D): the worker does not start a helper yet. `spawn` is injected, as
- * `bare-process-runner.ts`'s is: `bare-subprocess` under Bare, `node:child_process` in tests.
+ * Slice 5e-3 wires it: the worker's one helper is `../nfx/iroh.ts`'s. `spawn` is injected, as
+ * `bare-process-runner.ts`'s is: `bare-subprocess` under Bare (`WorkerRuntime.spawnHelper`),
+ * `node:child_process` in tests.
  */
 import { nfx } from '@sovit/core';
 
@@ -42,7 +43,8 @@ export interface HelperChild {
   readonly stderr: HelperReadable | null;
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown;
   on(event: 'error', listener: (err: Error) => void): unknown;
-  kill(signal?: string): unknown;
+  /** Only ever `SIGKILL` from here (named, so Node's `ChildProcess` fits as it is). */
+  kill(signal?: 'SIGKILL' | 'SIGTERM'): unknown;
 }
 
 /** Spawns the helper with piped stdio. May throw synchronously (S-C finding 9: Bare's ENOENT). */

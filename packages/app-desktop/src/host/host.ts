@@ -22,7 +22,7 @@ import { dehydrate } from '../ipc/wiremap.js';
 import type { WorkerInit } from '../ipc/worker-protocol.js';
 import { WORKER_V } from '../ipc/worker-protocol.js';
 import { hostError } from './errors.js';
-import { DesktopNetworkAdapter } from './adapter.js';
+import { DesktopNetworkAdapter, nfxWorkerArgs } from './adapter.js';
 import { NFX_DIR } from './nfx/seeder-key.js';
 import { FixtureCatalog } from './catalog/fixture-catalog.js';
 import type { HandlerTable } from './dispatch.js';
@@ -102,6 +102,12 @@ export interface HostOptions {
    * before it merges). Tests inject fakes; `null` = explicitly none.
    */
   readonly recoveryCore?: RecoveryCore | null;
+  /**
+   * Slice 5e-3 (ADR 0021): the iroh helper's executable, handed to the worker (`WorkerInit`).
+   * The entry reads it from `NUTFLIX_IROH_HELPER` (dev and CI); slice 5e-5 supplies a packaged
+   * build's own copy. Absent or `null`: the worker speaks HyperDHT only.
+   */
+  readonly irohHelper?: string | null;
 }
 
 /**
@@ -596,8 +602,9 @@ export async function createHost(o: HostOptions): Promise<Host> {
         storage,
         seeding: s.seeding,
         prefetchSeconds: s.prefetchSeconds,
-        // Slice 5b: NFX seeding needs the setting on as well as seeding.
-        nfx: { enabled: s.nfx?.enabled === true },
+        // Slice 5b: NFX seeding needs the setting on as well as seeding; 5e-3: its iroh relays.
+        nfx: nfxWorkerArgs(s),
+        irohHelper: o.irohHelper ?? null,
         ...(desktop.ffmpeg === undefined ? {} : { ffmpeg: desktop.ffmpeg }),
         // Payments need at least one mint to pay at and be paid at (Settings → mints).
         ...paymentsInit(money()),

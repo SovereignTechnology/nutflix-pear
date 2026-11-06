@@ -1,49 +1,29 @@
-// NFX-06 §2 over the iroh helper, for spike S-D: how a verified hash list maps onto iroh
-// collections (nfx-node `video.rs`), and the fetch that re-anchors every file to sha256
-// (nfx-node `fetch.rs`). Spike code: slice 5 moves what survives into the worker.
+// NFX-06 §2 over the iroh helper, for spike S-D: the fetch that re-anchors every file to sha256
+// (nfx-node `fetch.rs`). Spike code. How a verified hash list maps onto iroh collections
+// (nfx-node `video.rs`) moved into the worker with slice 5e-3 (`worker/iroh/collections.ts`);
+// this imports it from there.
 //
 // The helper's word is never taken for the bytes: the client's `getFile` returns a file only if
 // its sha256 is the one the signed hash list gives, by position (NFX-05 §4; nfx ADR 0103,
 // sharp edge 1), and `getSeq` returns only hashes to ask for.
 import { nfx } from '@sovit/core';
 
-import { PoisonedError } from '../../packages/app-desktop/dist/worker/iroh/index.js';
+import {
+  PoisonedError,
+  metaMembers,
+  renditionMembers as renditionCollection,
+} from '../../packages/app-desktop/dist/worker/iroh/index.js';
 
-export { PoisonedError };
-
-const utf8 = new TextDecoder('utf-8', { fatal: true });
+export { PoisonedError, metaMembers };
 
 /** Largest hash list fetched before its sha256 is known (nfx-node `MAX_HASH_LIST_BYTES`). */
 export const MAX_HASH_LIST_BYTES = 16 * 1024 * 1024;
 
-/** The meta collection's sha256 values: root, then every file that is not an init or segment. */
-export function metaMembers(root, list) {
-  return [
-    root,
-    ...list.files.filter((f) => f.role !== 'init' && f.role !== 'segment').map((f) => f.sha256),
-  ];
-}
-
-/** A rendition collection's sha256 values: its init, then its segments in playlist order. */
+/** A rendition collection's sha256 values (the worker's), or a throw when it does not resolve. */
 export function renditionMembers(list, playlistBytes) {
-  const text = utf8.decode(playlistBytes);
-  let init;
-  const segments = [];
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/\r$/, '');
-    if (line.startsWith('#EXT-X-MAP:')) {
-      const uri = /URI="([^"]*)"/.exec(line)?.[1] ?? '';
-      const f = nfx.resolveContentName(list, uri);
-      if (f?.role !== 'init' || init !== undefined) throw new Error('playlist: not one init');
-      init = f.sha256;
-    } else if (line !== '' && !line.startsWith('#')) {
-      const f = nfx.resolveContentName(list, line);
-      if (f?.role !== 'segment') throw new Error(`playlist: ${line} is not a segment`);
-      segments.push(f.sha256);
-    }
-  }
-  if (init === undefined || segments.length === 0) throw new Error('playlist: no init or segments');
-  return [init, ...segments];
+  const members = renditionCollection(list, playlistBytes);
+  if (!members.ok) throw new Error(`playlist: ${members.error.reason}`);
+  return members.value;
 }
 
 function entry(list, sha) {

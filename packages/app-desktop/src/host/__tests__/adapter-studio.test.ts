@@ -8,7 +8,13 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { NostrEvent, RelayUrl, UploadProgress, VideoManifest } from '@sovit/core';
+import type {
+  IrohRelayUrl,
+  NostrEvent,
+  RelayUrl,
+  UploadProgress,
+  VideoManifest,
+} from '@sovit/core';
 import { mocks, nfx, nostr } from '@sovit/core';
 
 import type { IpcError } from '../../ipc/errors.js';
@@ -238,15 +244,30 @@ describe('seeder over the worker; settings side effects', () => {
     r = await rig();
     await r.ready();
     const a = r.host.adapter;
-    expect(r.worker().calls('init')[0]).toMatchObject({ nfx: { enabled: false } });
+    expect(r.worker().calls('init')[0]).toMatchObject({
+      nfx: { enabled: false, irohRelays: [] },
+      // Slice 5e-3: no helper unless the environment names one (the entry reads it).
+      irohHelper: null,
+    });
     await a.updateSettings({ nfx });
-    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true }]);
+    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true, irohRelays: [] }]);
     await a.updateSettings({ theme: 'dark' });
     await a.updateSettings({ nfx: { ...nfx, scopedRelays: ['wss://scoped.test' as RelayUrl] } });
     expect(r.worker().calls('nfx.configure')).toHaveLength(1); // no on/off change, no push
     await a.updateSettings({ nfx: { ...nfx, enabled: false } });
-    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true }, { enabled: false }]);
+    expect(r.worker().calls('nfx.configure')).toEqual([
+      { enabled: true, irohRelays: [] },
+      { enabled: false, irohRelays: [] },
+    ]);
     await a.updateSettings({ nfx });
+    // Slice 5e-3: a change of the iroh relays is pushed too, and only a change.
+    const irohRelays = ['https://iroh-relay.test/' as IrohRelayUrl];
+    await a.updateSettings({ nfx: { ...nfx, irohRelays } });
+    await a.updateSettings({ nfx: { ...nfx, irohRelays: [...irohRelays] } });
+    expect(r.worker().calls('nfx.configure').slice(2)).toEqual([
+      { enabled: true, irohRelays: [] },
+      { enabled: true, irohRelays },
+    ]);
     // A restarted worker starts with the current state.
     r.worker().crash(1);
     await eventually(
@@ -254,7 +275,7 @@ describe('seeder over the worker; settings side effects', () => {
       'restart',
       5000,
     );
-    expect(r.spawned[1]!.calls('init')[0]).toMatchObject({ nfx: { enabled: true } });
+    expect(r.spawned[1]!.calls('init')[0]).toMatchObject({ nfx: { enabled: true, irohRelays } });
   });
 
   it('seeder.status events reach onStatus as SeederStatus (Map)', async () => {

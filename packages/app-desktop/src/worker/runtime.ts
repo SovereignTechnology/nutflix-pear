@@ -9,6 +9,7 @@ import type { FsAdapter, ProcessRunner } from '@sovit/core';
 import type { SeederFs } from '@sovit/seeder';
 
 import type { OsName } from './ffmpeg.js';
+import type { HelperSpawn } from './iroh/helper.js';
 import type { SpawnDleqThread } from './pay/dleq-thread.js';
 
 /**
@@ -101,6 +102,13 @@ export interface WorkerRuntime {
    * server gets its HTTP from `hypercore-blob-server`'s own `imports` map instead.
    */
   readonly createHttpServer: (onRequest: HttpRequestHandler) => Promise<HttpServerLike>;
+  /**
+   * Slice 5e-3: spawns the iroh helper (ADR 0021), every stdio stream a pipe, argv only:
+   * `bare-subprocess` under Bare (`adapters/bare.ts`; the worker holds bare-sidecar's IPC pipe,
+   * which keeps such a child alive: spike S-D finding 10, slice 5e-1), `node:child_process` in
+   * tests. May throw synchronously (Bare's ENOENT).
+   */
+  readonly spawnHelper: HelperSpawn;
   /**
    * Start the DLEQ thread (issue #8 d: F5's checks off this event loop). Bare's is `Bare.Thread`
    * (`adapters/bare.ts`); absent, the checks run inline in small chunks.

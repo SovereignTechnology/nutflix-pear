@@ -24,6 +24,22 @@ export class HostArgsError extends Error {
   override readonly name = 'HostArgsError' as const;
 }
 
+/** Slice 5e-3: the environment variable naming the iroh helper's executable (dev and CI). */
+export const IROH_HELPER_ENV = 'NUTFLIX_IROH_HELPER';
+
+/**
+ * Slice 5e-3 (ADR 0021): the iroh helper's executable from `NUTFLIX_IROH_HELPER` (dev and CI;
+ * slice 5e-5 supplies a packaged build's own copy), or `null` when it is unset or empty, and the
+ * worker then speaks HyperDHT only. Strict like the arguments: a value that is not an absolute
+ * path is an error, never a quiet fallback.
+ */
+export function irohHelperFromEnv(value: string | undefined): string | null {
+  if (value === undefined || value === '') return null;
+  if (!isAbsolute(value) || value.includes('\u0000'))
+    throw new HostArgsError(`${IROH_HELPER_ENV} needs an absolute path`);
+  return value;
+}
+
 function bootstrapList(v: string): { host: '127.0.0.1'; port: number }[] {
   const out: { host: '127.0.0.1'; port: number }[] = [];
   for (const part of v.split(',')) {

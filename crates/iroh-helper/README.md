@@ -12,8 +12,22 @@ files, in which order, and whether the bytes are right are the worker's: NFX-05 
 sha256 check before a file is used, the NFX file store, beacons and, in Phase 2, every money
 decision stay in JavaScript.
 
-Status: **spike S-D** (`docs/spikes/S-D-iroh-helper.md`). Built and tested only in CI
-(`.github/workflows/spike-iroh.yml`); nothing in the app runs it yet.
+Status: from **spike S-D** (`docs/spikes/S-D-iroh-helper.md`). Since slice 5e-3 the worker runs
+one to serve its NFX videos (`packages/app-desktop/src/worker/nfx/iroh.ts` and `iroh-seeding.ts`);
+fetching through it is slice 5e-4, packaging it 5e-5. Built and tested only in CI.
+
+## How the worker uses it (slice 5e-3)
+
+- **One process per worker,** spawned while NFX seeding is on and a stored video is to be served,
+  `--state <storage>/tmp/nfx-iroh` (a cache, emptied at every worker start and every stop).
+- **`init`:** the network's iroh relays (`Settings.nfx.irohRelays`), and as `secret` the Ed25519
+  seed of a key the worker derives from its Corestore primary key (`nfx:<namespace>:iroh`), so
+  the node id is the same at every start. The worker checks that the `node` it reports is that
+  key's public half.
+- **Serving:** `import` of each file by its path in the NFX store, then one `seq` per NFX-06 §2
+  collection, tagged `nfx/<root>/meta` and `nfx/<root>/r<n>`. Each ticket is decoded once with
+  `ticket` and must name this node and that collection. `untag` when a video is no longer stored;
+  `addr` at every pass, and the tickets are made again when the addresses change.
 
 ## Rules it keeps
 
@@ -107,4 +121,6 @@ failed.
 
 CI only (`.github/workflows/spike-iroh.yml`): Rust 1.98.0 (`rust-toolchain.toml`),
 `cargo build --release --locked`, `cargo clippy --locked -- -D warnings`, `cargo test --locked`,
-`cargo deny check` (`deny.toml`).
+`cargo deny check` (`deny.toml`). `.github/workflows/ci.yml` builds the release binary on every
+run (job `iroh-helper`, same toolchain, `--locked`) for the worker's tests, which find it in
+`NUTFLIX_IROH_HELPER`.

@@ -180,3 +180,39 @@ only").
   not at all. A stored version 10 or 11 setting stays valid.
 - **Not used yet.** The worker hands them to the iroh helper in slice 5e-3, and its beacons name
   them from then on.
+
+## Amendment 2026-10-31: seeding over iroh (slice 5e-3)
+
+The worker also serves its NFX store over NFX-06, through the iroh helper
+([ADR 0021](0021-speak-iroh-through-a-helper.md)), beside NFX-12, under the same rule: only while
+seeding AND the NFX setting are both on.
+- **One helper per worker,** started when a stored video is to be served and stopped when serving
+  goes off. Its path comes in `init` (`irohHelper`): dev and CI name it in `NUTFLIX_IROH_HELPER`,
+  and slice 5e-5 supplies a packaged build's own copy. Without one the worker speaks HyperDHT
+  only, and that is not an error.
+  - **Its key** is `Corestore.createKeyPair('nfx:<namespace>:iroh')`: never the HyperDHT
+    listener's or the legacy swarm's. Its Ed25519 seed is the helper's iroh secret, sent in
+    `init` and nowhere else, so the node id survives restarts. A helper that reports another node
+    id is stopped.
+  - **The network's iroh relays only** (slice 5e-2), sent with `nfx.configure`; a change restarts
+    the helper with the new list.
+  - **Its store is a cache** under the worker's `tmp/`, emptied at every worker start and at every
+    stop, so it serves only what this run imported into it.
+- **What it serves.** Every file is imported by its path in the NFX store, which names a path
+  only for a file of a stored video's verified hash list, so nothing outside one can be served.
+  Nothing is hashed again: the store checked every file when it took it.
+  - The collections are NFX-06 §2's: `meta` (the hash list, then the playlists, thumbs and
+    subtitles in `files` order), then one per rendition (its init, then its segments in its
+    playlist's order). Spike S-D's code for this moved into the worker.
+  - A video whose playlists do not resolve, or with more than 16 renditions, is not served over
+    iroh. It is still served over NFX-12.
+  - Each collection is tagged under its hash list's root, and the tags go when the video does.
+- **Beacons per video.** `nfx.endpoint` takes the video and answers both endpoints: the
+  `hyperdht` one as before, and an `iroh` one while that video is served over iroh (the node, its
+  relay when that is one of the network's or else `''`, its direct addresses, and a ticket per
+  collection). It answers at once; a video still being imported has no iroh endpoint yet. The
+  beacon names the iroh endpoint first, then the `hyperdht` one, and core writes the tickets in
+  key order.
+- **Tested in CI** against the real helper: `ci.yml` builds it for the test job, and its suite
+  fails there, never skips, without one.
+- **Not yet:** fetching over iroh (slice 5e-4) and packaging the helper (5e-5).

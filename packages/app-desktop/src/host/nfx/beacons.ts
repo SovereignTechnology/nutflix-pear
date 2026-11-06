@@ -6,18 +6,28 @@
  * - **TTL 120 s, republished every 60 s** (NFX-03 §3: at TTL/2), within the scoped relays' rate
  *   limit of one per 20 s per (seeder, address) (NFX-04 §2).
  * - **Only while the worker serves.** No endpoint means no beacon: a beacon never names a
- *   listener that is down.
+ *   listener that is down. Slice 5e-3: the worker is asked per video, since the iroh endpoint is
+ *   per video (a ticket per collection, NFX-06 §2) and only there once its files are imported.
  * - **Only for a video whose current manifest, by the recorded author, names the root the store
  *   verified** (NFX-03 §3), and that its author has not deleted (NFX-02 §6: seeders MUST stop
  *   beaconing a deleted manifest). The check is redone every 10 minutes.
  * - **Content:** `free: true`, `price_hint: 0`, no mints (NFX-07 §2: a free seeder does not quote),
- *   `chunks: "all"`, and the worker's `hyperdht` endpoint.
+ *   `chunks: "all"`, and the worker's endpoints: its `iroh` one (slice 5e-3, NFX-06) when the
+ *   video is served over iroh, then its `hyperdht` one (NFX-12). An iroh relay is named only when
+ *   it is one of the network's (NFX-06 §1), checked again here.
  * - **Self-checked** with core's `parseBeacon` before it goes out.
  */
-import type { NfxAddress, NfxVideo, NostrEvent, NostrPubkey, RelayUrl } from '@sovit/core';
+import type {
+  IrohRelayUrl,
+  NfxAddress,
+  NfxVideo,
+  NostrEvent,
+  NostrPubkey,
+  RelayUrl,
+} from '@sovit/core';
 import { nfx } from '@sovit/core';
 
-import type { NfxHyperdhtEndpointWire, NfxStoredVideoWire } from '../../ipc/worker-protocol.js';
+import type { NfxEndpointsWire, NfxStoredVideoWire } from '../../ipc/worker-protocol.js';
 import type { Logger } from '../log.js';
 import type { SeededVideo } from './seeded.js';
 import type { NfxSeederKey } from './seeder-key.js';
@@ -32,8 +42,13 @@ export interface NfxBeaconDeps {
   readonly scopedRelays: () => readonly RelayUrl[];
   /** The seeder key, or `null` while there is none (NFX off, no user signer). */
   readonly key: () => Promise<NfxSeederKey | null>;
-  /** The worker's endpoint for `seeder` while it serves, else `null` (`nfx.endpoint`). */
-  readonly endpoint: (seeder: NostrPubkey) => Promise<NfxHyperdhtEndpointWire | null>;
+  /**
+   * Where the worker serves `video` for `seeder`'s beacons (`nfx.endpoint`): each endpoint
+   * `null` while it does not serve it that way.
+   */
+  readonly endpoint: (seeder: NostrPubkey, video: string) => Promise<NfxEndpointsWire>;
+  /** Slice 5e-3: the network's iroh relays now (`Settings.nfx.irohRelays`). */
+  readonly irohRelays: () => readonly IrohRelayUrl[];
   /** What the worker's store holds (`nfx.videos`). */
   readonly stored: () => Promise<readonly NfxStoredVideoWire[]>;
   readonly seeded: () => readonly SeededVideo[];
@@ -51,8 +66,32 @@ export interface NfxBeaconDeps {
 
 export interface BeaconRound {
   readonly published: number;
-  /** Why nothing went out at all, when nothing did. */
+  /** Why nothing went out at all, when nothing did (`not-serving`: no video asked is served). */
   readonly idle?: 'no-scoped-relays' | 'no-key' | 'not-serving';
+}
+
+/**
+ * Slice 5e-3: what a beacon names for one video, from the worker's `nfx.endpoint`: the iroh
+ * endpoint first (NFX-06 §6 tries iroh first), then the HyperDHT one. The iroh relay is kept only
+ * when it is one of `networkRelays` (NFX-06 §1); the worker checked that too.
+ */
+export function beaconEndpoints(
+  served: NfxEndpointsWire,
+  networkRelays: readonly string[],
+): nfx.Endpoint[] {
+  const out: nfx.Endpoint[] = [];
+  const iroh = served.iroh;
+  if (iroh !== null)
+    out.push({
+      t: 'iroh',
+      node: iroh.node,
+      relay: networkRelays.includes(iroh.relay) ? iroh.relay : '',
+      addrs: iroh.addrs,
+      // Core writes them in key order (nfx-proto's `BTreeMap`).
+      tickets: new Map(iroh.tickets.$map),
+    });
+  if (served.hyperdht !== null) out.push(served.hyperdht);
+  return out;
 }
 
 const realTimers = {
@@ -107,21 +146,29 @@ export class NfxBeacons {
     if (relays.length === 0) return { published: 0, idle: 'no-scoped-relays' };
     const key = await this.d.key();
     if (key === null) return { published: 0, idle: 'no-key' };
-    const endpoint = await this.d.endpoint(key.pubkey);
-    if (endpoint === null) return { published: 0, idle: 'not-serving' };
     const seeded = this.d.seeded();
     let published = 0;
+    let asked = 0;
+    let served = 0;
     for (const s of await this.d.stored()) {
       const record = seeded.find((x) => x.video === s.video && x.root === s.root);
       if (record === undefined) continue;
+      // Before the manifest check: asking the worker is cheap, a relay query is not.
+      asked++;
+      const endpoints = beaconEndpoints(
+        await this.d.endpoint(key.pubkey, s.video),
+        this.d.irohRelays(),
+      );
+      if (endpoints.length === 0) continue;
+      served++;
       const address = `${nfx.KIND_MANIFEST}:${record.author}:${s.video}` as NfxAddress;
       if (!(await this.mayBeacon(address, s.root))) continue;
-      const event = await this.build(key, address, s.video, endpoint);
+      const event = await this.build(key, address, s.video, endpoints);
       if (event === null) continue;
       const accepted = await this.d.send(event, relays);
       if (accepted > 0) published++;
     }
-    return { published };
+    return asked > 0 && served === 0 ? { published, idle: 'not-serving' } : { published };
   }
 
   /** The current manifest names this root and is not deleted; rechecked every 10 minutes. */
@@ -145,7 +192,7 @@ export class NfxBeacons {
     key: NfxSeederKey,
     address: NfxAddress,
     video: string,
-    endpoint: NfxHyperdhtEndpointWire,
+    endpoints: readonly nfx.Endpoint[],
   ): Promise<NostrEvent | null> {
     const addr = nfx.VideoAddr.parse(video);
     const now = this.d.now();
@@ -154,7 +201,7 @@ export class NfxBeacons {
     const content = nfx.beaconContentText({
       v: 1,
       video: addr.value,
-      endpoints: [endpoint],
+      endpoints,
       skipped: [],
       chunks: 'all',
       priceHint: 0n,

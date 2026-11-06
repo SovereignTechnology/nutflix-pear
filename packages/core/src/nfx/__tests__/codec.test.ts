@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_DATA_PAYLOAD,
   MAX_PAY_MESSAGE,
+  beaconContentText,
   checkPlaylist,
   decodeFilesMessage,
   decodePayMessage,
@@ -83,6 +84,41 @@ describe('beacon content reader', () => {
     const endpoint = { t: 'hyperdht', peer: 'cd'.repeat(32), bind: 'ef'.repeat(64) };
     const text = JSON.stringify({ ...base, endpoints: [endpoint] });
     expect(parseBeaconContent(text, seeder).ok).toBe(false);
+  });
+
+  it('writes iroh tickets in key order (code points), however the Map was filled', () => {
+    const video = VideoAddr.parse(base.video);
+    if (!video.ok) throw new Error('video');
+    const ticket = `blob${'a'.repeat(52)}`;
+    const text = beaconContentText({
+      v: 1,
+      video: video.value,
+      endpoints: [
+        {
+          t: 'iroh',
+          node: '01'.repeat(32),
+          relay: '',
+          addrs: [],
+          // U+FF61 sorts before U+1F600 by code point, after it by UTF-16 code unit.
+          tickets: new Map([
+            ['meta', ticket],
+            ['\u{1F600}', ticket],
+            ['720p', ticket],
+            ['｡', ticket],
+          ]),
+        },
+      ],
+      skipped: [],
+      chunks: 'all',
+      priceHint: 0n,
+      acceptsMints: [],
+      free: true,
+    });
+    const keys = Object.keys(
+      (JSON.parse(text) as { endpoints: { tickets: Record<string, string> }[] }).endpoints[0]!
+        .tickets,
+    );
+    expect(keys).toEqual(['720p', 'meta', '｡', '\u{1F600}']);
   });
 
   it('reads `relay` as empty when it is not a string, as nfx-proto does', () => {

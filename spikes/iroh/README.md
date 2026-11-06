@@ -10,6 +10,7 @@ of it ships. The record, with the verdict and the numbers, is
 | `harness.mjs` | The worker's side of the helper under Node 22: `serve` (the NfxStore, the helper's imports and collections, signed beacons) and `fetch` (beacons, the NFX-06 fetch through the helper, sha256 on every file, the NfxStore). |
 | `nfx06.mjs` | NFX-06 §2 in JavaScript: collection membership from a verified hash list and its playlists, and the capped, re-anchoring fetch (as nfx-node's `video.rs` and `fetch.rs`). |
 | `bare-smoke.mjs` | The helper client under the real Bare runtime through `bare-subprocess` with a stdin pipe: two helpers on loopback, a get, a SIGKILL and restart, clean exits. |
+| `bare-sidecar-run.mjs` | Starts the smoke through bare-sidecar, as the host starts the worker (holding `Bare.IPC`); the plain `bare` without it tears down mid-run (finding 10, Bare's own). |
 | `nat/run.sh` | S5′'s NAT matrix (network namespaces, nft masquerade, `fully-random` for symmetric), lifted from nfx at `29019d2`, with an iroh relay and a scoped Nostr relay in the public namespace and a byte meter on the client's router. |
 
 The harness imports the built packages (`npm run build` first) and the worker's helper client from

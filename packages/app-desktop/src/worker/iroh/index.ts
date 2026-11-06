@@ -1,4 +1,7 @@
-/** The iroh helper's client (ADR 0021): unwired until slice 5, exercised by spike S-D. */
+/**
+ * The iroh helper's client (ADR 0021), from spike S-D, and NFX-06 §2's collections. The worker's
+ * one helper is `../nfx/iroh.ts`'s (slice 5e-3).
+ */
 export { HelperFrameDecoder, HelperFrameError, MAX_FRAME, MAX_PAYLOAD } from './frames.js';
 export {
   HelperError,
@@ -17,3 +20,10 @@ export {
   type IrohHelperOptions,
 } from './helper.js';
 export { bareHelperSpawn } from './spawn.js';
+export {
+  META_COLLECTION,
+  metaMembers,
+  nfxCollections,
+  renditionMembers,
+  type NfxCollection,
+} from './collections.js';

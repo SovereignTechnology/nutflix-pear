@@ -15,6 +15,7 @@ import { spawn } from 'bare-subprocess';
 
 import type { OsName } from '../ffmpeg.js';
 import { utf8 } from '../../ipc/codec.js';
+import { bareHelperSpawn } from '../iroh/spawn.js';
 import type { SpawnDleqThread } from '../pay/dleq-thread.js';
 import type { HttpRequestHandler, HttpServerLike, StateFs, WorkerRuntime } from '../runtime.js';
 import type { BareSpawn } from '../transcode/index.js';
@@ -253,6 +254,8 @@ export function bareRuntime(): WorkerRuntime {
     mediaFs: bareMediaFs,
     createHttpServer: bareHttpServer,
     runner: createBareProcessRunner(spawn as unknown as BareSpawn),
+    // Slice 5e-3: the iroh helper, a long-lived child with a stdin pipe (`../iroh/spawn.ts`).
+    spawnHelper: bareHelperSpawn(spawn as unknown as BareSpawn),
     env: (name) => os.getEnv(name),
     isExecutable,
     os: osName(),

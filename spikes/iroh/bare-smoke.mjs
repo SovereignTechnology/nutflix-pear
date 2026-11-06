@@ -7,9 +7,11 @@
 //
 // Bundled by esbuild (npm packages external) and started by a boot module that loads
 // bare-encoding's globals first, as packages/app-desktop/src/worker/__tests__/helpers/bare.ts
-// does. CI only: .github/workflows/spike-iroh.yml.
+// does. CI only: .github/workflows/spike-iroh.yml, which starts it through bare-sidecar as the
+// host starts the worker (`bare-sidecar-run.mjs`): the plain `bare` without `Bare.IPC` tears
+// itself down mid-run (S-D finding 10, Bare's own; slice 5e-1).
 //
-//   bare boot.mjs <helper binary> <work dir> <data file> <its sha256> <result file>
+//   node bare-sidecar-run.mjs boot.mjs <helper binary> <work dir> <data file> <its sha256> <result file>
 //
 // The result is written to <result file> synchronously before exiting: Bare.exit does not wait
 // for stdout to drain into a pipe, so a console.log just before it can be lost. Every step and

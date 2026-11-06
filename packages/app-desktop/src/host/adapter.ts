@@ -72,6 +72,7 @@ import type {
 import { IMAGE_MIMES } from '../ipc/protocol.js';
 import { rehydrate } from '../ipc/wiremap.js';
 import type {
+  NfxConfigureArgs,
   PublishDraft,
   ThumbnailHex,
   UploadMeta,
@@ -240,7 +241,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
         : new NfxBeacons({
             scopedRelays: () => this.beaconRelays(),
             key: () => this.nfxSeederKey(nfxDir),
-            endpoint: async (seeder) => (await this.o.worker('nfx.endpoint', { seeder })).endpoint,
+            endpoint: (seeder, video) => this.o.worker('nfx.endpoint', { seeder, video }),
+            irohRelays: () => this.o.settings.get().nfx?.irohRelays ?? [],
             stored: async () => (await this.o.worker('nfx.videos', {})).videos,
             seeded: () => this.seeded?.list() ?? [],
             manifest: (addr) => this.nfxVideo(addr),
@@ -1154,9 +1156,16 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
         this.log.warn('seeding change not pushed to the worker (applies on its next start)');
       }
     }
-    if ((next.nfx?.enabled === true) !== (prev.nfx?.enabled === true)) {
+    // Slice 5b: NFX on or off reaches the worker; slice 5e-3: so does a change of the network's
+    // iroh relays (the worker then restarts its helper with them).
+    const nfxNow = nfxWorkerArgs(next);
+    const nfxWas = nfxWorkerArgs(prev);
+    if (
+      nfxNow.enabled !== nfxWas.enabled ||
+      nfxNow.irohRelays.join(' ') !== nfxWas.irohRelays.join(' ')
+    ) {
       try {
-        await this.o.worker('nfx.configure', { enabled: next.nfx?.enabled === true });
+        await this.o.worker('nfx.configure', nfxNow);
       } catch {
         this.log.warn('NFX change not pushed to the worker (applies on its next start)');
       }
@@ -1334,6 +1343,14 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     this.topUpLogged.set(mint, t);
     this.log.info('auto top-up would be due; not executed with --dev-mocks');
   }
+}
+
+/**
+ * Slice 5b: `Settings.nfx` as the worker takes it (`init.nfx`, `nfx.configure`); slice 5e-3: with
+ * the network's iroh relays, none when unset.
+ */
+export function nfxWorkerArgs(s: Settings): NfxConfigureArgs {
+  return { enabled: s.nfx?.enabled === true, irohRelays: s.nfx?.irohRelays ?? [] };
 }
 
 function toComment(pc: nostr.ParsedComment): Comment {
