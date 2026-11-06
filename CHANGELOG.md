@@ -198,6 +198,16 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Fixed
 
+- NFX play finds its seeders on a real scoped relay. Beacons are ephemeral (NFX-04): a scoped
+  relay forwards them to live subscribers and never stores them, so the one-shot query the play
+  used found no seeder on nfxd's relay or any other, whoever was seeding. Found by the exit run
+  against nfxd (slice 5f).
+  - **Live:** a play holds a subscription on the scoped relays and opens as soon as a beacon names
+    a source, waiting at most one republish interval (62 s; seeders republish at TTL/2, NFX-03 §3).
+  - **Ahead of the click:** the Watch page's `nfxVideo` opens it when the page loads, and what
+    arrives is kept for a beacon's lifetime (bounded), so Play usually opens at once.
+  - **Tests:** core's `FakeRelayPool` now treats kinds 20000–29999 as NIP-01 says, forwarded to
+    live subscriptions and never stored; storing them is what hid this.
 - Merged NIP-71 and NFX feeds no longer skip a video when twins are dropped mid-page. A page
   stops at the oldest item of a side that has more, and a page left empty steps on.
 - A video request the player drops now ends main's fetch from the worker too. Before, after a
