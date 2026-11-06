@@ -1,19 +1,26 @@
 /**
- * The worker's iroh node (ADR 0021, slice 5e-3): ONE iroh helper process, started when NFX
- * serving needs it and stopped when nothing does. `./iroh-seeding.ts` serves through it; the
- * fetch over iroh (slice 5e-4) will dial through it.
+ * The worker's iroh nodes (ADR 0021): each ONE iroh helper process, started when it is needed and
+ * stopped when nothing needs it.
  *
- * - **A stable node id.** The helper's secret is the Ed25519 seed of a key pair derived by name
- *   from the worker's Corestore primary key, `nfx:<namespace>:iroh` (beside the HyperDHT
- *   listener's `nfx:<namespace>:seeder`, `./seeding.ts`, and never the same key), so the node a
- *   beacon names survives restarts. The seed goes to the helper in `init` and nowhere else: never
- *   logged, never kept here. The helper must then report exactly the key's public half as its
- *   node; one that reports another is stopped (an untrusted pipe, ADR 0021 §3).
+ * - **Two of them, never one** (slice 5e-4). The serving node (5e-3, `./iroh-seeding.ts`) has the
+ *   stable id its beacons name. Watching dials from a SECOND node with an ephemeral id
+ *   (`./watching.ts`): a watcher never dials with the seeder's identity, as NFX-12 §1 keeps the
+ *   HyperDHT watcher key apart from the seeder's, so what this node serves cannot be linked to
+ *   what its user watches.
+ * - **The serving node's id is stable.** The helper's secret is the Ed25519 seed of a key pair
+ *   derived by name from the worker's Corestore primary key, `nfx:<namespace>:iroh` (beside the
+ *   HyperDHT listener's `nfx:<namespace>:seeder`, `./seeding.ts`, and never the same key), so the
+ *   node a beacon names survives restarts. The seed goes to the helper in `init` and nowhere
+ *   else: never logged, never kept here. The helper must then report exactly the key's public
+ *   half as its node; one that reports another is stopped (an untrusted pipe, ADR 0021 §3).
+ * - **The watching node's id is ephemeral:** no `keyPair`, so `init` carries no secret and the
+ *   helper makes a fresh key at every start. Nothing ties one start's dials to the next.
  * - **The network's relays only**, as the host last said (`Settings.nfx.irohRelays`). A change
  *   stops the running helper, and the next `start` uses the new ones.
  * - **Its store is a cache** (spike S-D finding 8) under the worker's `tmp/`, which every worker
  *   start wipes, and it is emptied whenever this module stops the helper: what a helper serves is
- *   only ever what this run imported into it.
+ *   only ever what this run imported into it (the watching node: what it fetched in the last
+ *   seconds, until the helper's collector takes it).
  * - **Generations.** `IrohHelper`'s supervisor restarts a helper that exits. Every start and
  *   restart bumps `generation`: what was imported and ticketed before is to be done again (a
  *   restarted node keeps its id, not its ports).
@@ -29,6 +36,8 @@ import { IrohHelper } from '../iroh/helper.js';
 
 /** Under `<storage>/tmp` (wiped at every worker start): the helper's iroh-blobs store. */
 export const NFX_IROH_DIR = 'nfx-iroh';
+/** Slice 5e-4: the watching node's store, beside the serving node's (what it fetched). */
+export const NFX_IROH_WATCH_DIR = 'nfx-iroh-watch';
 /** How long after a failed start the next one may be tried. */
 export const IROH_START_RETRY_MS = 60_000;
 
@@ -45,8 +54,13 @@ export interface NfxIrohNodeDeps {
   readonly stateDir: string;
   /** Remove a directory and everything in it; a missing one is fine. */
   readonly rmTree: (path: string) => Promise<void>;
-  /** A key pair derived by name from the worker's primary key (`Corestore.createKeyPair`). */
-  readonly keyPair: (name: string) => Promise<PeerKeyPair>;
+  /**
+   * A key pair derived by name from the worker's primary key (`Corestore.createKeyPair`): the
+   * serving node's. Absent: an ephemeral node (the watching one), a fresh key at every start.
+   */
+  readonly keyPair?: (name: string) => Promise<PeerKeyPair>;
+  /** How the logs name it (`serving`, `watching`). */
+  readonly role?: string;
   readonly logger: Logger;
   readonly now?: () => number;
 }
@@ -127,22 +141,31 @@ export class NfxIrohNode {
     try {
       if (!(await this.d.isExecutable(this.d.file)))
         throw new Error('the iroh helper is not an executable file');
-      const keyPair = await this.d.keyPair(irohKeyName(this.namespace));
-      if (keyPair.publicKey.byteLength !== 32 || keyPair.secretKey.byteLength !== 64)
-        throw new Error('the iroh key pair is not an Ed25519 pair');
-      const node = toHex(keyPair.publicKey);
+      // `null`: ephemeral, whatever node the helper reports.
+      let node: string | null = null;
+      let secret: string | undefined;
+      if (this.d.keyPair !== undefined) {
+        const keyPair = await this.d.keyPair(irohKeyName(this.namespace));
+        if (keyPair.publicKey.byteLength !== 32 || keyPair.secretKey.byteLength !== 64)
+          throw new Error('the iroh key pair is not an Ed25519 pair');
+        node = toHex(keyPair.publicKey);
+        // libsodium's secret key is seed ‖ public key; iroh's is the seed. Only `init` carries it.
+        secret = toHex(keyPair.secretKey.subarray(0, 32));
+      }
       const helper: IrohHelper = new IrohHelper({
         spawn: this.d.spawn,
         file: this.d.file,
         stateDir: this.d.stateDir,
-        // libsodium's secret key is seed ‖ public key; iroh's is the seed. Only `init` carries it.
-        init: { relays: [...this.relays], secret: toHex(keyPair.secretKey.subarray(0, 32)) },
+        init:
+          secret === undefined
+            ? { relays: [...this.relays] }
+            : { relays: [...this.relays], secret },
         onEvent: (e) => {
           this.onEvent(helper, node, e);
         },
       });
       const reach = await helper.start();
-      if (reach.node !== node) {
+      if (node !== null && reach.node !== node) {
         await helper.close();
         throw new Error('the iroh helper reported a node id that is not its key');
       }
@@ -150,6 +173,7 @@ export class NfxIrohNode {
       this.failedAt = null;
       this.bump();
       this.d.logger.info('nfx: the iroh helper is up', {
+        role: this.role,
         namespace: this.namespace,
         relays: this.relays.length,
         relayReached: reach.relay !== '',
@@ -157,7 +181,10 @@ export class NfxIrohNode {
       return helper;
     } catch (err) {
       this.failedAt = now;
-      this.d.logger.error('nfx: the iroh helper did not start; iroh is off', { error: err });
+      this.d.logger.error('nfx: the iroh helper did not start; iroh is off', {
+        role: this.role,
+        error: err,
+      });
       return null;
     }
   }
@@ -177,7 +204,10 @@ export class NfxIrohNode {
     } catch (err) {
       this.d.logger.warn('nfx: the iroh helper store could not be emptied', { error: err });
     }
-    this.d.logger.info('nfx: the iroh helper is stopped', { namespace: this.namespace });
+    this.d.logger.info('nfx: the iroh helper is stopped', {
+      role: this.role,
+      namespace: this.namespace,
+    });
   }
 
   private bump(): void {
@@ -191,35 +221,48 @@ export class NfxIrohNode {
     }
   }
 
-  private onEvent(helper: IrohHelper, node: string, e: HelperEvent): void {
+  private get role(): string {
+    return this.d.role ?? 'serving';
+  }
+
+  /** `node`: the id the helper must keep, or `null` for an ephemeral one. */
+  private onEvent(helper: IrohHelper, node: string | null, e: HelperEvent): void {
     // A helper being stopped says it exited; that is not news.
     if (this.helper !== helper) return;
     switch (e.type) {
       case 'stderr':
-        this.d.logger.debug('nfx: iroh helper', { line: e.line });
+        this.d.logger.debug('nfx: iroh helper', { role: this.role, line: e.line });
         return;
       case 'violation':
         this.d.logger.warn('nfx: the iroh helper broke the protocol and was killed', {
+          role: this.role,
           reason: e.reason,
         });
         return;
       case 'exit':
         this.d.logger.warn('nfx: the iroh helper exited; restarting it', {
+          role: this.role,
           code: e.code,
           signal: e.signal,
         });
         return;
       case 'restarted':
-        if (e.reach.node !== node) {
+        if (node !== null && e.reach.node !== node) {
           this.d.logger.error('nfx: the restarted iroh helper reported another node id');
           void this.stop();
           return;
         }
-        this.d.logger.info('nfx: the iroh helper restarted', { attempt: e.attempt });
+        this.d.logger.info('nfx: the iroh helper restarted', {
+          role: this.role,
+          attempt: e.attempt,
+        });
         this.bump();
         return;
       case 'restart-failed':
-        this.d.logger.warn('nfx: the iroh helper did not restart', { attempt: e.attempt });
+        this.d.logger.warn('nfx: the iroh helper did not restart', {
+          role: this.role,
+          attempt: e.attempt,
+        });
         return;
     }
   }

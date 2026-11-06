@@ -21,6 +21,7 @@ import { WORKER_V } from '../worker-protocol.js';
 import type {
   HostMethod,
   HostMethodTable,
+  NfxIrohEndpointWire,
   PublishDraft,
   WorkerEvent,
   WorkerEventName,
@@ -36,12 +37,15 @@ const SHA = 'ef'.repeat(32) as Sha256Hex;
 /** Slice 5d: an NFX video and one seeder's beaconed endpoint. */
 const NFX_VIDEO = `nfx:testnet:1:nutflix-${'c'.repeat(32)}`;
 const ENDPOINT = { t: 'hyperdht' as const, peer: 'a'.repeat(64), bind: 'b'.repeat(128) };
+/** Slice 5e-4: a distinct 64-hex node id per `i`. */
+const hexPair = (i: number): string => i.toString(16).padStart(2, '0').repeat(32);
 const NFX_OPEN = {
   sid: SID,
   video: NFX_VIDEO,
   root: SHA,
   segs: 9,
   peers: [ENDPOINT],
+  iroh: [] as NfxIrohEndpointWire[],
   prefetchSeconds: 30,
 };
 /** Slice 5e-3: the network's iroh relays and an iroh endpoint as the worker answers it. */
@@ -137,6 +141,9 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
       peers: [ENDPOINT, { ...ENDPOINT, peer: 'c'.repeat(64) }],
       prefetchSeconds: 0,
     },
+    // Slice 5e-4: iroh only (an nfxd seeder), and both kinds.
+    { ...NFX_OPEN, peers: [], iroh: [IROH] },
+    { ...NFX_OPEN, iroh: [IROH, { ...IROH, node: 'e2'.repeat(32), relay: '' }] },
   ],
   'nfx.play.close': [{ sid: SID }],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
@@ -861,6 +868,7 @@ describe('slice 5d: nfx.play.open / nfx.play.close', () => {
     const g = validateWorkerArgs['nfx.play.open'];
     for (const bad of [
       { ...NFX_OPEN, peers: [] },
+      { ...NFX_OPEN, peers: [], iroh: [] },
       { ...NFX_OPEN, peers: Array.from({ length: 17 }, () => ENDPOINT) },
       { ...NFX_OPEN, peers: [{ ...ENDPOINT, peer: 'A'.repeat(64) }] },
       { ...NFX_OPEN, peers: [{ ...ENDPOINT, t: 'iroh' }] },
@@ -873,6 +881,15 @@ describe('slice 5d: nfx.play.open / nfx.play.close', () => {
       { ...NFX_OPEN, prefetchSeconds: 601 },
       { ...NFX_OPEN, sid: 'short' },
       { ...NFX_OPEN, extra: 1 },
+      // Slice 5e-4: the iroh endpoints.
+      (({ iroh: _, ...rest }) => rest)(NFX_OPEN),
+      { ...NFX_OPEN, iroh: [IROH, IROH] },
+      { ...NFX_OPEN, iroh: Array.from({ length: 9 }, (_, i) => ({ ...IROH, node: hexPair(i) })) },
+      { ...NFX_OPEN, iroh: [{ ...IROH, tickets: { $map: [['720p', `blob${'b'.repeat(60)}`]] } }] },
+      { ...NFX_OPEN, iroh: [{ ...IROH, relay: 'https://other.example/x' }] },
+      { ...NFX_OPEN, iroh: [{ ...IROH, node: 'E1'.repeat(32) }] },
+      { ...NFX_OPEN, iroh: [ENDPOINT] },
+      { ...NFX_OPEN, peers: [IROH] },
     ])
       expect(g(bad), JSON.stringify(bad).slice(0, 200)).toBe(false);
     expect(validateWorkerArgs['nfx.play.close']({ sid: SID, extra: 1 })).toBe(false);

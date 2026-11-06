@@ -47,6 +47,12 @@ export interface NfxFetcher {
    * `NfxFetchError`, which says why).
    */
   fetch(sha: string, size: number, exact: boolean): Promise<Uint8Array>;
+  /**
+   * Slice 5e-4: file `sha`'s bytes, which another fetcher of the session served and checked
+   * against `sha`. A fetcher that places files by what it has seen (iroh, NFX-06 §2) takes the
+   * hash list and playlists from here too; others need not implement it.
+   */
+  learn?(sha: string, bytes: Uint8Array): void;
   /** Abandon every fetch in flight (they reject) and close what this fetcher opened. */
   close(): Promise<void>;
 }
