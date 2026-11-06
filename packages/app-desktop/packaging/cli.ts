@@ -4,12 +4,15 @@
  * `packages/app-desktop/out/` (gitignored). Needs `npm run build` first: staging refuses a
  * build older than its sources (stage.ts `assertCurrentBuild`, cross-lane review round 4).
  *
- *   node packaging/cli.ts stage   [--platform p] [--arch a]
- *   node packaging/cli.ts package [--platform p] [--arch a]
- *   node packaging/cli.ts make    [--platform p] [--arch a] [--targets deb,appimage,…]
+ *   node packaging/cli.ts stage   [--platform p] [--arch a] HELPER
+ *   node packaging/cli.ts package [--platform p] [--arch a] HELPER
+ *   node packaging/cli.ts make    [--platform p] [--arch a] [--targets deb,appimage,…] HELPER
  *
  * Options: `--out <dir>` (default out/), `--appimage-runtime-dir <dir>` (default
  * out/appimage-runtime; holds the pinned runtime file, placed by hand — maker-appimage.ts).
+ * HELPER (slice 5e-5, required) is `--iroh-helper <file>`, the iroh helper built for the target
+ * (`crates/iroh-helper`), or `--without-iroh-helper`: a build without it speaks HyperDHT only,
+ * so that is a choice, never an omission.
  *
  * After `package`/`make`: the fuses of every packaged binary were read back and match
  * fuses.ts, and the layout matches layout.ts (a mismatch fails the run). `make` also writes
@@ -27,7 +30,7 @@ import type { ForgeArch, ForgePlatform } from '@electron-forge/shared-types';
 import { TARGETS, forgeConfig, type Target } from './forge-config.ts';
 import { BUILD_ARCHES, MADE_LIST_SCHEMA, MADE_LIST_SUFFIX } from './identity.ts';
 import { pinnedRuntime } from './maker-appimage.ts';
-import { PKG_DIR, REPO_ROOT, stageApp } from './stage.ts';
+import { PKG_DIR, REPO_ROOT, irohHelperArg, stageApp } from './stage.ts';
 
 const PLATFORMS: readonly ForgePlatform[] = ['linux', 'win32', 'darwin'];
 const ARCHES: readonly ForgeArch[] = BUILD_ARCHES;
@@ -39,6 +42,8 @@ export interface CliOptions {
   readonly out: string;
   readonly appImageRuntimeDir: string;
   readonly targets: readonly Target[] | undefined;
+  /** Slice 5e-5: the iroh helper for the target, or `null` (`--without-iroh-helper`). */
+  readonly irohHelper: string | null;
 }
 
 export function parseCli(argv: readonly string[]): CliOptions {
@@ -48,9 +53,20 @@ export function parseCli(argv: readonly string[]): CliOptions {
   const opts = new Map<string, string>();
   for (let i = 0; i < rest.length; i += 2) {
     const k = rest[i] ?? '';
+    if (k === '--without-iroh-helper') {
+      i -= 1; // a flag: no value
+      continue;
+    }
     const v = rest[i + 1];
     if (
-      !['--platform', '--arch', '--out', '--appimage-runtime-dir', '--targets'].includes(k) ||
+      ![
+        '--platform',
+        '--arch',
+        '--out',
+        '--appimage-runtime-dir',
+        '--targets',
+        '--iroh-helper',
+      ].includes(k) ||
       v === undefined
     )
       throw new Error(`unknown or incomplete option ${k}`);
@@ -72,6 +88,8 @@ export function parseCli(argv: readonly string[]): CliOptions {
       targets.push(t as Target);
     }
   }
+  // Last, so a bad platform, arch or target is reported as such.
+  const irohHelper = irohHelperArg(rest);
   return {
     command,
     platform,
@@ -81,6 +99,7 @@ export function parseCli(argv: readonly string[]): CliOptions {
       opts.get('--appimage-runtime-dir') ?? join(out, 'appimage-runtime'),
     ),
     targets,
+    irohHelper,
   };
 }
 
@@ -129,7 +148,12 @@ export async function runCli(o: CliOptions): Promise<string[]> {
   if (o.command === 'make' && o.platform === 'linux' && (o.targets ?? TARGETS).includes('appimage'))
     pinnedRuntime(o.appImageRuntimeDir, o.arch);
   const stageDir = join(o.out, `stage-${o.platform}-${o.arch}`);
-  const staged = await stageApp({ out: stageDir, platform: o.platform, arch: o.arch });
+  const staged = await stageApp({
+    out: stageDir,
+    platform: o.platform,
+    arch: o.arch,
+    ...(o.irohHelper === null ? {} : { irohHelper: o.irohHelper }),
+  });
   process.stdout.write(
     `staged ${staged.out}: ${String(staged.packages.length)} packages, ${String(staged.files)} files, ${(staged.bytes / 1e6).toFixed(1)} MB\n`,
   );
@@ -146,6 +170,7 @@ export async function runCli(o: CliOptions): Promise<string[]> {
       version,
       electronChecksums: checksums,
       appImageRuntimeDir: o.appImageRuntimeDir,
+      irohHelper: staged.irohHelper,
       ...(o.targets === undefined ? {} : { targets: o.targets }),
     }),
   );

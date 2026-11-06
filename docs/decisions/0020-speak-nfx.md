@@ -216,3 +216,22 @@ seeding AND the NFX setting are both on.
 - **Tested in CI** against the real helper: `ci.yml` builds it for the test job, and its suite
   fails there, never skips, without one.
 - **Not yet:** fetching over iroh (slice 5e-4) and packaging the helper (5e-5).
+
+## Amendment 2026-11-06: the packaged app ships the helper (slice 5e-5)
+
+- **Where.** `resources/app.asar.unpacked/iroh/nutflix-iroh-helper` (`.exe` on Windows), unpacked
+  beside the worker: a spawned binary cannot live in an archive. Main passes it to the host as
+  `--iroh-helper`, which wins over `NUTFLIX_IROH_HELPER`. With it the variable is never read, so
+  nothing in a user's environment can swap the binary a release ships. A packaged build without
+  the file (a `--without-iroh-helper` build) still passes the path; the worker finds no executable
+  there and speaks HyperDHT only.
+- **Built for the release.** `release.yml` builds it from the tagged commit, with the crate's
+  pinned toolchain and `--locked`, and never from a cache. Linux x64 only, like the release
+  itself. The inactive GitLab release jobs pass `--without-iroh-helper` until they build one.
+- **Checked twice.** Staging requires a regular file (never a symlink), executable, at most 64
+  MiB, and an executable for the target, read from its header (an x64 ELF for linux-x64). That
+  last check catches a helper built for the build machine, which would otherwise fail only on a
+  user's computer. After packaging, the layout check requires it unpacked, a regular file, and
+  executable.
+- **A choice, never an omission.** `packaging/cli.ts` refuses to run without `--iroh-helper
+  <file>` or `--without-iroh-helper`.

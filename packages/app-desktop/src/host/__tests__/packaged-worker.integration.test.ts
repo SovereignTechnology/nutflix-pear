@@ -60,6 +60,8 @@ beforeAll(async () => {
       process.platform,
       '--arch',
       process.arch,
+      // Slice 5e-5: this path never speaks iroh; the helper's own staging is tested apart.
+      '--without-iroh-helper',
     ],
     { cwd: PKG, encoding: 'utf8', timeout: 180_000 },
   );

@@ -11,7 +11,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { appArchive } from '../../ipc/asar-path.js';
-import { PACKAGED_WORKER_ENTRY, WORKER_ENTRY, hostArgs, workerEntryFor } from '../args.js';
+import {
+  PACKAGED_IROH_HELPER,
+  PACKAGED_WORKER_ENTRY,
+  WORKER_ENTRY,
+  hostArgs,
+  irohHelperFor,
+  workerEntryFor,
+} from '../args.js';
 
 const ARCHIVE = '/opt/Nutflix/resources/app.asar';
 
@@ -45,5 +52,37 @@ describe('workerEntryFor', () => {
         { userData: '/home/u/.config/Nutflix', workerEntry },
       ),
     ).toEqual(['--user-data-dir=/home/u/.config/Nutflix', `--worker-entry=${workerEntry}`]);
+  });
+});
+
+describe('irohHelperFor (slice 5e-5)', () => {
+  const opts = { devMocks: false, devFixtures: false, userDataDir: undefined, e2eHooks: false };
+
+  it('dev: nothing (the host reads NUTFLIX_IROH_HELPER)', () => {
+    const dist = '/home/u/nutflix/packages/app-desktop/dist';
+    const devArchive = appArchive('/home/u/nutflix/node_modules/electron/dist/resources');
+    expect(irohHelperFor(dist, devArchive, 'linux')).toBeUndefined();
+    expect(irohHelperFor(dist, undefined, 'linux')).toBeUndefined();
+  });
+
+  it('packaged: the helper in app.asar.unpacked (.exe on Windows), never inside the archive', () => {
+    const archive = appArchive('/opt/Nutflix/resources');
+    const helper = irohHelperFor(ARCHIVE, archive, 'linux');
+    expect(PACKAGED_IROH_HELPER).toBe('iroh/nutflix-iroh-helper');
+    expect(helper).toBe(join('/opt/Nutflix/resources/app.asar.unpacked', PACKAGED_IROH_HELPER));
+    expect(helper).not.toMatch(/app\.asar[\\/]/);
+    expect(irohHelperFor(ARCHIVE, archive, 'win32')).toBe(
+      join('/opt/Nutflix/resources/app.asar.unpacked', `${PACKAGED_IROH_HELPER}.exe`),
+    );
+  });
+
+  it('hostArgs passes it as --iroh-helper, and only when there is one', () => {
+    const paths = { userData: '/ud', workerEntry: '/w/boot.mjs' };
+    expect(hostArgs(opts, paths)).not.toContainEqual(expect.stringMatching(/^--iroh-helper/));
+    expect(hostArgs(opts, { ...paths, irohHelper: '/opt/h' })).toEqual([
+      '--user-data-dir=/ud',
+      '--worker-entry=/w/boot.mjs',
+      '--iroh-helper=/opt/h',
+    ]);
   });
 });

@@ -9,11 +9,22 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The packaged app ships the iroh helper (ADR 0020 slice 5e-5, ADR 0021).
+  - **Where:** `resources/app.asar.unpacked/iroh/nutflix-iroh-helper`, unpacked beside the
+    worker. Main hands it to the host as `--iroh-helper`, and a packaged build then never reads
+    `NUTFLIX_IROH_HELPER`, so an environment variable cannot swap the binary a release ships.
+  - **Built for the release:** the release job builds it from the tagged commit with the
+    crate's pinned toolchain and `--locked`, never from a cache.
+  - **Checked when staged:** a regular file, executable, at most 64 MiB, and an executable for
+    the target (an x64 ELF for linux-x64), so a helper built for the wrong machine cannot ship.
+    The packaged layout check then requires it unpacked and executable.
+  - **A choice:** `packaging/cli.ts` needs `--iroh-helper <file>` or `--without-iroh-helper`.
+    The inactive GitLab release jobs build none yet; those apps speak HyperDHT only.
 - The worker seeds its NFX videos over iroh too, NFX-06 through the iroh helper (ADR 0020 slice
   5e-3, ADR 0021), beside HyperDHT and only while seeding and the NFX setting are both on.
   - **The helper:** one per worker, started when a stored video is to be served and stopped when
     serving goes off. Dev and CI name it in `NUTFLIX_IROH_HELPER`; a packaged build's own copy
-    comes with slice 5e-5. Without one the worker speaks HyperDHT only.
+    comes with slice 5e-5 (below). Without one the worker speaks HyperDHT only.
   - **A stable node:** its iroh key is derived from the worker's Corestore primary key
     (`nfx:<namespace>:iroh`), so the node id survives restarts. The network's own iroh relays
     only; a change of them restarts the helper.

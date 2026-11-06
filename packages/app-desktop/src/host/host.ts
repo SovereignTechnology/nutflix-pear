@@ -104,8 +104,9 @@ export interface HostOptions {
   readonly recoveryCore?: RecoveryCore | null;
   /**
    * Slice 5e-3 (ADR 0021): the iroh helper's executable, handed to the worker (`WorkerInit`).
-   * The entry reads it from `NUTFLIX_IROH_HELPER` (dev and CI); slice 5e-5 supplies a packaged
-   * build's own copy. Absent or `null`: the worker speaks HyperDHT only.
+   * A packaged build's own copy (`--iroh-helper`, slice 5e-5), else, in dev and CI,
+   * `NUTFLIX_IROH_HELPER` (`flags.ts` `irohHelperOf`). Absent or `null`: the worker speaks
+   * HyperDHT only.
    */
   readonly irohHelper?: string | null;
 }

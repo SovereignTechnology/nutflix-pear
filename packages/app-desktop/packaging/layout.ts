@@ -13,14 +13,23 @@
  *     refused here;
  *   - bare-sidecar's runtime for this target is unpacked and executable (the host refuses it
  *     otherwise);
- *   - no other platform's `bare` runtime was shipped.
+ *   - no other platform's `bare` runtime was shipped;
+ *   - when the app was staged with it (slice 5e-5), the iroh helper is an unpacked, executable
+ *     regular file under a real `iroh/` directory (the worker refuses it otherwise, and then
+ *     speaks HyperDHT only — a build that meant to ship it must not pass for one that does).
  */
 import { accessSync, constants, existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { statFile } from '@electron/asar';
 
-import { PRELOAD_FILES, PROMPT_FILES, RENDERER_FILES, UNPACKED_FILES } from './identity.ts';
+import {
+  PRELOAD_FILES,
+  PROMPT_FILES,
+  RENDERER_FILES,
+  UNPACKED_FILES,
+  packagedIrohHelper,
+} from './identity.ts';
 
 export function resourcesDir(outputDir: string, platform: string, productName: string): string {
   return platform === 'darwin' || platform === 'mas'
@@ -48,6 +57,7 @@ export function layoutProblems(
   platform: string,
   arch: string,
   productName: string,
+  irohHelper = false,
 ): string[] {
   const res = resourcesDir(outputDir, platform, productName);
   const asar = join(res, 'app.asar');
@@ -109,7 +119,35 @@ export function layoutProblems(
     if (extra.length > 0)
       problems.push(`other platforms' Bare runtimes shipped: ${extra.join(', ')}`);
   }
+  if (irohHelper) problems.push(...irohHelperProblems(unpacked, platform));
   return problems;
+}
+
+/** Slice 5e-5: the shipped iroh helper, as the worker will spawn it. */
+function irohHelperProblems(unpacked: string, platform: string): string[] {
+  const rel = packagedIrohHelper(platform);
+  const dir = join(unpacked, rel.split('/')[0] ?? 'iroh');
+  try {
+    if (lstatSync(dir).isSymbolicLink()) return [`${rel}: its directory is a symlink`];
+  } catch {
+    return [`${rel} is not unpacked`];
+  }
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(join(unpacked, rel));
+  } catch {
+    return [`${rel} is not unpacked`];
+  }
+  if (st.isSymbolicLink()) return [`${rel} is a symlink; it must be a regular file`];
+  if (!st.isFile()) return [`${rel} is not a regular file`];
+  if (platform !== 'win32' && process.platform !== 'win32') {
+    try {
+      accessSync(join(unpacked, rel), constants.X_OK);
+    } catch {
+      return [`${rel} is not executable`];
+    }
+  }
+  return [];
 }
 
 export function assertLayout(
@@ -117,7 +155,8 @@ export function assertLayout(
   platform: string,
   arch: string,
   productName: string,
+  irohHelper = false,
 ): void {
-  const p = layoutProblems(outputDir, platform, arch, productName);
+  const p = layoutProblems(outputDir, platform, arch, productName, irohHelper);
   if (p.length > 0) throw new Error(`packaged layout wrong in ${outputDir}:\n  ${p.join('\n  ')}`);
 }

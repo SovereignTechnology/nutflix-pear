@@ -17,6 +17,11 @@ export interface HostFlags {
 export interface HostArgs {
   readonly userData: string;
   readonly workerEntry: string;
+  /**
+   * Slice 5e-5: the iroh helper a PACKAGED build ships (`--iroh-helper=<abs>`, which only main
+   * passes, and only for a packaged build). When given, `NUTFLIX_IROH_HELPER` is never read.
+   */
+  readonly irohHelper?: string;
   readonly flags: HostFlags;
 }
 
@@ -28,16 +33,29 @@ export class HostArgsError extends Error {
 export const IROH_HELPER_ENV = 'NUTFLIX_IROH_HELPER';
 
 /**
- * Slice 5e-3 (ADR 0021): the iroh helper's executable from `NUTFLIX_IROH_HELPER` (dev and CI;
- * slice 5e-5 supplies a packaged build's own copy), or `null` when it is unset or empty, and the
- * worker then speaks HyperDHT only. Strict like the arguments: a value that is not an absolute
- * path is an error, never a quiet fallback.
+ * Slice 5e-3 (ADR 0021): the iroh helper's executable from `NUTFLIX_IROH_HELPER` (dev and CI),
+ * or `null` when it is unset or empty, and the worker then speaks HyperDHT only. Strict like the
+ * arguments: a value that is not an absolute path is an error, never a quiet fallback. A
+ * packaged build passes its own copy as `--iroh-helper` (slice 5e-5), and then this is never
+ * read: an environment variable must not swap the binary a release ships.
  */
 export function irohHelperFromEnv(value: string | undefined): string | null {
   if (value === undefined || value === '') return null;
   if (!isAbsolute(value) || value.includes('\u0000'))
     throw new HostArgsError(`${IROH_HELPER_ENV} needs an absolute path`);
   return value;
+}
+
+/**
+ * Slice 5e-5: the helper the worker gets — a packaged build's own (`--iroh-helper`), else, in a
+ * dev build, `NUTFLIX_IROH_HELPER`. With the argument the variable is never read, so a bad value
+ * there cannot stop a packaged app either.
+ */
+export function irohHelperOf(
+  args: Pick<HostArgs, 'irohHelper'>,
+  env: Readonly<Record<string, string | undefined>> | undefined,
+): string | null {
+  return args.irohHelper ?? irohHelperFromEnv(env?.[IROH_HELPER_ENV]);
 }
 
 function bootstrapList(v: string): { host: '127.0.0.1'; port: number }[] {
@@ -55,6 +73,7 @@ function bootstrapList(v: string): { host: '127.0.0.1'; port: number }[] {
 export function parseHostArgs(argv: readonly string[]): HostArgs {
   let userData: string | undefined;
   let workerEntry: string | undefined;
+  let irohHelper: string | undefined;
   let devMocks = false;
   let devFixtures = false;
   let keychain = false;
@@ -65,11 +84,13 @@ export function parseHostArgs(argv: readonly string[]): HostArgs {
     const value = eq === -1 ? undefined : arg.slice(eq + 1);
     switch (key) {
       case '--user-data-dir':
-      case '--worker-entry': {
+      case '--worker-entry':
+      case '--iroh-helper': {
         if (value === undefined || !isAbsolute(value) || value.includes('\u0000'))
           throw new HostArgsError(`${key} needs an absolute path`);
         if (key === '--user-data-dir') userData = value;
-        else workerEntry = value;
+        else if (key === '--worker-entry') workerEntry = value;
+        else irohHelper = value;
         break;
       }
       case '--dev-mocks':
@@ -99,6 +120,7 @@ export function parseHostArgs(argv: readonly string[]): HostArgs {
   return {
     userData,
     workerEntry,
+    ...(irohHelper === undefined ? {} : { irohHelper }),
     flags: {
       devMocks,
       devFixtures,
