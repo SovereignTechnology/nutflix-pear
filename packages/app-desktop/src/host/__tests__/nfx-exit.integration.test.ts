@@ -74,6 +74,8 @@ import { NfxSeederKey } from '../nfx/seeder-key.js';
 import { coreTestKit } from './support/core-helpers.js';
 
 vi.setConfig({ testTimeout: 600_000, hookTimeout: 300_000 });
+// At module level: the kit's module declares a suite of its own, which vitest refuses inside a test.
+const kit = await coreTestKit();
 
 const EXIT = process.env['NUTFLIX_EXIT_RUN'] === '1';
 const NS = 'nfx:testnet:1';
@@ -631,7 +633,6 @@ describe.skipIf(!EXIT)('slice 5f: the exit run, nutflix-pear ⇄ nfxd over iroh'
     if (status.state !== 'stored') return;
 
     // The manifest the host builds for a free upload, signed by the user, accepted by nfx's relay.
-    const kit = await coreTestKit();
     const user = new kit.TestSigner();
     const legacy = {
       id: legacyId,
