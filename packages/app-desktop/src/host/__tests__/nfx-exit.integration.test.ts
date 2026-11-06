@@ -8,7 +8,7 @@
  *   stock `iroh-relay` as the network's iroh relay, both on 127.0.0.1.
  * - **This app's side:** the real worker (`startWorker`, the real wire) with the real iroh
  *   helper, and the host's own NFX code: the catalogue (`nfx.listNfxVideos`), the beacon reader
- *   (`beaconFilter`, `beaconPeers`), the manifest builder (`nfxManifestFor`), the beacon publisher
+ *   (`NfxBeaconWatch`, `beaconPeers`), the manifest builder (`nfxManifestFor`), the beacon publisher
  *   (`NfxBeacons`) with a real seeder key (`NfxSeederKey`), and the Nostr pool the host uses
  *   (`nostr.SimplePoolAdapter`).
  *
@@ -67,7 +67,8 @@ import {
 } from '../../worker/__tests__/helpers/harness.js';
 import { memoryLogger } from '../log.js';
 import { NfxBeacons } from '../nfx/beacons.js';
-import { beaconFilter, beaconPeers, videoOf } from '../nfx/play.js';
+import { NfxBeaconWatch } from '../nfx/beacon-watch.js';
+import { beaconPeers, videoOf } from '../nfx/play.js';
 import { isSignedManifest, nfxManifestFor } from '../nfx/publish.js';
 import { NfxSeederKey } from '../nfx/seeder-key.js';
 import { coreTestKit } from './support/core-helpers.js';
@@ -510,14 +511,30 @@ describe.skipIf(!EXIT)('slice 5f: the exit run, nutflix-pear ⇄ nfxd over iroh'
     const list = verified.value;
     expect(list.renditions.length).toBeGreaterThanOrEqual(2);
 
-    // Its beacon, read as the host reads it: one iroh endpoint, no HyperDHT one (nfxd speaks
-    // iroh only), the relay ours.
-    let sources = beaconPeers(video, [], nowS(), [irohRelay]);
-    const end = Date.now() + 60_000;
-    while (sources.iroh.length === 0 && Date.now() < end) {
-      sources = beaconPeers(video, await query(beaconFilter(video)), nowS(), [irohRelay]);
-      if (sources.iroh.length === 0) await sleep(1000);
-    }
+    // Its beacon, read as the host reads it: live (NFX-04: a scoped relay never stores one; the
+    // first exit run found the host's one-shot query), so within one republish interval. One iroh
+    // endpoint, no HyperDHT one (nfxd speaks iroh only), the relay ours.
+    const watch = new NfxBeaconWatch({
+      subscribe: (filter, relays, onEvent) =>
+        pool.subscribe(relays, [filter], {
+          onevent: (raw) => {
+            const ev = nostr.verifyIncoming(raw);
+            if (ev !== null) onEvent(ev);
+          },
+        }),
+      now: nowS,
+    });
+    teardown.push(() => {
+      watch.close();
+      return Promise.resolve();
+    });
+    const events = await watch.wait(
+      video,
+      [scoped],
+      (evs) => beaconPeers(video, evs, nowS(), [irohRelay]).iroh.length > 0,
+      75_000,
+    );
+    const sources = beaconPeers(video, events, nowS(), [irohRelay]);
     expect(sources.hyperdht).toEqual([]);
     expect(sources.iroh, `nfxd said:\n${tail(seeder.text)}`).toHaveLength(1);
     const endpoint = sources.iroh[0];
@@ -600,6 +617,8 @@ describe.skipIf(!EXIT)('slice 5f: the exit run, nutflix-pear ⇄ nfxd over iroh'
     const binaries = { ffmpeg: BIN.ffmpeg, ffprobe: BIN.ffprobe };
     const pipeline = media.createMediaPipeline({ runner, fs, sha256: nodeSha256, binaries });
     const plan = pipeline.plan(await pipeline.probe(clip), { codec: 'h264' });
+    // The caller makes the work directory, as Studio's upload does (the first run had none).
+    await mkdir(join(work, 'transcode-b'), { recursive: true });
     const output = await pipeline.transcode(clip, plan, () => undefined, {
       workDir: join(work, 'transcode-b'),
     });
