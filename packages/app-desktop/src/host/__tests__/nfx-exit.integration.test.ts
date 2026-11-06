@@ -26,14 +26,9 @@
  * Runs only with `NUTFLIX_EXIT_RUN=1` (the exit workflow); then every missing binary FAILS it,
  * never skips it. Process logs go to `NUTFLIX_EXIT_LOGS` (uploaded by the workflow).
  */
-import type { ChildProcess } from 'node:child_process';
-import { spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
-import type { WriteStream } from 'node:fs';
-import { accessSync, constants, createWriteStream, existsSync } from 'node:fs';
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import net from 'node:net';
-import { delimiter, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { cp, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type {
   IrohRelayUrl,
@@ -42,7 +37,6 @@ import type {
   NostrFilter,
   NostrPubkey,
   RelayUrl,
-  UnixSeconds,
   VideoManifest,
 } from '@sovit/core';
 import { media, nfx, nostr } from '@sovit/core';
@@ -50,7 +44,6 @@ import { nodeFsAdapter, nodeProcessRunner, nodeSha256 } from '@sovit/core/media/
 import { silentLogger } from '@sovit/seeder';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import type { SessionId } from '../../ipc/protocol.js';
 import type { NfxIrohEndpointWire, WorkerEvent } from '../../ipc/worker-protocol.js';
 import { devMockProviders } from '../../worker/dev/dev-mocks.js';
 import type { DevTestnet } from '../../worker/dev/fixtures-net.js';
@@ -72,6 +65,25 @@ import { beaconPeers, videoOf } from '../nfx/play.js';
 import { isSignedManifest, nfxManifestFor } from '../nfx/publish.js';
 import { NfxSeederKey } from '../nfx/seeder-key.js';
 import { coreTestKit } from './support/core-helpers.js';
+import {
+  BIN,
+  freePort,
+  hex,
+  layoutC,
+  listening,
+  makeClip,
+  mustRun,
+  nowS,
+  runOnce,
+  setLogDir,
+  sha256,
+  sid,
+  start,
+  stopAll,
+  storeFiles,
+  tail,
+  waitFor,
+} from './support/nfx-exit-kit.js';
 
 vi.setConfig({ testTimeout: 600_000, hookTimeout: 300_000 });
 // At module level: the kit's module declares a suite of its own, which vitest refuses inside a test.
@@ -83,234 +95,6 @@ const NS = 'nfx:testnet:1';
 const NFXD_WITHIN_MS = 180_000;
 /** How long the seeding worker may take to import and ticket a video over iroh. */
 const SERVE_WITHIN_MS = 90_000;
-
-/** An executable on PATH, or `''`. */
-function onPath(name: string): string {
-  for (const dir of (process.env['PATH'] ?? '').split(delimiter)) {
-    const p = join(dir, name);
-    try {
-      accessSync(p, constants.X_OK);
-      return p;
-    } catch {
-      // next
-    }
-  }
-  return '';
-}
-
-const BIN = {
-  nfxd: process.env['NFXD'] ?? '',
-  nfxPackage: process.env['NFX_PACKAGE'] ?? '',
-  irohRelay: process.env['IROH_RELAY'] ?? '',
-  helper: process.env['NUTFLIX_IROH_HELPER'] ?? '',
-  ffmpeg: process.env['FFMPEG'] ?? onPath('ffmpeg'),
-  ffprobe: process.env['FFPROBE'] ?? onPath('ffprobe'),
-};
-
-const hex = (n: number): string => randomBytes(n).toString('hex');
-const sha256 = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
-const nowS = (): UnixSeconds => Math.floor(Date.now() / 1000) as UnixSeconds;
-const sid = (): SessionId => hex(16) as SessionId;
-
-// ---- processes ------------------------------------------------------------------------------
-
-interface Proc {
-  readonly name: string;
-  readonly child: ChildProcess;
-  readonly log: WriteStream;
-  /** stdout and stderr as they came, the last 1 MB. */
-  text: string;
-  exit: string | null;
-}
-
-const procs: Proc[] = [];
-let logDir = '';
-
-/** A long-running process this suite started; its pid is recorded for teardown. */
-function start(name: string, file: string, args: readonly string[]): Proc {
-  const child = spawn(file, [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const log = createWriteStream(join(logDir, `${name}.log`));
-  const p: Proc = { name, child, log, text: '', exit: null };
-  const take = (chunk: Buffer): void => {
-    const text = chunk.toString('utf8');
-    log.write(text);
-    p.text = (p.text + text).slice(-1_000_000);
-  };
-  child.stdout.on('data', take);
-  child.stderr.on('data', take);
-  child.on('exit', (code, signal) => {
-    p.exit = signal ?? String(code);
-  });
-  child.on('error', (e) => {
-    p.exit = `spawn failed: ${e.message}`;
-  });
-  procs.push(p);
-  return p;
-}
-
-function tail(text: string, n = 40): string {
-  return text.split('\n').slice(-n).join('\n');
-}
-
-/** Waits until `p`'s output matches `pattern`; fails with its last lines otherwise. */
-async function waitFor(
-  p: Proc,
-  pattern: RegExp,
-  ms: number,
-  what: string,
-): Promise<RegExpMatchArray> {
-  const end = Date.now() + ms;
-  for (;;) {
-    const m = pattern.exec(p.text);
-    if (m !== null) return m;
-    if (p.exit !== null)
-      throw new Error(`${what}: ${p.name} exited (${p.exit}) first; it said:\n${tail(p.text)}`);
-    if (Date.now() > end)
-      throw new Error(`${what}: not within ${String(ms)} ms; ${p.name} said:\n${tail(p.text)}`);
-    await sleep(200);
-  }
-}
-
-interface Ran {
-  readonly code: number | null;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-/** A short command, to its end (killed after `ms`). */
-function runOnce(file: string, args: readonly string[], ms = 300_000): Promise<Ran> {
-  return new Promise((resolve) => {
-    const child = spawn(file, [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (c: Buffer) => {
-      stdout += c.toString('utf8');
-    });
-    child.stderr.on('data', (c: Buffer) => {
-      stderr += c.toString('utf8');
-    });
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-    }, ms);
-    child.on('error', (e) => {
-      clearTimeout(timer);
-      resolve({ code: null, stdout, stderr: `${stderr}\nspawn failed: ${e.message}` });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr });
-    });
-  });
-}
-
-async function mustRun(what: string, file: string, args: readonly string[]): Promise<Ran> {
-  const r = await runOnce(file, args);
-  if (r.code !== 0)
-    throw new Error(`${what} exited ${String(r.code)}:\n${tail(`${r.stdout}\n${r.stderr}`)}`);
-  return r;
-}
-
-/** Every process this suite started, by recorded child: SIGTERM, then SIGKILL after 5 s. */
-async function stopAll(): Promise<void> {
-  await Promise.all(
-    procs.splice(0).map(async (p) => {
-      // Read through a call: `exit` is set by the child's event, across the awaits.
-      const running = (): boolean => p.exit === null;
-      if (running()) {
-        p.child.kill('SIGTERM');
-        const end = Date.now() + 5000;
-        while (running() && Date.now() < end) await sleep(100);
-        if (running()) p.child.kill('SIGKILL');
-      }
-      p.log.end();
-    }),
-  );
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.once('error', reject);
-    s.listen(0, '127.0.0.1', () => {
-      const a = s.address();
-      const port = typeof a === 'object' && a !== null ? a.port : 0;
-      s.close(() => {
-        resolve(port);
-      });
-    });
-  });
-}
-
-async function listening(port: number, ms: number, what: string): Promise<void> {
-  const end = Date.now() + ms;
-  for (;;) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const c = net.connect(port, '127.0.0.1');
-      c.once('connect', () => {
-        c.destroy();
-        resolve(true);
-      });
-      c.once('error', () => {
-        resolve(false);
-      });
-    });
-    if (ok) return;
-    if (Date.now() > end) throw new Error(`${what}: nothing listens on ${String(port)}`);
-    await sleep(200);
-  }
-}
-
-/** Every `<sha256>`-named file of an nfx-style store directory. */
-async function storeFiles(dir: string): Promise<Map<string, Uint8Array>> {
-  const out = new Map<string, Uint8Array>();
-  for (const name of await readdir(dir))
-    if (/^[0-9a-f]{64}$/.test(name)) out.set(name, new Uint8Array(await readFile(join(dir, name))));
-  return out;
-}
-
-/** Layout C of `rendition` (init, global sidx, segments from their moof), from the files. */
-function layoutC(
-  list: nfx.HashList,
-  files: ReadonlyMap<string, Uint8Array>,
-  rendition: nfx.Rendition,
-): Uint8Array {
-  const file = (s: string): Uint8Array => {
-    const b = files.get(s);
-    if (b === undefined) throw new Error(`the package lacks ${s}`);
-    return b;
-  };
-  const playlist = list.files.find((f) => f.role === 'playlist' && f.name === rendition.playlist);
-  if (playlist === undefined) throw new Error(`no playlist for ${rendition.id}`);
-  const members = nfx.renditionMembers(list, file(playlist.sha256));
-  if (!members.ok) throw new Error(`${rendition.id}: ${members.error.reason}`);
-  const { init } = members.value;
-  const segments = members.value.segments.map((s) => ({
-    sha256: s.sha256,
-    size: Number(s.size),
-    durMs: s.durMs === undefined ? 0 : Number(s.durMs),
-  }));
-  const head = segments[0];
-  if (head === undefined) throw new Error(`${rendition.id} has no segments`);
-  const planned = media.planNfxPlayback({
-    init: { sha256: init.sha256, size: Number(init.size) },
-    initBytes: file(init.sha256),
-    segments,
-    first: file(head.sha256),
-  });
-  if (!planned.ok) throw new Error(`${rendition.id}: ${planned.reason}`);
-  const parts = planned.plan.layout.parts.map(({ part, size }) => {
-    if (part.kind === 'bytes') return part.bytes;
-    const skip = part.skip ?? 0;
-    return file(part.sha256).subarray(skip, skip + size);
-  });
-  const out = new Uint8Array(planned.plan.layout.size);
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.length;
-  }
-  return out;
-}
 
 // ---- the suite --------------------------------------------------------------------------------
 
@@ -335,8 +119,9 @@ describe.skipIf(!EXIT)('slice 5f: the exit run, nutflix-pear ⇄ nfxd over iroh'
     const d = await tempDir('nf-exit-');
     teardown.push(() => d.rm());
     work = d.dir;
-    logDir = process.env['NUTFLIX_EXIT_LOGS'] ?? join(work, 'logs');
+    const logDir = process.env['NUTFLIX_EXIT_LOGS'] ?? join(work, 'logs');
     await mkdir(logDir, { recursive: true });
+    setLogDir(logDir);
 
     // The network's iroh relay: the stock binary, plain HTTP on loopback (this app's setting
     // allows http:// to this computer only), no QUIC address discovery.
@@ -369,30 +154,7 @@ describe.skipIf(!EXIT)('slice 5f: the exit run, nutflix-pear ⇄ nfxd over iroh'
 
     // Real media: 8 s of 1280x720 test pattern and a tone.
     clip = join(work, 'clip.mp4');
-    await mustRun('ffmpeg (the clip)', BIN.ffmpeg, [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-f',
-      'lavfi',
-      '-i',
-      'testsrc2=size=1280x720:rate=30',
-      '-f',
-      'lavfi',
-      '-i',
-      'sine=frequency=440:sample_rate=48000',
-      '-t',
-      '8',
-      '-c:v',
-      'libx264',
-      '-preset',
-      'ultrafast',
-      '-pix_fmt',
-      'yuv420p',
-      '-c:a',
-      'aac',
-      clip,
-    ]);
+    await makeClip(clip);
   });
 
   afterAll(async () => {

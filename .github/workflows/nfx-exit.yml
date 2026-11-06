@@ -39,8 +39,9 @@ concurrency:
 
 env:
   RUST_VERSION: '1.98.0'
-  # The nfx commit whose nfxd and nfx-package this app is judged against (nfx main).
-  NFX_SHA: '66da6b73f61a194017b1f3993e6c7ab9ad93454d'
+  # The nfx commit whose nfxd and nfx-package this app is judged against: nfx main with #18, the
+  # nfxd code nfx v0.1.0 ships.
+  NFX_SHA: '5d628db55ad0eb203ab01b4cbf8280b0d1a8c587'
   IROH_RELAY_VERSION: '1.2.0'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
