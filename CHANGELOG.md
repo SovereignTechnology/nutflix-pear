@@ -20,6 +20,10 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     manifest and beacons, all accepted by nfxd's own relay. A second nfxd fetches it, passes its
     own checks, holds every file under its sha256, and its origin serves HLS that ffmpeg decodes.
   - **Without a helper,** an nfxd-only video is refused at once (`no-seeders`).
+  - **The app itself (tier 3, job `exit-app`):** Electron under xvfb, with its sandbox on, runs the
+    host, main's media proxy and the real Bare worker spawning the real helper. It finds nfxd's
+    video through the header search, presses Play — free, and the video plays past 3 s with a
+    picture; switching quality opens the other rendition, which plays too.
 - NFX play fetches over iroh too, NFX-06 through a watching iroh helper (ADR 0020 slice 5e-4, ADR
   0021), so a seeder that speaks iroh only (nfxd) can be watched.
   - **Sources:** the host passes each beacon's `iroh` endpoints beside its `hyperdht` ones (the

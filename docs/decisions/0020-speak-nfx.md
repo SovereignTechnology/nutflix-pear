@@ -270,8 +270,12 @@ and its suite `packages/app-desktop/src/host/__tests__/nfx-exit.integration.test
   - nfx's relay accepts this app's manifest and beacons, which nfx-proto checks.
 - **When.** On pull requests that touch the NFX worker, iroh or host code, the helper or the suite,
   and by hand. Not a required check yet.
-- **Not yet.** The same pairs through the NAT matrix, a mixed swarm with a seeder lost mid-stream,
-  and the packaged app through its own UI.
+- **Tier 3, the app itself** (job `exit-app`, `packages/app-desktop/e2e/nfx-exit-app.e2e.ts`):
+  the shipping runtime, Electron with its sandbox on, the host, main's media proxy and the Bare
+  worker spawning the helper, finds nfxd's video through its own search, plays it from the NFX
+  page and switches quality, so the path a user takes is proved, not only the worker's.
+- **Not yet.** A mixed swarm with a seeder lost mid-stream. The NAT matrix runs the same
+  transports, nfxd against the helper (spike-iroh).
 
 ## Amendment 2026-11-06: beacons are read live (found by the exit run)
 
