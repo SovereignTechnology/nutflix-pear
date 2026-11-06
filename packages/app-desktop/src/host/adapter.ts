@@ -33,6 +33,7 @@ import type {
   NfxSettings,
   NfxVideo,
   Notification,
+  NostrEvent,
   NostrEventId,
   NostrPubkey,
   Page,
@@ -87,7 +88,8 @@ import { NfxCatalog } from './catalog/nfx-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
 import { NfxBeacons } from './nfx/beacons.js';
-import { NfxHostSession, beaconFilter, beaconPeers, videoOf } from './nfx/play.js';
+import { NfxBeaconWatch } from './nfx/beacon-watch.js';
+import { NfxHostSession, beaconPeers, videoOf } from './nfx/play.js';
 import type { NfxStored } from './nfx/publish.js';
 import { SeededVideos } from './nfx/seeded.js';
 import { NfxSeederKey } from './nfx/seeder-key.js';
@@ -161,6 +163,8 @@ export interface DesktopAdapterOptions {
    * it no beacon is ever published.
    */
   readonly nfxDir?: string;
+  /** TESTS ONLY: how long a play waits for a live beacon (`NFX_BEACON_WAIT_MS`). */
+  readonly nfxBeaconWaitMs?: number;
 }
 
 /** Per page in the in-memory paged lists (history). */
@@ -208,6 +212,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly seeded: SeededVideos | null;
   /** Slice 5d: the free NFX play sessions, by sid (each with its owner). */
   private readonly nfxSessions = new Map<string, NfxHostSession>();
+  /** Live beacons: a scoped relay never stores them, so they are read by subscription. */
+  private readonly beaconWatch: NfxBeaconWatch;
   /** Slice 5c: the beacon publisher (with `nfxDir`). */
   private readonly beacons: NfxBeacons | null;
   /** Slice 5c: the seeder key of the current user and network, opened on first need. */
@@ -251,6 +257,11 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
             now: () => this.now(),
             log: this.log.child('nfx-beacons'),
           });
+    this.beaconWatch = new NfxBeaconWatch({
+      subscribe: (filter, relays, onEvent) =>
+        this.client().subscribe([filter], onEvent, { relays }),
+      now: () => this.now(),
+    });
     this.wallet.onChange((e) => {
       if (e.type === 'balance') this.logAutoTopUpDue(e.mint, e.balance);
     });
@@ -526,6 +537,19 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     return this.fromCatalog((cat) => cat.nfxVideo(addr));
   }
 
+  /**
+   * The renderer's `nfxVideo` (the Watch page): the video, and its live beacons read from now on
+   * (`NfxBeaconWatch.watch`), so Play usually finds a seeder already known instead of waiting for
+   * the next republish (NFX-04: beacons are never stored).
+   */
+  async watchNfxVideo(addr: NfxAddress): Promise<NfxVideo | null> {
+    const video = await this.nfxVideo(addr);
+    const nfxSettings = this.o.settings.get().nfx;
+    if (video !== null && nfxSettings?.enabled === true)
+      this.beaconWatch.watch(video, nfxSettings.scopedRelays);
+    return video;
+  }
+
   async stats(id: NostrEventId): Promise<VideoStats> {
     const video = await this.video(id);
     const viewer = await this.me();
@@ -736,10 +760,22 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     const video = await this.nfxVideo(addr);
     const d = videoOf(addr);
     if (video === null || d === null) fail('not-found', 'no such free NFX video');
-    const events =
-      scoped.length === 0 ? [] : await this.read((c) => c.query(beaconFilter(video), scoped));
     // Slice 5e-4: iroh endpoints too, their relays held to the network's own (NFX-06 §1).
-    const sources = beaconPeers(video, events, this.now(), settings.nfx?.irohRelays ?? []);
+    const irohRelays = settings.nfx?.irohRelays ?? [];
+    const sourcesOf = (events: readonly NostrEvent[]): ReturnType<typeof beaconPeers> =>
+      beaconPeers(video, events, this.now(), irohRelays);
+    // Live beacons (NFX-04: never stored): wait until one names a source, at most one
+    // republish interval.
+    const events = await this.beaconWatch.wait(
+      video,
+      scoped,
+      (evs) => {
+        const s = sourcesOf(evs);
+        return s.hyperdht.length + s.iroh.length > 0;
+      },
+      this.o.nfxBeaconWaitMs,
+    );
+    const sources = sourcesOf(events);
     if (sources.hyperdht.length + sources.iroh.length === 0)
       fail('no-seeders', 'nobody seeding this NFX video is online');
     const sid = this.hex(16) as HostPlaySession['sid'];
@@ -1268,6 +1304,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   /** Fix round 4 (quit): close every play session through the worker — each tail paid first. */
   async closeAllSessions(): Promise<void> {
+    this.beaconWatch.close();
     await Promise.all([
       this.sessions.closeAll(),
       ...[...this.nfxSessions.values()].map((s) => s.close()),
