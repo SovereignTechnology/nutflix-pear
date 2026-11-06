@@ -24,6 +24,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     host, main's media proxy and the real Bare worker spawning the real helper. It finds nfxd's
     video through the header search, presses Play — free, and the video plays past 3 s with a
     picture; switching quality opens the other rendition, which plays too.
+  - **The two-host run (built, not yet run):** the same two directions with nfxd and this app on
+    two separate machines over the internet (`nfx-exit-two-host`, dispatch only), each runner
+    behind its own NAT, meeting on relays given as inputs (by default a public Nostr relay and
+    n0's iroh relays); throwaway keys and video ids derive from the run id, and each runner
+    counts the bytes it got over a relay against those that came direct.
 - The packaged app ships the iroh helper (ADR 0020 slice 5e-5, ADR 0021).
   - **Where:** `resources/app.asar.unpacked/iroh/nutflix-iroh-helper`, unpacked beside the
     worker. Main hands it to the host as `--iroh-helper`, and a packaged build then never reads

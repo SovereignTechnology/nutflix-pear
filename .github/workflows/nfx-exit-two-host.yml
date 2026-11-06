@@ -1,0 +1,186 @@
+# Slice 5f, the two-host run (Cameron's release gate, 2026-11-06): the exit run's two directions
+# with nfx and this app on SEPARATE machines over the real internet. Two GitHub-hosted runners (each
+# job a fresh VM of its own, behind its own cloud NAT) run one role each of
+# packages/app-desktop/src/host/__tests__/nfx-exit-two-host.integration.test.ts:
+#
+#   host-nfx   nfxd + nfx-package: A packaged, published, seeded; B fetched, verified, served
+#   host-pear  this app's real worker (Node) + the real iroh helper + the host's NFX code: B packaged
+#              like Studio, published, served and beaconed; A played over iroh, byte for byte
+#
+# Neither runner accepts a connection, so they meet on relays given as inputs: scoped Nostr relays
+# (wss://) for manifests, beacons and the run's signals, and iroh relays (https://, by default n0's
+# public ones, with publicly trusted TLS and QUIC address discovery, so the runners can holepunch).
+# The same suite takes a private relay set (option 1: home and a VPS) through the same inputs, with
+# NFX_IROH_RELAY_CA for a private CA (wired for nfxd; this app's worker has no CA input yet).
+#
+# DISPATCH ONLY: it publishes to the relays it is given. With the defaults that is
+#   - 2 kind-38504 manifests on wss://offchain.pub (throwaway keys derived from the run id): A's
+#     withdrawn at the end by `nfxd delete` (kind 5), B's with a NIP-40 expiration an hour out and
+#     a kind-5 deletion at the end;
+#   - kind-20464 beacons and kind-21464 run signals, ephemeral (never stored);
+#   - iroh traffic through n0's relays (use1-1, euc1-1) as any iroh app's.
+#
+# Supply-chain policy as ci.yml (threat T12): first-party actions pinned by commit SHA,
+# Cargo.lock honoured (--locked), least-privilege token, no secrets. Inputs reach steps only
+# through the environment, and are validated before anything is built.
+name: nfx-exit-two-host
+
+on:
+  workflow_dispatch:
+    inputs:
+      scoped_relays:
+        description: 'Scoped Nostr relays both runners meet on (wss://, space-separated, at most 4)'
+        required: true
+        default: 'wss://offchain.pub'
+      iroh_relays:
+        description: "iroh relays (https://host/, the app's form: no trailing dot; at most 4)"
+        required: true
+        default: 'https://use1-1.relay.n0.iroh.link/ https://euc1-1.relay.n0.iroh.link/'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nfx-exit-two-host-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: '1.98.0'
+  # nfx #18's head (`nfxd --iroh-relay-ca`); moves to its merge commit once merged.
+  NFX_SHA: '51ed4e4b6a3ae5a0b0697563d3674cb4571570ca'
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+  NFX_SCOPED_RELAYS: ${{ inputs.scoped_relays }}
+  NFX_IROH_RELAYS: ${{ inputs.iroh_relays }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: the inputs (wss:// and https:// relays only, at most 4 each)
+        run: |
+          set -euo pipefail
+          check() { # name, regex, value
+            local n=0 u
+            for u in $3; do
+              n=$((n + 1))
+              [[ $u =~ $2 ]] || { echo "::error::$1: not a relay this run takes"; exit 1; }
+            done
+            [ "$n" -ge 1 ] && [ "$n" -le 4 ] || { echo "::error::$1: 1 to 4 relays"; exit 1; }
+          }
+          check scoped_relays '^wss://[a-z0-9.-]{1,253}(:[1-9][0-9]{0,4})?/?$' "$NFX_SCOPED_RELAYS"
+          check iroh_relays '^https://[a-z0-9_.-]{1,253}[a-z0-9_](:[1-9][0-9]{0,4})?/$' "$NFX_IROH_RELAYS"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: SovereignTechnology/nfx
+          ref: ${{ env.NFX_SHA }}
+          path: nfx
+          persist-credentials: false
+      - name: the pinned toolchain (the runner's rustup; no other download)
+        run: |
+          set -euo pipefail
+          grep -qx "channel = \"${RUST_VERSION}\"" crates/iroh-helper/rust-toolchain.toml
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          mkdir -p bins
+      - name: cache (cargo registry, the helper and nfx builds)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            crates/iroh-helper/target
+            nfx/crates/target
+          key: nfx-exit2-${{ env.RUST_VERSION }}-${{ env.NFX_SHA }}-${{ hashFiles('crates/iroh-helper/Cargo.lock') }}
+          restore-keys: |
+            nfx-exit2-${{ env.RUST_VERSION }}-${{ env.NFX_SHA }}-
+      - name: the iroh helper (release, --locked)
+        working-directory: crates/iroh-helper
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          install -m 0755 target/release/nutflix-iroh-helper ../../bins/
+      - name: nfxd and nfx-package (nfx at the pinned commit)
+        working-directory: nfx/crates
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_VERSION" build --release --locked -p nfxd -p nfx-media --bins
+          install -m 0755 target/release/nfxd target/release/nfx-package ../../bins/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nfx-exit2-bins
+          path: bins/
+          retention-days: 7
+
+  host:
+    needs: build
+    # One fresh VM per role: two machines, two networks, two NATs.
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [nfx, pear]
+    name: host-${{ matrix.role }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: system packages (ffmpeg for the packagers and decode checks, nftables for the meter)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg nftables
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nfx-exit2-bins
+          path: ${{ runner.temp }}/bins
+      - name: binaries (artifacts drop the executable bit), logs
+        run: chmod 0755 "$RUNNER_TEMP"/bins/* && mkdir -p "$RUNNER_TEMP/exit2-logs"
+      # Which machine this is, without publishing its address: a hash salted with the run id.
+      - name: this machine
+        env:
+          ROLE: ${{ matrix.role }}
+        run: |
+          set -euo pipefail
+          ip=$(curl -s --max-time 10 https://checkip.amazonaws.com | tr -dc '0-9a-f.:' || true)
+          printf '{"role":"%s","public_ip_hash":"%s","host_hash":"%s","nat_type":"not measured"}\n' \
+            "$ROLE" \
+            "$(printf '%s|%s' "$ip" "$GITHUB_RUN_ID" | sha256sum | cut -c1-16)" \
+            "$(printf '%s|%s' "$(hostname)" "$GITHUB_RUN_ID" | sha256sum | cut -c1-16)" \
+            | tee "$RUNNER_TEMP/exit2-logs/machine-$ROLE.json"
+      - name: the path meter (bytes received over a relay vs direct)
+        run: sudo --preserve-env=NFX_IROH_RELAYS spikes/iroh/two-host/meter.sh start
+      - name: the two-host run, this machine's role
+        env:
+          NUTFLIX_EXIT_TWO_HOST: '1'
+          NFX_EXIT_ROLE: ${{ matrix.role }}
+          NFX_EXIT_RUN_ID: ${{ github.run_id }}
+          NUTFLIX_EXIT_LOGS: ${{ runner.temp }}/exit2-logs
+          NFXD: ${{ runner.temp }}/bins/nfxd
+          NFX_PACKAGE: ${{ runner.temp }}/bins/nfx-package
+          NUTFLIX_IROH_HELPER: ${{ runner.temp }}/bins/nutflix-iroh-helper
+        run: npx vitest run --project app-desktop packages/app-desktop/src/host/__tests__/nfx-exit-two-host.integration.test.ts
+      - name: the path meter's reading
+        if: always()
+        env:
+          ROLE: ${{ matrix.role }}
+        run: sudo spikes/iroh/two-host/meter.sh read | tee "$RUNNER_TEMP/exit2-logs/meter-$ROLE.json" || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: nfx-exit2-logs-${{ matrix.role }}
+          path: ${{ runner.temp }}/exit2-logs/
+          retention-days: 30
