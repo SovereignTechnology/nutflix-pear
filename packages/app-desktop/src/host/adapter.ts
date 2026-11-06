@@ -738,8 +738,10 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     if (video === null || d === null) fail('not-found', 'no such free NFX video');
     const events =
       scoped.length === 0 ? [] : await this.read((c) => c.query(beaconFilter(video), scoped));
-    const peers = beaconPeers(video, events, this.now());
-    if (peers.length === 0) fail('no-seeders', 'nobody seeding this NFX video is online');
+    // Slice 5e-4: iroh endpoints too, their relays held to the network's own (NFX-06 §1).
+    const sources = beaconPeers(video, events, this.now(), settings.nfx?.irohRelays ?? []);
+    if (sources.hyperdht.length + sources.iroh.length === 0)
+      fail('no-seeders', 'nobody seeding this NFX video is online');
     const sid = this.hex(16) as HostPlaySession['sid'];
     const token = this.hex(32);
     const res = await this.o.worker('nfx.play.open', {
@@ -748,7 +750,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       root: video.root,
       segs: video.segs,
       ...(rendition === undefined ? {} : { rendition }),
-      peers,
+      peers: sources.hyperdht,
+      iroh: sources.iroh,
       prefetchSeconds: settings.prefetchSeconds,
     });
     const s = new NfxHostSession({

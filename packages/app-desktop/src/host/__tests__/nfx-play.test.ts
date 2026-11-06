@@ -5,11 +5,12 @@
  */
 import { generateKeyPairSync } from 'node:crypto';
 
-import type { NfxAddress, NostrEvent, RelayUrl } from '@sovit/core';
+import type { IrohRelayUrl, NfxAddress, NostrEvent, RelayUrl } from '@sovit/core';
 import { mocks, nfx } from '@sovit/core';
 import { hyperdhtEndpoint } from '@sovit/seeder';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { validateWorkerArgs } from '../../ipc/worker-guards.js';
 import { coreTestKit, type TestSignerLike } from './support/core-helpers.js';
 import type { Rig } from './support/rig.js';
 import { rig } from './support/rig.js';
@@ -59,7 +60,10 @@ async function beacon(
   seeder: TestSignerLike,
   creator: string,
   videoId: string,
-  o: { readonly free?: boolean } = {},
+  o: {
+    readonly free?: boolean;
+    readonly endpoints?: (hyperdht: nfx.Endpoint) => nfx.Endpoint[];
+  } = {},
 ): Promise<{ readonly peer: string }> {
   const addr = `38504:${creator}:${NS}:${videoId}`;
   // A little ahead of the rig's clock (which ticks per read), well inside the 15-minute skew.
@@ -72,7 +76,7 @@ async function beacon(
   const content = nfx.beaconContentText({
     v: 1,
     video: video.value,
-    endpoints: [endpoint],
+    endpoints: o.endpoints?.(endpoint) ?? [endpoint],
     skipped: [],
     chunks: 'all',
     priceHint: free ? 0n : 1n,
@@ -87,6 +91,24 @@ async function beacon(
 
 const addrOf = (creator: string, videoId: string): NfxAddress =>
   `38504:${creator}:${NS}:${videoId}` as NfxAddress;
+
+/** Slice 5e-4: the network's iroh relay, and an iroh endpoint as a beacon carries one. */
+const IROH_RELAY = 'https://iroh-relay.test/' as IrohRelayUrl;
+const ticket = (c: string): string => `blob${c.repeat(60)}`;
+function irohEndpoint(node: string, o: Partial<Omit<IrohEndpoint, 't'>> = {}): IrohEndpoint {
+  return {
+    t: 'iroh',
+    node,
+    relay: IROH_RELAY,
+    addrs: ['192.0.2.7:4433'],
+    tickets: new Map([
+      ['720p', ticket('b')],
+      ['meta', ticket('a')],
+    ]),
+    ...o,
+  };
+}
+type IrohEndpoint = Extract<nfx.Endpoint, { readonly t: 'iroh' }>;
 
 describe('openNfxSession (contracts v11)', () => {
   it('opens on the beaconed seeders, sends the media link, and closes cleanly', async () => {
@@ -104,7 +126,9 @@ describe('openNfxSession (contracts v11)', () => {
       root: ROOT,
       segs: 4,
       peers: [{ t: 'hyperdht', peer }],
+      iroh: [],
     });
+    expect(validateWorkerArgs['nfx.play.open'](open)).toBe(true);
     expect(s.toWire()).toMatchObject({
       rendition: '720p',
       videoId: addrOf(creator.pubkey, 'free-video-1'),
@@ -119,6 +143,73 @@ describe('openNfxSession (contracts v11)', () => {
     await a.closeNfxSession(7, s.sid);
     expect(r.worker().calls('nfx.play.close')).toEqual([{ sid: s.sid }]);
     expect(r.out.filter((m) => m.kind === 'media-link').at(-1)).toMatchObject({ url: null });
+  });
+
+  it('slice 5e-4: passes iroh endpoints too, their relays held to the network', async () => {
+    r = await rig({ nfx: { ...NFX_ON, irohRelays: [IROH_RELAY] } });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-5');
+    const nodeA = 'a1'.repeat(32);
+    const nodeB = 'b2'.repeat(32);
+    // An nfxd-like seeder (iroh only), one with both, and endpoints that cannot cross.
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-5', {
+      endpoints: () => [irohEndpoint(nodeA)],
+    });
+    const { peer } = await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-5', {
+      endpoints: (h) => [
+        irohEndpoint(nodeB, {
+          relay: 'https://not-the-network.test/',
+          addrs: [
+            '192.0.2.8:4433',
+            'host.example:1',
+            ...Array.from({ length: 20 }, (_, i) => `198.51.100.${String(i)}:1`),
+          ],
+        }),
+        h,
+      ],
+    });
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-5', {
+      endpoints: (h) => [
+        irohEndpoint('c3'.repeat(32), { tickets: new Map([['720p', ticket('b')]]) }),
+        irohEndpoint('d4'.repeat(32), { tickets: new Map([['meta', 'not-a-ticket']]) }),
+        h,
+      ],
+    });
+    await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-5'));
+    const [open] = r.worker().calls('nfx.play.open');
+    expect(validateWorkerArgs['nfx.play.open'](open)).toBe(true);
+    const iroh = (open as { iroh: { node: string; relay: string; addrs: string[] }[] }).iroh;
+    expect(iroh.map((e) => e.node).sort()).toEqual([nodeA, nodeB].sort());
+    const a = iroh.find((e) => e.node === nodeA)!;
+    const b = iroh.find((e) => e.node === nodeB)!;
+    expect(a).toMatchObject({
+      relay: IROH_RELAY,
+      tickets: {
+        $map: [
+          ['meta', ticket('a')],
+          ['720p', ticket('b')],
+        ],
+      },
+    });
+    expect(b.relay).toBe('');
+    expect(b.addrs).toHaveLength(16);
+    expect(b.addrs).not.toContain('host.example:1');
+    expect((open as { peers: { peer: string }[] }).peers.map((p) => p.peer)).toContain(peer);
+  });
+
+  it('slice 5e-4: an iroh-only seeder is enough to open', async () => {
+    r = await rig({ nfx: NFX_ON });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-6');
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-6', {
+      endpoints: () => [irohEndpoint('e5'.repeat(32))],
+    });
+    await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-6'));
+    const [open] = r.worker().calls('nfx.play.open');
+    expect(open).toMatchObject({ peers: [], iroh: [{ node: 'e5'.repeat(32), relay: '' }] });
+    expect(validateWorkerArgs['nfx.play.open'](open)).toBe(true);
   });
 
   it('no live free beacon by a seeder for this manifest means no-seeders', async () => {

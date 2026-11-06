@@ -99,6 +99,7 @@ describe('slice 5d: free NFX play without payment providers', () => {
       root: v.root,
       segs: v.segs,
       peers: [empty, full],
+      iroh: [],
       prefetchSeconds: 30,
     });
     // The highest bandwidth by default; every rendition listed, highest first.
@@ -172,6 +173,7 @@ describe('slice 5d: free NFX play without payment providers', () => {
       root: v.root,
       segs: v.segs,
       peers: [full],
+      iroh: [],
       prefetchSeconds: 30,
       ...over,
     });

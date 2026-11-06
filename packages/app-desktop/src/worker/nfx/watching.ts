@@ -3,6 +3,13 @@
  * `NfxWatchSession` each over a `HyperdhtFetcher`, with one `NfxPeerPool` (a connection per
  * seeder, shared) and one `NfxRangeServer` for all of them.
  *
+ * Slice 5e-4: a session whose seeders have iroh endpoints fetches over iroh first (NFX-06 §6),
+ * through an `IrohFetcher`, then over HyperDHT (`NfxFallbackFetcher`); one with iroh endpoints
+ * only (an nfxd seeder) fetches over iroh alone. The iroh side dials from the worker's WATCHING
+ * node (`./iroh.ts`): its own helper with an ephemeral id, never the serving node's, so what this
+ * worker serves cannot be linked to what it watches. It starts on the first fetch that needs it
+ * and stops when no session that could use it is left.
+ *
  * Payment-independent: free NFX play needs no payment providers. With them the worker has a
  * legacy swarm, and sessions dial from its DHT node; without them (no swarm, no seeder) a DHT
  * node of this module's own is created on the first open — with the bootstrap the worker would
@@ -27,8 +34,12 @@ import type { ErrorCode } from '../../ipc/protocol.js';
 import type { NfxPlayOpenArgs, WorkerMethodTable } from '../../ipc/worker-protocol.js';
 import type { BootstrapNode } from '../net/peer-node.js';
 import type { WorkerRuntime } from '../runtime.js';
+import { NfxFallbackFetcher } from './fallback-fetcher.js';
 import { HyperdhtFetcher, NfxPeerPool } from './hyperdht-fetcher.js';
+import type { IrohFetchClient } from './iroh-fetcher.js';
+import { IrohFetcher } from './iroh-fetcher.js';
 import { NfxRangeServer } from './range-server.js';
+import type { NfxFetcher } from './watch.js';
 import { NfxWatchSession } from './watch.js';
 
 /** NFX play sessions open at once per worker. */
@@ -40,6 +51,20 @@ const BOOTSTRAP_WAIT_MS = 15_000;
 
 /** The key pair name for `namespace`'s watcher (beside `seederKeyName`, `./seeding.ts`). */
 export const watcherKeyName = (namespace: string): string => `nfx:${namespace}:watcher`;
+
+/** Slice 5e-4: the watching iroh node (`NfxIrohNode` with no key pair), as sessions use it. */
+export interface NfxWatchingIroh {
+  /** Its helper, started on first need; `null` when it cannot run (and why was logged). */
+  start(): Promise<IrohFetchClient | null>;
+  /** Stop the helper and empty its store (the next `start` brings up a fresh node). */
+  stop(): Promise<void>;
+  /** Stop for good. */
+  close(): Promise<void>;
+  /** Changes at every start, restart and stop of the helper. */
+  readonly generation: number;
+  /** The network's iroh relays it runs with (NFX-06 §1). */
+  readonly networkRelays: readonly string[];
+}
 
 export interface NfxWatchingDeps {
   /** The legacy swarm's DHT node while there is one (payment providers present), else `null`. */
@@ -57,6 +82,8 @@ export interface NfxWatchingDeps {
   readonly createHttpServer: WorkerRuntime['createHttpServer'];
   readonly randomHex: (n: number) => string;
   readonly logger: Logger;
+  /** Slice 5e-4: the watching iroh node, or `null` without an iroh helper (HyperDHT only). */
+  readonly iroh?: NfxWatchingIroh | null;
   /** TESTS ONLY: shorter bounds (a read's wait, a dial). */
   readonly readWaitMs?: number;
   readonly dialTimeoutMs?: number;
@@ -69,6 +96,8 @@ function fail(code: ErrorCode, detail: string): never {
 export class NfxWatching {
   private readonly d: NfxWatchingDeps;
   private readonly sessions = new Map<string, NfxWatchSession>();
+  /** Slice 5e-4: the sessions that may fetch over iroh; the node stops when none is left. */
+  private readonly irohSessions = new Set<string>();
   private readonly ephemeral = new Map<string, PeerKeyPair>();
   private readonly pool: NfxPeerPool;
   private server: NfxRangeServer | null = null;
@@ -112,12 +141,38 @@ export class NfxWatching {
       seen.add(p.peer);
       peers.push(fromHex(p.peer));
     }
-    const fetcher = new HyperdhtFetcher({
-      pool: this.pool,
-      video: video.value,
-      peers,
-      logger: this.d.logger,
-    });
+    // Slice 5e-4: iroh first (NFX-06 §6), then HyperDHT; each only with endpoints of its kind.
+    const iroh = this.d.iroh ?? null;
+    const fetchers: NfxFetcher[] = [];
+    let viaIroh = false;
+    if (iroh !== null && a.iroh.length > 0) {
+      viaIroh = true;
+      fetchers.push(
+        new IrohFetcher({
+          video: video.value,
+          root: a.root,
+          segs: a.segs,
+          endpoints: a.iroh,
+          client: () => iroh.start(),
+          generation: () => iroh.generation,
+          networkRelays: () => iroh.networkRelays,
+          logger: this.d.logger,
+        }),
+      );
+    }
+    if (peers.length > 0)
+      fetchers.push(
+        new HyperdhtFetcher({
+          pool: this.pool,
+          video: video.value,
+          peers,
+          logger: this.d.logger,
+        }),
+      );
+    const [only] = fetchers;
+    if (only === undefined)
+      fail('no-seeders', 'every seeder speaks iroh only, and this worker has no iroh helper');
+    const fetcher = fetchers.length === 1 ? only : new NfxFallbackFetcher(fetchers);
     const session = new NfxWatchSession({
       video: video.value,
       root: a.root,
@@ -131,8 +186,10 @@ export class NfxWatching {
       logger: this.d.logger,
       ...(this.d.readWaitMs === undefined ? {} : { waitMs: this.d.readWaitMs }),
     });
-    // Claimed before any await: a second open of the sid is refused, a close finds it.
+    // Claimed before any await: a second open of the sid is refused, a close finds it (and an
+    // iroh node a closing session would stop is held for this one).
     this.sessions.set(a.sid, session);
+    if (viaIroh) this.irohSessions.add(a.sid);
     try {
       const opened = await session.open();
       const server = this.rangeServer();
@@ -146,8 +203,13 @@ export class NfxWatching {
       });
       return { link, rendition: opened.rendition, renditions: opened.renditions };
     } catch (err) {
-      if (this.sessions.get(a.sid) === session) this.sessions.delete(a.sid);
-      await session.close();
+      if (this.sessions.get(a.sid) === session) {
+        this.sessions.delete(a.sid);
+        await session.close();
+        await this.releaseIroh(a.sid);
+      } else {
+        await session.close();
+      }
       throw err;
     }
   }
@@ -159,6 +221,17 @@ export class NfxWatching {
     this.sessions.delete(sid);
     this.server?.unregister(sid);
     await session.close();
+    await this.releaseIroh(sid);
+  }
+
+  /** Slice 5e-4: `sid` no longer uses iroh; the node stops when no session does. */
+  private async releaseIroh(sid: string): Promise<void> {
+    if (!this.irohSessions.delete(sid) || this.irohSessions.size > 0) return;
+    try {
+      await this.d.iroh?.stop();
+    } catch (err) {
+      this.d.logger.warn('nfx: the watching iroh node did not stop cleanly', { error: err });
+    }
   }
 
   /** Worker shutdown: every session, the range server, the own DHT node. Never throws. */
@@ -166,6 +239,7 @@ export class NfxWatching {
     this.closing ??= (async () => {
       await Promise.all([...this.sessions.keys()].map((sid) => this.close(sid)));
       this.pool.close();
+      await this.d.iroh?.close().catch(() => undefined);
       await this.server?.close().catch(() => undefined);
       await this.ownReady?.catch(() => undefined);
       try {

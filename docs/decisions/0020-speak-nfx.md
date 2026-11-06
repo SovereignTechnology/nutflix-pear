@@ -216,3 +216,39 @@ seeding AND the NFX setting are both on.
 - **Tested in CI** against the real helper: `ci.yml` builds it for the test job, and its suite
   fails there, never skips, without one.
 - **Not yet:** fetching over iroh (slice 5e-4) and packaging the helper (5e-5).
+
+## Amendment 2026-11-06: fetching over iroh (slice 5e-4)
+
+A play session also fetches over NFX-06, so this app can watch a seeder that speaks iroh only
+(nfxd), the other half of the Phase 1 exit's cross pairs.
+- **The host passes both kinds of endpoint.** From the same verified, free, newest-per-seeder
+  beacons, `nfx.play.open` carries the `iroh` endpoints (at most 8, unique nodes) beside the
+  `hyperdht` ones, and at least one of either. An iroh endpoint's relay is kept only when it is one
+  of the network's (`Settings.nfx.irohRelays`), and only the addresses and tickets the wire can
+  carry cross; one without a `meta` ticket is skipped, so a hostile beacon cannot make the worker
+  refuse the session.
+- **iroh first, then HyperDHT** (NFX-06 §6), per file: the first that serves it wins, and the
+  reasons of every source that did not are kept for the error.
+- **A watching node of its own.** The worker dials from a SECOND helper with an ephemeral id (no
+  key pair: the helper makes a fresh key at every start), never the serving node, as NFX-12 §1
+  keeps the HyperDHT watcher key apart from the seeder's. It starts on the first fetch that needs
+  it, stops when no session that could use it is left, runs with the network's relays, and keeps
+  its store (a cache of what it fetched) under the worker's `tmp/`. A worker without a helper
+  refuses an iroh-only session with `no-seeders`.
+- **NFX-06 §2's fetch, file by file.** A file is asked for by sha256 and fetched by its position
+  in a collection:
+  - the hash list is `meta`'s first member, fetched with `meta` capped at `segs + 1` members;
+  - the list then places `meta`'s other members, and each playlist places its rendition's
+    members (init, then segments), whichever transport brought it;
+  - a file not placed yet is refused (`unmapped`), never guessed.
+  - Each collection is fetched alone first, then held to exactly the count the list or playlist
+    gives, and every file comes back only under its hash-list sha256, at most its listed size.
+- **Tickets and sources.** A ticket must name its endpoint's node and a collection; only the
+  network's relays survive from it. A source that cannot be reached, stalls, sends what the hash
+  list contradicts or a collection of the wrong size, or has a bad ticket is dropped for the
+  session. The helper's own `busy` is retried, and a connection from a restarted helper is dialled
+  again; neither is held against the source.
+- **Tested** on a stand-in helper (placing, refusals, drops, retries, close) and in CI against
+  the real one: a worker with no payment providers plays the test video from a second worker
+  that serves it over iroh only, byte for byte.
+- **Not yet:** packaging the helper (5e-5) and the exit run against nfxd (5f).
