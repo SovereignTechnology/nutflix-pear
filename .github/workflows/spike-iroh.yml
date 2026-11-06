@@ -6,9 +6,10 @@
 # download checked against a pinned sha256, Cargo.lock honoured (--locked), least-privilege
 # token. nfx is checked out read-only at a pinned commit and only built here.
 #
-# The checks (helper fmt/clippy/tests, cargo deny, the Bare smoke run, the NAT matrix) each
-# record an outcome and do not stop the others; the `verdict` job fails the run if any judged
-# one failed. Runs on pull requests that touch the spike, and by hand; never on a push to main.
+# The checks (helper fmt/clippy/tests, cargo deny, the Bare smoke run under bare-sidecar, the
+# NAT matrix) each record an outcome and do not stop the others; the `verdict` job fails the run
+# if any judged one failed. Runs on pull requests that touch the spike, and by hand; never on a
+# push to main.
 name: spike-iroh
 
 on:
@@ -175,7 +176,7 @@ jobs:
           path: bins
       - name: binaries (artifacts drop the executable bit)
         run: chmod 0755 bins/* && ls -l bins && mkdir -p results
-      - name: the helper under the real Bare runtime (bare-subprocess, stdin pipe)
+      - name: the helper under the real Bare runtime (bare-sidecar, bare-subprocess, stdin pipe)
         id: bare
         continue-on-error: true
         run: |
@@ -185,52 +186,36 @@ jobs:
           cp spikes/iroh/bare-boot.mjs "$dir/boot.mjs"
           node_modules/.bin/esbuild spikes/iroh/bare-smoke.mjs --bundle --packages=external \
             --format=esm --platform=neutral --target=es2022 --outfile="$dir/smoke.mjs" --log-level=warning
-          bare=node_modules/bare-sidecar/prebuilds/linux-x64/bare
-          [ -x "$bare" ] || chmod 0755 "$bare"
           work=$(mktemp -d)
           head -c 307200 /dev/urandom > "$work/file.bin"
           sha=$(sha256sum "$work/file.bin" | cut -d' ' -f1)
-          # Three runs (spike S-D: the event loop stalled under Bare in runs 3-6): as shipped, with
-          # a process-state sample after 10 s; with libuv's io_uring off (Node's default since
-          # 20.3); and as shipped under strace. The check passes on the first run, or on the second
-          # with that setting recorded as a finding.
-          smoke() { # tag, then any prefix command
-            local tag=$1 pid status p
-            shift
-            set +e
-            NUTFLIX_IROH_HELPER_TRACE=1 timeout -k 5 40 "$@" "$bare" "$dir/boot.mjs" \
-              "$PWD/bins/nutflix-iroh-helper" "$work/$tag" "$work/file.bin" "$sha" \
-              "$PWD/results/bare-$tag.json" > "results/bare-$tag.out" 2> "results/bare-$tag.err" &
-            pid=$!
-            sleep 10
-            ps -eo pid,ppid,pgid,stat,wchan:32,pcpu,etimes,args | grep -E '[p]rebuilds/linux-x64/bare|[n]utflix-iroh-helper' > "results/bare-$tag.ps"
-            for p in $(pgrep -f '[n]utflix-iroh-helper|[p]rebuilds/linux-x64/bare'); do
-              echo "== $p"; grep -E '^(State|Threads|SigPnd|ShdPnd|SigBlk|SigIgn)' "/proc/$p/status"
-            done >> "results/bare-$tag.ps" 2>/dev/null
-            wait "$pid"
-            status=$?
-            set -e
-            for f in "bare-$tag.json" "bare-$tag.json.progress" "bare-$tag.ps" "bare-$tag.err"; do
-              echo "--- $f"; head -c 4000 "results/$f" 2>/dev/null || echo "(none)"
-            done
-            echo "bare ($tag) exited $status"
-            return "$status"
-          }
-          sudo apt-get install -y -qq strace >/dev/null
-          shipped=0; uring_off=0; traced=0
-          smoke shipped || shipped=$?
-          smoke uring-off env UV_USE_IO_URING=0 || uring_off=$?
-          # Who closes the event loop's epoll fd (run 7: a thread spun on epoll_pwait(3) = EBADF):
-          # every close/dup/epoll_create/clone/exec, kept from the start.
-          smoke traced strace -f -tt -o results/bare-strace.txt \
-            -e trace=close,close_range,dup2,dup3,epoll_create1,clone,clone3,vfork,execve,exit_group,kill,tgkill || traced=$?
-          [ -f results/bare-strace.txt ] && { head -c 3000000 results/bare-strace.txt > results/bare-strace.head; rm results/bare-strace.txt; }
-          # A pass is a result file saying ok: Bare also exits 0 when it tears down mid-run (runs 7
-          # and 8 counted that as a pass; it is not one).
-          ok_of() { python3 -c 'import json,sys; print("yes" if json.load(open(sys.argv[1])).get("ok") is True else "no")' "$1" 2>/dev/null || echo no; }
-          s=$(ok_of results/bare-shipped.json); u=$(ok_of results/bare-uring-off.json)
-          echo "shipped=$shipped/$s uring_off=$uring_off/$u traced=$traced" | tee results/bare-outcomes.txt
-          [ "$s" = yes ] || [ "$u" = yes ]
+          # Started by bare-sidecar, as the host starts the worker, so Bare holds `Bare.IPC` (fd 3).
+          # The plain `bare` without that pipe tears itself down while it holds a subprocess: spike
+          # S-D's finding 10, which slice 5e-1 showed is Bare's own (it happens with `cat`) and never
+          # reaches the worker (run 41189554679). ci.yml keeps that regression check
+          # (bare-subprocess.test.ts); this one drives the real helper. One run, with a
+          # process-state sample after 10 s.
+          set +e
+          NUTFLIX_IROH_HELPER_TRACE=1 timeout -k 5 40 node spikes/iroh/bare-sidecar-run.mjs "$dir/boot.mjs" \
+            "$PWD/bins/nutflix-iroh-helper" "$work/run" "$work/file.bin" "$sha" \
+            "$PWD/results/bare.json" > results/bare.out 2> results/bare.err &
+          pid=$!
+          sleep 10
+          ps -eo pid,ppid,pgid,stat,wchan:32,pcpu,etimes,args | grep -E '[p]rebuilds/linux-x64/bare|[n]utflix-iroh-helper' > results/bare.ps
+          for p in $(pgrep -f '[n]utflix-iroh-helper|[p]rebuilds/linux-x64/bare'); do
+            echo "== $p"; grep -E '^(State|Threads|SigPnd|ShdPnd|SigBlk|SigIgn)' "/proc/$p/status"
+          done >> results/bare.ps 2>/dev/null
+          wait "$pid"
+          status=$?
+          set -e
+          for f in bare.json bare.json.progress bare.ps bare.err; do
+            echo "--- $f"; head -c 4000 "results/$f" 2>/dev/null || echo "(none)"
+          done
+          # A pass is an exit 0 AND a result file saying ok: Bare also exits 0 when it tears down
+          # mid-run (S-D's runs 7 and 8 counted that as a pass; it is not one).
+          ok=$(python3 -c 'import json,sys; print("yes" if json.load(open(sys.argv[1])).get("ok") is True else "no")' results/bare.json 2>/dev/null || echo no)
+          echo "sidecar=$status/$ok" | tee results/bare-outcomes.txt
+          [ "$status" -eq 0 ] && [ "$ok" = yes ]
       - name: NAT matrix (root, network namespaces)
         id: nat
         continue-on-error: true
@@ -261,7 +246,7 @@ jobs:
           print("## Spike S-D: the iroh helper")
           print(f"fmt {e['FMT']} · clippy {e['CLIPPY']} · tests {e['TEST']} · cargo deny {e['DENY']} · Bare {e['BARE']} · NAT matrix {e['NAT']}")
           try:
-              print(f"\nBare runs (exit/ok): `{open('results/bare-outcomes.txt').read().strip()}`")
+              print(f"\nBare run (exit/ok): `{open('results/bare-outcomes.txt').read().strip()}`")
           except FileNotFoundError:
               pass
           try:

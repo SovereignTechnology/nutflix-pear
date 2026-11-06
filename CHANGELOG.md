@@ -28,6 +28,8 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   - **CI:** a job builds the helper (pinned toolchain, `--locked`) for the test job, and the
     worker's iroh suite fetches every file back through a second helper. It fails there, never
     skips, without one.
+  - **spike-iroh:** its Bare smoke test starts through bare-sidecar, as the host starts the
+    worker. The plain `bare` it used tears down mid-run (spike S-D finding 10, Bare's own).
 - Settings › NFX network lists the network's own iroh relays (contracts version 12, ADR 0020
   slice 5e-2, ADR 0021).
   - **What they are:** every NFX network runs its own iroh relays (NFX-06 §1). They are the only
