@@ -7,6 +7,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-06
+
+Free video over NFX, and playback that starts on real relays. NFX is off until you turn it on in
+Settings and give it the network's scoped and iroh relays (see the README's known limitations).
+
 ### Added
 
 - The exit run: free NFX videos cross between nfx and this app over iroh, in CI (ADR 0020 slice
@@ -293,5 +298,6 @@ The first release of the desktop app, for Linux x86_64. It is experimental: read
 - Windows, macOS and arm64 builds, automatic updates and operating-system code signing.
 - A web app: `packages/app-web` is an empty scaffold.
 
-[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.0...HEAD
+[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.1...HEAD
+[0.1.1]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.0...desktop-v0.1.1
 [0.1.0]: https://github.com/SovereignTechnology/nutflix-pear/releases/tag/desktop-v0.1.0
