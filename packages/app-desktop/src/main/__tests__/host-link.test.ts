@@ -8,7 +8,7 @@ import type { HostIn, HostOut } from '../../ipc/protocol.js';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HOST_ENTRY, WORKER_ENTRY, hostArgs, parseMainArgs } from '../args.js';
+import { HOST_ENTRY, WORKER_ENTRY, devFlagIn, hostArgs, parseMainArgs } from '../args.js';
 import { HostLink, type HostChild } from '../host-link.js';
 import { createLogger, formatLogLine } from '../log.js';
 
@@ -194,6 +194,8 @@ describe('redacting logger', () => {
 });
 
 describe('main argv', () => {
+  const PATHS = { userData: '/ud', workerEntry: '/app/dist/worker/entry.js' };
+
   it('parses the dev flags and an absolute user-data dir (both spellings)', () => {
     expect(parseMainArgs(['main.js', '--dev-mocks', '--user-data-dir', '/tmp/x'])).toEqual({
       devMocks: true,
@@ -215,7 +217,24 @@ describe('main argv', () => {
     expect(parseMainArgs(['--user-data-dir', '--dev-mocks']).devMocks).toBe(true);
   });
 
-  const PATHS = { userData: '/ud', workerEntry: '/app/dist/worker/entry.js' };
+  it('takes a loopback --dev-bootstrap list, forwards it only with --dev-mocks, and drops a bad one', () => {
+    const list = '127.0.0.1:49737,127.0.0.1:49738';
+    const o = parseMainArgs(['--dev-mocks', `--dev-bootstrap=${list}`]);
+    expect(o.devBootstrap).toBe(list);
+    expect(hostArgs(o, PATHS)).toContain(`--dev-bootstrap=${list}`);
+    // Without --dev-mocks the host would refuse it (and exit 2 on every respawn): never sent.
+    expect(hostArgs(parseMainArgs([`--dev-bootstrap=${list}`]), PATHS)).not.toContainEqual(
+      expect.stringMatching(/^--dev-bootstrap/),
+    );
+    for (const bad of ['10.0.0.1:1', '127.0.0.1:0', '127.0.0.1', 'localhost:1', `${list},x`])
+      expect(parseMainArgs(['--dev-mocks', `--dev-bootstrap=${bad}`]), bad).not.toHaveProperty(
+        'devBootstrap',
+      );
+    // A packaged build refuses it like every dev flag (F21), in either spelling.
+    expect(devFlagIn([`--dev-bootstrap=${list}`])).toBe(`--dev-bootstrap=${list}`);
+    expect(devFlagIn(['--dev-bootstrap'])).toBe('--dev-bootstrap');
+    expect(devFlagIn(['--dev-bootstrapx'])).toBeUndefined();
+  });
 
   it('host args carry userData, the worker entry and only the dev flags', () => {
     expect(hostArgs(parseMainArgs(['--dev-mocks', '--no-sandbox']), PATHS)).toEqual([

@@ -272,6 +272,30 @@ A play session also fetches over NFX-06, so this app can watch a seeder that spe
 - **A choice, never an omission.** `packaging/cli.ts` refuses to run without `--iroh-helper
   <file>` or `--without-iroh-helper`.
 
+## Amendment 2026-11-06: the exit run (slice 5f)
+
+Phase 1's exit (nfx ADR 0101 §6, ADR 0103 §3) is a CI workflow, `.github/workflows/nfx-exit.yml`,
+and its suite `packages/app-desktop/src/host/__tests__/nfx-exit.integration.test.ts`.
+- **What runs.** nfxd and nfx-package built from nfx at a pinned commit, nfxd's embedded scoped
+  relay as the network's Nostr relay, the stock iroh-relay over plain HTTP on loopback as its
+  iroh relay, the iroh helper, and this app's real worker and host NFX code: the catalogue, the
+  beacon reader, the manifest builder, the beacon publisher with a real seeder key, and the
+  host's Nostr pool. Nothing on the wire is mocked, and every file is checked under its sha256.
+- **What it proves.** Both directions, over iroh only, free, on `nfx:testnet:1`:
+  - nfxd seeds and this app plays every rendition (layout C byte for byte, a range, an ffmpeg
+    decode);
+  - this app packages the way Studio does and seeds; nfxd fetches it, passes its own checks and
+    serves it as HLS that ffmpeg decodes;
+  - nfx's relay accepts this app's manifest and beacons, which nfx-proto checks.
+- **When.** On pull requests that touch the NFX worker, iroh or host code, the helper or the suite,
+  and by hand. Not a required check yet.
+- **Tier 3, the app itself** (job `exit-app`, `packages/app-desktop/e2e/nfx-exit-app.e2e.ts`):
+  the shipping runtime, Electron with its sandbox on, the host, main's media proxy and the Bare
+  worker spawning the helper, finds nfxd's video through its own search, plays it from the NFX
+  page and switches quality, so the path a user takes is proved, not only the worker's.
+- **Not yet.** A mixed swarm with a seeder lost mid-stream. The NAT matrix runs the same
+  transports, nfxd against the helper (spike-iroh).
+
 ## Amendment 2026-11-06: beacons are read live (found by the exit run)
 
 NFX-04 keeps beacons ephemeral: a scoped relay forwards kind 20464 to live subscribers and never
