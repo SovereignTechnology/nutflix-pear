@@ -61,6 +61,13 @@ import { decode } from 'nostr-tools/nip19';
 /** = NostrKind.ReleaseNotice (contracts v3); pinned to the contract by a test. */
 export const RELEASE_NOTICE_KIND = 30071;
 export const RELEASE_D_TAG = 'nutflix-desktop';
+/**
+ * Every release notice the SovTech key signs with these scripts, by its `d`: the desktop app, and
+ * NFX's own releases (its nfxd and nfx-package tarball, 2026-11-06). The verify and publish
+ * scripts take one of these with `--d` (default the desktop's); any other `d` is refused, and a
+ * notice for one product never verifies as another's.
+ */
+export const RELEASE_D_TAGS = Object.freeze([RELEASE_D_TAG, 'nfx']);
 /** The SovTech org key (Cameron, 2026-09-24): every release is signed by it, nothing else. */
 export const SOVTECH_NPUB = 'npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx';
 
@@ -227,11 +234,12 @@ export function sumsText(artifacts) {
 }
 
 /** The unsigned NIP-01 event: `id` and `sig` empty until the SovTech signer fills them. */
-export function unsignedEvent({ artifacts, version, commit, createdAt }) {
+export function unsignedEvent({ artifacts, version, commit, createdAt, d = RELEASE_D_TAG }) {
+  if (!RELEASE_D_TAGS.includes(d)) throw new Error(`unknown release d ${JSON.stringify(d)}`);
   const sorted = [...artifacts].sort((a, b) => byteOrder(a.name, b.name));
   const content = sumsText(sorted);
   const tags = [
-    ['d', RELEASE_D_TAG],
+    ['d', d],
     ['version', version],
   ];
   if (commit) tags.push(['commit', commit]);

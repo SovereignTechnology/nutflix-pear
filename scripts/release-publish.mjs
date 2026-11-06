@@ -22,7 +22,9 @@
 //
 // Usage (after `npm run build`: it loads @sovit/core's built signer):
 //   node scripts/release-publish.mjs <release-event.unsigned.json | release-event.json>
-//        --dir <dir with the downloaded artifacts> [--dry-run]
+//        --dir <dir with the downloaded artifacts> [--d <release>] [--dry-run]
+//   `--d nfx` signs NFX's own release notice (its nfxd and nfx-package tarball) instead of the
+//   desktop app's (`nutflix-desktop`, the default); no other `d` is accepted.
 import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import process from 'node:process';
@@ -34,7 +36,7 @@ import { SimplePool, useWebSocketImplementation } from 'nostr-tools/pool';
 import { npubEncode } from 'nostr-tools/nip19';
 import WebSocket from 'ws';
 
-import { sovtechPubkeyHex } from './release-manifest.mjs';
+import { RELEASE_D_TAG, RELEASE_D_TAGS, sovtechPubkeyHex } from './release-manifest.mjs';
 import {
   checkFiles,
   checkUnsignedRelease,
@@ -81,7 +83,7 @@ const refuse = (msg) => {
 function summary(r, relays) {
   const when = new Date(Number(r.createdAt) * 1000).toISOString();
   return [
-    `release ${r.version}${r.commit === undefined ? '' : ` (commit ${r.commit})`}, created ${when}`,
+    `${r.d} release ${r.version}${r.commit === undefined ? '' : ` (commit ${r.commit})`}, created ${when}`,
     ...r.files.map((a) => `  ${a.sha256}  ${a.name}  (${String(a.bytes)} bytes)`),
     `relays: ${relays.join(', ')}`,
   ].join('\n');
@@ -114,6 +116,7 @@ export async function publishRelease({
   log,
   dryRun = false,
   trustedPubkey = sovtechPubkeyHex(),
+  d = RELEASE_D_TAG,
 }) {
   const signedAlready =
     typeof event === 'object' && event !== null && event.id !== '' && event.sig !== '';
@@ -123,7 +126,7 @@ export async function publishRelease({
     log('the event is signed already: verifying it, then publishing (no bunker needed)');
   } else {
     // 1. Before the network: the template and every file.
-    const t = checkUnsignedRelease(event, trustedPubkey);
+    const t = checkUnsignedRelease(event, trustedPubkey, d);
     await checkFiles(t.artifacts, { allDir: dir });
     log(`template ok: ${String(t.artifacts.length)} artifact(s) in ${dir} match it`);
     // 2. The bunker, which must sign for the trusted key.
@@ -152,7 +155,7 @@ export async function publishRelease({
     }
   }
   // As a user will check it: signature, key, shape, every file.
-  const r = await verifyRelease(signed, { allDir: dir, trustedPubkey });
+  const r = await verifyRelease(signed, { allDir: dir, trustedPubkey, d });
   if (!signedAlready) log(`signed and verified; saved to ${save(signed)}`);
   const text = summary(r, relays);
   if (dryRun) {
@@ -250,13 +253,20 @@ function askLine(prompt) {
 export async function run(argv) {
   const [eventPath, ...rest] = argv;
   if (eventPath === undefined || eventPath.startsWith('-'))
-    refuse('usage: release-publish.mjs <release-event(.unsigned).json> --dir <dir> [--dry-run]');
+    refuse(
+      'usage: release-publish.mjs <release-event(.unsigned).json> --dir <dir> [--d <release>] [--dry-run]',
+    );
   let dir;
   let dryRun = false;
+  let d = RELEASE_D_TAG;
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--dir') {
       dir = rest[++i];
       if (dir === undefined) refuse('--dir needs a directory');
+    } else if (rest[i] === '--d') {
+      d = rest[++i];
+      if (d === undefined || !RELEASE_D_TAGS.includes(d))
+        refuse(`--d takes one of ${RELEASE_D_TAGS.join(', ')}`);
     } else if (rest[i] === '--dry-run') dryRun = true;
     else refuse(`unknown argument ${rest[i]}`);
   }
@@ -284,6 +294,7 @@ export async function run(argv) {
     event,
     dir,
     dryRun,
+    d,
     askBunkerUri: () => askHidden('bunker:// URI of the SovTech signer (not shown): '),
     connect: (uri, o) => signerLib.connectBunker(uri, o),
     adopt: (bunker, relays) => signerLib.Nip46Signer.adopt(bunker, relays),

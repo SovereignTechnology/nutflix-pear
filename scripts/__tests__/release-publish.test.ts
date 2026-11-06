@@ -342,7 +342,9 @@ describe('release-publish: the CLI', () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(join(scriptsDir, 'release-publish.mjs'), 'utf8');
     const flags = [...src.matchAll(/rest\[i\] === '(--[a-z-]+)'/g)].map((m) => m[1]);
-    expect(flags.sort()).toEqual(['--dir', '--dry-run']);
+    // `--d` names which release notice (an allow-listed product, never a key, a URI or a relay).
+    expect(flags.sort()).toEqual(['--d', '--dir', '--dry-run']);
+    expect(src).toMatch(/RELEASE_D_TAGS\.includes\(d\)/);
     // The URI is read from the terminal only, and never written anywhere.
     expect(src).toMatch(/askHidden\('bunker:\/\/ URI/);
     // Every pool uses `ws`: Node 22's built-in WebSocket overflows the stack on an unreachable
