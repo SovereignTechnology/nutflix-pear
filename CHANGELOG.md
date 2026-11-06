@@ -9,6 +9,17 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The packaged app ships the iroh helper (ADR 0020 slice 5e-5, ADR 0021).
+  - **Where:** `resources/app.asar.unpacked/iroh/nutflix-iroh-helper`, unpacked beside the
+    worker. Main hands it to the host as `--iroh-helper`, and a packaged build then never reads
+    `NUTFLIX_IROH_HELPER`, so an environment variable cannot swap the binary a release ships.
+  - **Built for the release:** the release job builds it from the tagged commit with the
+    crate's pinned toolchain and `--locked`, never from a cache.
+  - **Checked when staged:** a regular file, executable, at most 64 MiB, and an executable for
+    the target (an x64 ELF for linux-x64), so a helper built for the wrong machine cannot ship.
+    The packaged layout check then requires it unpacked and executable.
+  - **A choice:** `packaging/cli.ts` needs `--iroh-helper <file>` or `--without-iroh-helper`.
+    The inactive GitLab release jobs build none yet; those apps speak HyperDHT only.
 - NFX play fetches over iroh too, NFX-06 through a watching iroh helper (ADR 0020 slice 5e-4, ADR
   0021), so a seeder that speaks iroh only (nfxd) can be watched.
   - **Sources:** the host passes each beacon's `iroh` endpoints beside its `hyperdht` ones (the
@@ -26,7 +37,7 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   5e-3, ADR 0021), beside HyperDHT and only while seeding and the NFX setting are both on.
   - **The helper:** one per worker, started when a stored video is to be served and stopped when
     serving goes off. Dev and CI name it in `NUTFLIX_IROH_HELPER`; a packaged build's own copy
-    comes with slice 5e-5. Without one the worker speaks HyperDHT only.
+    comes with slice 5e-5 (below). Without one the worker speaks HyperDHT only.
   - **A stable node:** its iroh key is derived from the worker's Corestore primary key
     (`nfx:<namespace>:iroh`), so the node id survives restarts. The network's own iroh relays
     only; a change of them restarts the helper.
@@ -198,6 +209,16 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Fixed
 
+- NFX play finds its seeders on a real scoped relay. Beacons are ephemeral (NFX-04): a scoped
+  relay forwards them to live subscribers and never stores them, so the one-shot query the play
+  used found no seeder on nfxd's relay or any other, whoever was seeding. Found by the exit run
+  against nfxd (slice 5f).
+  - **Live:** a play holds a subscription on the scoped relays and opens as soon as a beacon names
+    a source, waiting at most one republish interval (62 s; seeders republish at TTL/2, NFX-03 §3).
+  - **Ahead of the click:** the Watch page's `nfxVideo` opens it when the page loads, and what
+    arrives is kept for a beacon's lifetime (bounded), so Play usually opens at once.
+  - **Tests:** core's `FakeRelayPool` now treats kinds 20000–29999 as NIP-01 says, forwarded to
+    live subscriptions and never stored; storing them is what hid this.
 - Merged NIP-71 and NFX feeds no longer skip a video when twins are dropped mid-page. A page
   stops at the oldest item of a side that has more, and a page left empty steps on.
 - A video request the player drops now ends main's fetch from the worker too. Before, after a

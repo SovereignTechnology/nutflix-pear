@@ -17,7 +17,7 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createPackageWithOptions } from '@electron/asar';
 import type { ResolvedForgeConfig } from '@electron-forge/shared-types';
@@ -31,6 +31,7 @@ import {
   MADE_LIST_SUFFIX,
   NOT_SHIPPED,
   PACKAGED_DLEQ_THREAD_ENTRY,
+  PACKAGED_IROH_HELPER,
   PACKAGED_WORKER_BUNDLE,
   PACKAGED_WORKER_ENTRY,
   PRELOAD_FILES,
@@ -38,6 +39,7 @@ import {
   RENDERER_FILES,
   UNPACKED_DIRS,
   UNPACKED_FILES,
+  packagedIrohHelper,
 } from '../identity.ts';
 import { PACKED, layoutProblems } from '../layout.ts';
 import { PKG_DIR } from '../stage.ts';
@@ -67,10 +69,10 @@ afterEach(() => {
 });
 
 describe('forgeConfig', () => {
-  it('packages from app.asar with the worker and node_modules unpacked, unsigned, nothing rebuilt', () => {
+  it('packages from app.asar with the worker, node_modules and the iroh helper unpacked, unsigned, nothing rebuilt', () => {
     const p = cfg.packagerConfig ?? {};
-    expect(p.asar).toEqual({ unpackDir: '{worker,node_modules}' });
-    expect(UNPACKED_DIRS).toEqual(['worker', 'node_modules']);
+    expect(p.asar).toEqual({ unpackDir: '{worker,node_modules,iroh}' });
+    expect(UNPACKED_DIRS).toEqual(['worker', 'node_modules', 'iroh']);
     expect(p.prune).toBe(false);
     expect(p.executableName).toBe('nutflix');
     expect(p.name).toBe('Nutflix');
@@ -245,14 +247,59 @@ async function fakeOutput(
   const out = join(root, 'packaged', name);
   mkdirSync(join(out, 'resources'), { recursive: true });
   await createPackageWithOptions(src, join(out, 'resources', 'app.asar'), {
-    unpackDir: '{worker,node_modules}',
+    unpackDir: '{worker,node_modules,iroh}',
   });
   return out;
+}
+
+/** `fakeOutput` reuses one source tree per test: a helper an earlier call staged goes. */
+function noHelper(src: string): void {
+  rmSync(join(src, 'iroh'), { recursive: true, force: true });
+}
+
+/** Slice 5e-5: a staged iroh helper (any executable will do for the layout). */
+function withHelper(src: string): void {
+  mkdirSync(join(src, 'iroh'), { recursive: true });
+  writeFileSync(join(src, PACKAGED_IROH_HELPER), '#!/bin/sh\n');
+  chmodSync(join(src, PACKAGED_IROH_HELPER), 0o755);
 }
 
 describe('layoutProblems', () => {
   it('accepts code packed, worker + runtime unpacked and executable', async () => {
     expect(layoutProblems(await fakeOutput(), 'linux', 'x64', 'Nutflix')).toEqual([]);
+  });
+
+  it('slice 5e-5: a build staged with the iroh helper must ship it unpacked and executable', async () => {
+    expect(PACKAGED_IROH_HELPER).toBe('iroh/nutflix-iroh-helper');
+    expect(packagedIrohHelper('win32')).toBe('iroh/nutflix-iroh-helper.exe');
+    expect(packagedIrohHelper('linux')).toBe(PACKAGED_IROH_HELPER);
+    const good = await fakeOutput(withHelper, 'Good');
+    expect(layoutProblems(good, 'linux', 'x64', 'Nutflix', true)).toEqual([]);
+    // Without the helper expected, its absence is fine (a --without-iroh-helper build)…
+    expect(layoutProblems(await fakeOutput(noHelper, 'None'), 'linux', 'x64', 'Nutflix')).toEqual(
+      [],
+    );
+    // …but a build that staged it may not lose it, nor ship it unusable.
+    expect(
+      layoutProblems(await fakeOutput(noHelper, 'Lost'), 'linux', 'x64', 'Nutflix', true),
+    ).toEqual(['iroh/nutflix-iroh-helper is not unpacked']);
+    const plain = await fakeOutput((src) => {
+      withHelper(src);
+      chmodSync(join(src, PACKAGED_IROH_HELPER), 0o644);
+    }, 'Plain');
+    expect(layoutProblems(plain, 'linux', 'x64', 'Nutflix', true)).toEqual([
+      'iroh/nutflix-iroh-helper is not executable',
+    ]);
+    const linked = await fakeOutput(withHelper, 'Linked');
+    const shipped = join(linked, 'resources', 'app.asar.unpacked', PACKAGED_IROH_HELPER);
+    const outside = join(root, 'outside-helper');
+    writeFileSync(outside, '#!/bin/sh\n');
+    chmodSync(outside, 0o755);
+    rmSync(shipped);
+    symlinkSync(outside, shipped);
+    expect(layoutProblems(linked, 'linux', 'x64', 'Nutflix', true)).toEqual([
+      'iroh/nutflix-iroh-helper is a symlink; it must be a regular file',
+    ]);
   });
 
   it('flags a non-executable runtime, another platform’s runtime, a missing boot module, an app/ folder', async () => {
@@ -374,6 +421,8 @@ describe('parseCli', () => {
       'deb,appimage',
       '--platform',
       'linux',
+      '--iroh-helper',
+      'bin/helper',
       '--arch',
       'x64',
     ]);
@@ -382,16 +431,29 @@ describe('parseCli', () => {
       platform: 'linux',
       arch: 'x64',
       targets: ['deb', 'appimage'],
+      irohHelper: resolve('bin/helper'),
     });
     expect(o.out).toBe(join(PKG_DIR, 'out'));
     expect(o.appImageRuntimeDir).toBe(join(PKG_DIR, 'out', 'appimage-runtime'));
-    expect(parseCli(['stage']).targets).toBeUndefined();
+    const bare = parseCli(['stage', '--without-iroh-helper']);
+    expect(bare.targets).toBeUndefined();
+    expect(bare.irohHelper).toBeNull();
+    expect(parseCli(['make', '--without-iroh-helper', '--arch', 'x64']).arch).toBe('x64');
+  });
+
+  it('slice 5e-5: the iroh helper is a choice, never an omission', () => {
+    expect(() => parseCli(['stage'])).toThrow(/--iroh-helper <file>.*or --without-iroh-helper/);
+    expect(() => parseCli(['stage', '--iroh-helper', 'h', '--without-iroh-helper'])).toThrow(
+      /not both/,
+    );
+    expect(() => parseCli(['stage', '--iroh-helper'])).toThrow(/incomplete|needs a file/);
+    expect(() => parseCli(['stage', '--iroh-helper', '--without-iroh-helper'])).toThrow();
   });
 
   it('refuses unknown commands, options, platforms, arches and targets', () => {
     expect(() => parseCli([])).toThrow(/usage/);
     expect(() => parseCli(['publish'])).toThrow(/usage/);
-    expect(() => parseCli(['make', '--sign', 'yes'])).toThrow(
+    expect(() => parseCli(['make', '--without-iroh-helper', '--sign', 'yes'])).toThrow(
       /unknown or incomplete option --sign/,
     );
     expect(() => parseCli(['make', '--platform'])).toThrow(/incomplete/);
@@ -431,8 +493,12 @@ describe('madeList / writeMadeList (what one make produced, for release-manifest
 describe('constants that must agree with the app (this code cannot import it at runtime)', () => {
   it('the packaged worker entry, the renderer/prompt file lists', async () => {
     const argsPath = join(PKG_DIR, 'src', 'main', 'args.ts');
-    const args = (await import(/* @vite-ignore */ argsPath)) as { PACKAGED_WORKER_ENTRY: string };
+    const args = (await import(/* @vite-ignore */ argsPath)) as {
+      PACKAGED_WORKER_ENTRY: string;
+      PACKAGED_IROH_HELPER: string;
+    };
     expect(PACKAGED_WORKER_ENTRY).toBe(args.PACKAGED_WORKER_ENTRY);
+    expect(PACKAGED_IROH_HELPER).toBe(args.PACKAGED_IROH_HELPER);
     const protoPath = join(PKG_DIR, 'src', 'main', 'app-protocol.ts');
     const proto = (await import(/* @vite-ignore */ protoPath)) as {
       APP_FILES: readonly string[];

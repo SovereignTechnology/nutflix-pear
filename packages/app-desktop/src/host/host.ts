@@ -90,6 +90,8 @@ export interface HostOptions {
   readonly timers?: Timers;
   readonly restart?: RestartPolicy;
   readonly random?: (n: number) => Uint8Array;
+  /** TESTS ONLY: how long an NFX play waits for a live beacon (`NFX_BEACON_WAIT_MS`). */
+  readonly nfxBeaconWaitMs?: number;
   readonly now?: () => UnixSeconds;
   readonly workerStartTimeoutMs?: number;
   /** Tests: the auto top-up's wall clock (ms, shared with its ledger) and target polling. */
@@ -104,8 +106,9 @@ export interface HostOptions {
   readonly recoveryCore?: RecoveryCore | null;
   /**
    * Slice 5e-3 (ADR 0021): the iroh helper's executable, handed to the worker (`WorkerInit`).
-   * The entry reads it from `NUTFLIX_IROH_HELPER` (dev and CI); slice 5e-5 supplies a packaged
-   * build's own copy. Absent or `null`: the worker speaks HyperDHT only.
+   * A packaged build's own copy (`--iroh-helper`, slice 5e-5), else, in dev and CI,
+   * `NUTFLIX_IROH_HELPER` (`flags.ts` `irohHelperOf`). Absent or `null`: the worker speaks
+   * HyperDHT only.
    */
   readonly irohHelper?: string | null;
 }
@@ -660,6 +663,7 @@ export async function createHost(o: HostOptions): Promise<Host> {
     ...(o.random === undefined ? {} : { random: o.random }),
     ...(o.now === undefined ? {} : { now: o.now }),
     nfxDir: join(o.userData, NFX_DIR),
+    ...(o.nfxBeaconWaitMs === undefined ? {} : { nfxBeaconWaitMs: o.nfxBeaconWaitMs }),
   });
   const host = new Host({
     adapter,

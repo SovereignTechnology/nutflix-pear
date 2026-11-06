@@ -260,6 +260,14 @@ describe("main → host argv round trip (the host's real parser)", () => {
     expect(parsed.flags).toEqual(flags);
   });
 
+  it('slice 5e-5: a packaged build’s --iroh-helper reaches the host unchanged', async () => {
+    const helper = '/opt/Nutflix/resources/app.asar.unpacked/iroh/nutflix-iroh-helper';
+    const parsed = (await parseHostArgs(
+      hostArgs(parseMainArgs([]), { ...paths, irohHelper: helper }),
+    )) as HostArgsLike & { readonly irohHelper?: string };
+    expect(parsed.irohHelper).toBe(helper);
+  });
+
   it('the host still refuses the old spelling (so this test would have caught the drift)', async () => {
     await expect(
       parseHostArgs(['--user-data=/tmp/nf-ud', '--dev-mocks', '--dev-fixtures']),

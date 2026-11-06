@@ -164,6 +164,7 @@ jobs:
       - run: xvfb-run -a npm run -w packages/app-desktop test:e2e
 
   package:
+    needs: iroh-helper
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -175,6 +176,14 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
+      # Slice 5e-5: the helper the app ships, as the release job builds it.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: iroh-helper-linux-x64
+          path: ${{ runner.temp }}/iroh-helper
+      - name: the iroh helper (artifacts drop the executable bit)
+        run: chmod 0755 "$RUNNER_TEMP/iroh-helper/nutflix-iroh-helper"
       # Stages the packaged app (ADR 0017): the stale-build, bundle allow-list and layout gates
-      # run here; no installer is built and nothing is signed.
-      - run: npm run -w packages/app-desktop stage
+      # run here, and the iroh helper is checked to be an x64 ELF; no installer is built and
+      # nothing is signed.
+      - run: npm run -w packages/app-desktop stage -- --iroh-helper "$RUNNER_TEMP/iroh-helper/nutflix-iroh-helper"

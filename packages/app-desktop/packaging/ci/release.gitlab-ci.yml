@@ -8,6 +8,9 @@
 # writes the asar integrity digest, which only a macOS host can) and one tagged `windows`
 # (Squirrel.Windows). Manual, and only on `desktop-v*` tags: a person cuts a release.
 #
+# Slice 5e-5: these jobs build no iroh helper yet (`--without-iroh-helper`), so their apps speak
+# HyperDHT only; .github/workflows/release.yml builds and ships one for linux-x64.
+#
 # Each platform job only BUILDS. `packaging/cli.ts make` also writes
 # out/make/<platform>-<arch>.artifacts.json, the list of exactly what that make produced. The
 # final `desktop-release-manifest` job then runs scripts/release-manifest.mjs ONCE over every
@@ -47,15 +50,15 @@ desktop-linux:
     # refuses it unless its sha256 equals the pin in packaging/maker-appimage.ts.
     - mkdir -p packages/app-desktop/out/appimage-runtime
     - curl -fsSLo packages/app-desktop/out/appimage-runtime/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
-    - npm run -w packages/app-desktop make -- --platform linux --arch x64 --targets deb,appimage
+    - npm run -w packages/app-desktop make -- --platform linux --arch x64 --targets deb,appimage --without-iroh-helper
 
 desktop-macos:
   extends: .desktop-release
   tags: [macos]
   script:
     - npm run build
-    - npm run -w packages/app-desktop make -- --platform darwin --arch arm64 --targets dmg
-    - npm run -w packages/app-desktop make -- --platform darwin --arch x64 --targets dmg
+    - npm run -w packages/app-desktop make -- --platform darwin --arch arm64 --targets dmg --without-iroh-helper
+    - npm run -w packages/app-desktop make -- --platform darwin --arch x64 --targets dmg --without-iroh-helper
 
 desktop-windows:
   extends: .desktop-release
@@ -68,7 +71,7 @@ desktop-windows:
     - node script/select-7z-arch.js
     - cd ../..
     - npm run build
-    - npm run -w packages/app-desktop make -- --platform win32 --arch x64 --targets squirrel
+    - npm run -w packages/app-desktop make -- --platform win32 --arch x64 --targets squirrel --without-iroh-helper
 
 # ONE manifest and ONE unsigned event for the whole release, from the lists the platform jobs
 # wrote (their out/make/ artifacts are merged here by `needs`). A missing or stale list, a list
