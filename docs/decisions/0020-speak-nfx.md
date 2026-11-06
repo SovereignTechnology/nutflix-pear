@@ -293,7 +293,10 @@ and its suite `packages/app-desktop/src/host/__tests__/nfx-exit.integration.test
   the shipping runtime, Electron with its sandbox on, the host, main's media proxy and the Bare
   worker spawning the helper, finds nfxd's video through its own search, plays it from the NFX
   page and switches quality, so the path a user takes is proved, not only the worker's.
-- **The two-host run** (built 2026-11-06, not yet run; `nfx-exit-two-host.yml`, dispatch only):
+- **The two-host run** (`nfx-exit-two-host.yml`, dispatch only; **passed 2026-11-06, run
+  42300979880**: two runners with different public addresses, both directions, every file checked,
+  and about 3.7 MB came direct against 55 KB over the relays, so the two implementations
+  holepunched through cloud NAT):
   Cameron's release gate asks for the cross tests on separate machines. Two GitHub-hosted
   runners, each a VM of its own behind its own cloud NAT, run one role each of
   `src/host/__tests__/nfx-exit-two-host.integration.test.ts` (nfxd on one, this app's worker
