@@ -1,0 +1,139 @@
+# Slice 5f (ADR 0020; nfx ADR 0101 §6, ADR 0103 §3): the exit run. Free NFX videos cross between
+# nfx and this app over iroh-blobs (NFX-06) on nfx:testnet:1, every file sha256-checked, nothing
+# mocked on the wire: nfxd and nfx-package built from nfx at a pinned commit, the stock
+# iroh-relay, the iroh helper, and this app's real worker and host NFX code. Both directions:
+# nfxd seeds and this app plays every rendition; this app packages like Studio and seeds, and nfxd
+# fetches, verifies, seeds and serves it. The suite is
+# packages/app-desktop/src/host/__tests__/nfx-exit.integration.test.ts (it skips without
+# NUTFLIX_EXIT_RUN=1, and fails, never skips, when a binary is missing).
+#
+# Supply-chain policy as ci.yml (threat T12): first-party actions pinned by commit SHA,
+# Cargo.lock honoured (--locked), least-privilege token. nfx is checked out read-only at a pinned
+# commit and only built here. Not a required check (yet).
+name: nfx-exit
+
+on:
+  pull_request:
+    paths:
+      - 'packages/app-desktop/src/worker/nfx/**'
+      - 'packages/app-desktop/src/worker/iroh/**'
+      - 'packages/app-desktop/src/host/nfx/**'
+      - 'packages/app-desktop/src/host/__tests__/nfx-exit.integration.test.ts'
+      - 'crates/iroh-helper/**'
+      - '.github/workflows/nfx-exit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nfx-exit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: '1.98.0'
+  # The nfx commit whose nfxd and nfx-package this app is judged against (nfx main).
+  NFX_SHA: '66da6b73f61a194017b1f3993e6c7ab9ad93454d'
+  IROH_RELAY_VERSION: '1.2.0'
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: SovereignTechnology/nfx
+          ref: ${{ env.NFX_SHA }}
+          path: nfx
+          persist-credentials: false
+      - name: the pinned toolchain (the runner's rustup; no other download)
+        run: |
+          set -euo pipefail
+          grep -qx "channel = \"${RUST_VERSION}\"" crates/iroh-helper/rust-toolchain.toml
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          mkdir -p bins
+      - name: cache (cargo registry, the helper, nfx and iroh-relay builds)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            crates/iroh-helper/target
+            nfx/crates/target
+            ${{ runner.temp }}/iroh-relay
+          key: nfx-exit-${{ env.RUST_VERSION }}-${{ env.NFX_SHA }}-relay-${{ env.IROH_RELAY_VERSION }}-${{ hashFiles('crates/iroh-helper/Cargo.lock') }}
+          restore-keys: |
+            nfx-exit-${{ env.RUST_VERSION }}-${{ env.NFX_SHA }}-relay-${{ env.IROH_RELAY_VERSION }}-
+      - name: the iroh helper (release, --locked)
+        working-directory: crates/iroh-helper
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          install -m 0755 target/release/nutflix-iroh-helper ../../bins/
+      - name: nfxd and nfx-package (nfx at the pinned commit)
+        working-directory: nfx/crates
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_VERSION" build --release --locked -p nfxd -p nfx-media --bins
+          install -m 0755 target/release/nfxd target/release/nfx-package ../../bins/
+      - name: iroh-relay (the stock binary, from its published Cargo.lock)
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/iroh-relay"
+          [ -x "$root/bin/iroh-relay" ] || cargo "+$RUST_VERSION" install "iroh-relay@${IROH_RELAY_VERSION}" --locked --features server --root "$root"
+          install -m 0755 "$root/bin/iroh-relay" bins/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nfx-exit-bins
+          path: bins/
+          retention-days: 7
+
+  exit:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: system packages (ffmpeg for both packagers and the decode checks)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nfx-exit-bins
+          path: ${{ runner.temp }}/bins
+      - name: binaries (artifacts drop the executable bit)
+        run: chmod 0755 "$RUNNER_TEMP"/bins/* && ls -l "$RUNNER_TEMP/bins" && mkdir -p "$RUNNER_TEMP/exit-logs"
+      - name: the exit run (both directions, over iroh only)
+        env:
+          NUTFLIX_EXIT_RUN: '1'
+          NUTFLIX_EXIT_LOGS: ${{ runner.temp }}/exit-logs
+          NFXD: ${{ runner.temp }}/bins/nfxd
+          NFX_PACKAGE: ${{ runner.temp }}/bins/nfx-package
+          IROH_RELAY: ${{ runner.temp }}/bins/iroh-relay
+          NUTFLIX_IROH_HELPER: ${{ runner.temp }}/bins/nutflix-iroh-helper
+        run: npx vitest run --project app-desktop packages/app-desktop/src/host/__tests__/nfx-exit.integration.test.ts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: nfx-exit-logs
+          path: ${{ runner.temp }}/exit-logs/
+          retention-days: 30

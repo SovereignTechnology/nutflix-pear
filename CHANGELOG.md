@@ -9,6 +9,17 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
+- The exit run: free NFX videos cross between nfx and this app over iroh, in CI (ADR 0020 slice
+  5f; nfx ADR 0101 §6, ADR 0103 §3). The `nfx-exit` workflow builds nfxd and nfx-package at a
+  pinned nfx commit, the stock iroh-relay and the iroh helper, and runs this app's real worker
+  and host NFX code against them on 127.0.0.1, with nothing mocked on the wire.
+  - **nfx seeds, this app plays:** nfxd packages, publishes and seeds a clip. The catalogue lists
+    it, the beacon reader finds its iroh endpoint, and every rendition plays over iroh only:
+    layout C byte for byte, a mid-file range, and ffmpeg decodes it.
+  - **This app seeds, nfx fetches:** a clip packaged the way Studio does, with the host's
+    manifest and beacons, all accepted by nfxd's own relay. A second nfxd fetches it, passes its
+    own checks, holds every file under its sha256, and its origin serves HLS that ffmpeg decodes.
+  - **Without a helper,** an nfxd-only video is refused at once (`no-seeders`).
 - NFX play fetches over iroh too, NFX-06 through a watching iroh helper (ADR 0020 slice 5e-4, ADR
   0021), so a seeder that speaks iroh only (nfxd) can be watched.
   - **Sources:** the host passes each beacon's `iroh` endpoints beside its `hyperdht` ones (the
