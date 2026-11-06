@@ -7,8 +7,10 @@ for what does not work yet, see the README's [known limitations](../README.md#kn
 
 - **Desktop 0.1.1** is the current release: tag `desktop-v0.1.1`, 2026-11-06 (UTC), as a Linux
   x86_64 `.deb` and AppImage: free video over NFX (nfx 0.1.0's network, iroh through the bundled
-  helper, HyperDHT between Nutflix apps), tested in both directions against nfxd. 0.1.0 was
-  published 2026-10-05. Downloads, checksums and the signed release notice are on the
+  helper, HyperDHT between Nutflix apps), tested in both directions against nfxd: on one machine
+  (the exit run, the app itself included), behind simulated NATs (33 of 33), and on two separate
+  machines over the internet (run 42300979880, where the peers holepunched and went direct). 0.1.0
+  was published 2026-10-05. Downloads, checksums and the signed release notice are on the
   [Releases page](https://github.com/SovereignTechnology/nutflix-pear/releases/latest).
 - `main` has moved on from the tag with documentation and a fix to the release-publishing script.
   The app code is the same as in the release.
