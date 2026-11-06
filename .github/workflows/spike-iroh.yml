@@ -32,9 +32,10 @@ env:
   RUST_VERSION: '1.98.0'
   CARGO_DENY_VERSION: '0.20.2'
   CARGO_DENY_SHA256: '9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f'
-  # The nfx commit whose nfxd the helper is judged against: nfx #18 (`nfxd --iroh-relay-ca`), so
-  # nfxd can use the matrix's TLS relay and every TLS cell is judged in all four pairings.
-  NFX_SHA: '51ed4e4b6a3ae5a0b0697563d3674cb4571570ca'
+  # The nfx commit whose nfxd the helper is judged against: nfx main with #18 (`nfxd
+  # --iroh-relay-ca`), so nfxd can use the matrix's TLS relay and every TLS cell is judged in all
+  # four pairings.
+  NFX_SHA: '5d628db55ad0eb203ab01b4cbf8280b0d1a8c587'
   IROH_RELAY_VERSION: '1.2.0'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
