@@ -6,7 +6,8 @@
 //      verifyEvent — library crypto only);
 //   2. it was signed by the SovTech key (npub1s0vtech…) — no other key is accepted, and there
 //      is deliberately no option to accept one;
-//   3. it is a desktop release notice: kind 30071, `d` = nutflix-desktop, and its `artifact`
+//   3. it is a release notice of the product you verify: kind 30071, `d` = nutflix-desktop (or,
+//      with `--d nfx`, NFX's own release; no other `d` is accepted), and its `artifact`
 //      tags, content (the SHA256SUMS text), `x` (sha256 of that text), `files` (the count) and
 //      `size` (the total) agree; `commit`, when present, is a full 40-hex sha;
 //   4. each file you name (or, with --all, every artifact of the release) is listed, and its
@@ -19,6 +20,7 @@
 // Usage:
 //   node scripts/release-verify.mjs <signed-event.json> <file>...        each file must match
 //   node scripts/release-verify.mjs <signed-event.json> --all <dir>      every artifact, in <dir>
+//   node scripts/release-verify.mjs <signed-event.json> --d nfx <file>  an NFX release
 //
 // It reads the files and the event; it contacts nothing.
 import { createHash } from 'node:crypto';
@@ -31,6 +33,7 @@ import { verifyEvent } from 'nostr-tools/pure';
 
 import {
   RELEASE_D_TAG,
+  RELEASE_D_TAGS,
   RELEASE_NOTICE_KIND,
   SAFE_NAME,
   sha256File,
@@ -67,7 +70,7 @@ function plainEvent(input, trustedPubkey) {
 }
 
 /** The release (version, date, artifacts) from a signature-checked event (checks 1–3). */
-export function checkEvent(input, trustedPubkey) {
+export function checkEvent(input, trustedPubkey, d = RELEASE_D_TAG) {
   const ev = plainEvent(input, trustedPubkey);
   let valid;
   try {
@@ -77,7 +80,7 @@ export function checkEvent(input, trustedPubkey) {
     valid = false;
   }
   if (!valid) refuse('bad event: its id or signature does not verify');
-  return releaseShape(ev, trustedPubkey);
+  return releaseShape(ev, trustedPubkey, d);
 }
 
 /**
@@ -85,7 +88,7 @@ export function checkEvent(input, trustedPubkey) {
  * the same checks as checkEvent but the signature, which it does not have yet (`id` and `sig`
  * empty). For scripts/release-publish.mjs, before it asks anyone to sign.
  */
-export function checkUnsignedRelease(input, trustedPubkey) {
+export function checkUnsignedRelease(input, trustedPubkey, d = RELEASE_D_TAG) {
   const ev = plainEvent(input, trustedPubkey);
   if (ev.id !== '' || ev.sig !== '')
     refuse('not an unsigned release template (its id and sig must be empty)');
@@ -98,11 +101,12 @@ export function checkUnsignedRelease(input, trustedPubkey) {
   )
     refuse('the template tags are not lists of strings');
   if (ev.pubkey !== trustedPubkey) refuse('the template is not for the SovTech key');
-  return { ...releaseShape(ev, trustedPubkey), event: ev };
+  return { ...releaseShape(ev, trustedPubkey, d), event: ev };
 }
 
 /** Checks 2–3 on plain data whose structure is already valid. */
-function releaseShape(ev, trustedPubkey) {
+function releaseShape(ev, trustedPubkey, d) {
+  if (!RELEASE_D_TAGS.includes(d)) refuse(`unknown release ${JSON.stringify(d)}`);
   if (ev.pubkey !== trustedPubkey) refuse('the event is not signed by the SovTech key');
   if (ev.kind !== RELEASE_NOTICE_KIND)
     refuse(`wrong kind ${String(ev.kind)} (want ${String(RELEASE_NOTICE_KIND)})`);
@@ -113,7 +117,7 @@ function releaseShape(ev, trustedPubkey) {
       refuse(`the event needs exactly one "${k}" tag`);
     return t[0][1];
   };
-  if (one('d') !== RELEASE_D_TAG) refuse(`not a desktop release (d = ${JSON.stringify(one('d'))})`);
+  if (one('d') !== d) refuse(`not a ${d} release (d = ${JSON.stringify(one('d'))})`);
   const artifacts = [];
   const seen = new Set();
   for (const t of tag('artifact')) {
@@ -144,7 +148,7 @@ function releaseShape(ev, trustedPubkey) {
   const commit = commits[0]?.[1];
   if (commits.length === 1 && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit)))
     refuse('malformed commit tag (want a full 40-hex git sha)');
-  return { artifacts, version, commit, createdAt: ev.created_at };
+  return { artifacts, version, commit, createdAt: ev.created_at, d };
 }
 
 /**
@@ -180,11 +184,11 @@ export function readEventFile(path) {
  */
 export async function verifyRelease(
   ev,
-  { files = [], allDir, trustedPubkey = sovtechPubkeyHex() },
+  { files = [], allDir, trustedPubkey = sovtechPubkeyHex(), d = RELEASE_D_TAG },
 ) {
-  const { artifacts, version, commit, createdAt } = checkEvent(ev, trustedPubkey);
+  const { artifacts, version, commit, createdAt } = checkEvent(ev, trustedPubkey, d);
   const ok = await checkFiles(artifacts, { files, allDir });
-  return { version, commit, createdAt, files: ok };
+  return { version, commit, createdAt, d, files: ok };
 }
 
 /**
@@ -225,13 +229,20 @@ export async function checkFiles(artifacts, { files = [], allDir }) {
 export async function run(argv) {
   const [eventPath, ...rest] = argv;
   if (eventPath === undefined)
-    refuse('usage: release-verify.mjs <signed-event.json> (<file>... | --all <dir>)');
+    refuse(
+      'usage: release-verify.mjs <signed-event.json> [--d <release>] (<file>... | --all <dir>)',
+    );
   let allDir;
+  let d = RELEASE_D_TAG;
   const files = [];
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--all') {
       allDir = rest[++i];
       if (allDir === undefined) refuse('--all needs a directory');
+    } else if (rest[i] === '--d') {
+      d = rest[++i];
+      if (d === undefined || !RELEASE_D_TAGS.includes(d))
+        refuse(`--d takes one of ${RELEASE_D_TAGS.join(', ')}`);
     } else if (rest[i].startsWith('-')) refuse(`unknown option ${rest[i]}`);
     else files.push(rest[i]);
   }
@@ -243,7 +254,7 @@ export async function run(argv) {
   } catch {
     refuse('the event file is not JSON');
   }
-  const r = await verifyRelease(ev, { files, allDir });
+  const r = await verifyRelease(ev, { files, allDir, d });
   for (const a of r.files) process.stdout.write(`OK  ${a.sha256}  ${a.name}\n`);
   // A genuine OLD release verifies too (a signature cannot say "latest"): show which one it is,
   // so it can be compared with the current release notice on the relays. `created_at` is when
@@ -251,7 +262,7 @@ export async function run(argv) {
   const when = new Date(Number(r.createdAt) * 1000);
   const created = Number.isNaN(when.getTime()) ? 'unknown' : when.toISOString();
   process.stdout.write(
-    `release ${r.version}${r.commit === undefined ? '' : ` (commit ${r.commit})`}, created ${created}\n`,
+    `${r.d} release ${r.version}${r.commit === undefined ? '' : ` (commit ${r.commit})`}, created ${created}\n`,
   );
   process.stdout.write(
     `release-verify: ${String(r.files.length)} file(s) match the release signed by the SovTech key\n`,

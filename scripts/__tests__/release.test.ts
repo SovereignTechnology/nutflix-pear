@@ -1009,7 +1009,7 @@ describe('scripts/release-verify.mjs', () => {
       await check({ ...t, content: `${t.content}deadbeef  extra\n` }, /content does not match/);
       await check(
         { ...t, tags: t.tags.map((x) => (x[0] === 'd' ? ['d', 'nutflix-web'] : x)) },
-        /not a desktop release/,
+        /not a nutflix-desktop release/,
       );
       await check(
         { ...t, tags: t.tags.map((x) => (x[0] === 'x' ? ['x', '0'.repeat(64)] : x)) },
