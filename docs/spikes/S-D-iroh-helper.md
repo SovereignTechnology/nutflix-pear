@@ -62,7 +62,10 @@ used? How large is it, how much memory does it use, and does a file need two sto
    roots (`CaTlsConfig::default()`), nfxd has no CA option at `29019d2`, and the pairing stays
    `Fetching`. So nfxd ⇄ helper holepunching is provable only behind a relay with a publicly
    trusted certificate: the Phase 1 exit run's two-host run, or an nfx-side CA flag (a note for
-   nfx's owner, not a change here).
+   nfx's owner, not a change here). **Since nfx #18 (2026-11-06) nfxd has that flag,
+   `--iroh-relay-ca`**: the matrix gives nfxd the CI CA, and every TLS cell (consistent/consistent
+   with address discovery, symmetric/symmetric through the TLS relay, consistent/symmetric) is
+   judged in all four pairings, nfxd ⇄ helper both ways included.
 4. **sha256 is structural.** A seeder that served one segment with a flipped byte (its collection
    built from the bad bytes, so BLAKE3 and iroh accepted them) was refused `poisoned` at that
    file, after 0.72 MB; the source was dropped and the video not stored. The client has no way to

@@ -33,11 +33,11 @@
 #                              "poisoned" and store nothing (sha256 is checked in JS)
 #
 # Then, spike S-D unknown 1, the same NATs behind a TLS relay with QUIC address discovery on
-# (a CI CA, given to the helper as `relay_cas`): the address discovery holepunching needs.
-#   consistent-consistent-qad  helper ← helper must go direct (holepunched)
-#   consistent-symmetric-qad   helper ← helper, recorded
-#   consistent-consistent-qad nfxd ← helper  recorded: nfxd trusts only iroh's embedded roots
-#                              (no CA option at nfx 29019d2), so it cannot use this relay
+# (a CI CA, given to the helper as `relay_cas` and to nfxd as `--iroh-relay-ca`, nfx #18): the
+# address discovery holepunching needs. All four pairings, judged:
+#   consistent-consistent-qad  must succeed, direct (holepunched)
+#   symmetric-symmetric-tls    must succeed, through the TLS relay
+#   consistent-symmetric-qad   must succeed; the path is recorded
 #
 # Results: $OUT/nat.jsonl, one line per check. Exit 1 if a judged check failed.
 set -euo pipefail
@@ -285,6 +285,7 @@ client() {
       mkdir -p "$dir/client-store"
       local extra=()
       [ "$relay" = none ] || extra=(--iroh-relay "$relay")
+      [ -n "$CA_HEX" ] && [ "$relay" != none ] && extra+=(--iroh-relay-ca "$work/tls/ca.crt")
       start "$name-client" sdhb "$NFXD" run \
         --key "$dir/fetcher.key" --store "$dir/client-store" --state "$dir/client-state" \
         --relay "$NOSTR_URL" --fetch "$A" "${extra[@]}"
@@ -305,6 +306,7 @@ server() { # IMPL NAME DIR RELAY [--poison]
       cp -r "$work/pkg/store" "$dir/server-store"
       local extra=()
       [ "$relay" = none ] || extra=(--iroh-relay "$relay")
+      [ -n "$CA_HEX" ] && [ "$relay" != none ] && extra+=(--iroh-relay-ca "$work/tls/ca.crt")
       start "$name-server" sdha "$NFXD" run \
         --key "$dir/seeder.key" --store "$dir/server-store" --state "$dir/server-state" \
         --relay "$NOSTR_URL" --seed "$A" "${extra[@]}"
@@ -420,9 +422,10 @@ pairings consistent-symmetric yes ok any "$IROH_URL"
 tls_setup
 RELAY_KIND=tls
 topology consistent consistent
-pairing consistent-consistent-qad yes ok direct - helper helper "$IROH_TLS_URL"
-pairing consistent-consistent-qad no fail - - helper nfxd "$IROH_TLS_URL"
+pairings consistent-consistent-qad yes ok direct "$IROH_TLS_URL"
+topology symmetric symmetric
+pairings symmetric-symmetric-tls yes ok relay "$IROH_TLS_URL"
 topology consistent symmetric
-pairing consistent-symmetric-qad no ok any - helper helper "$IROH_TLS_URL"
+pairings consistent-symmetric-qad yes ok any "$IROH_TLS_URL"
 
 exit "$failed"
