@@ -79,7 +79,7 @@ import {
   getWorkerProviders,
 } from './providers.js';
 import type { WorkerRuntime } from './runtime.js';
-import { NFX_IROH_DIR, NfxIrohNode } from './nfx/iroh.js';
+import { NFX_IROH_DIR, NFX_IROH_WATCH_DIR, NfxIrohNode } from './nfx/iroh.js';
 import { NfxIrohSeeding } from './nfx/iroh-seeding.js';
 import { NfxSeeding } from './nfx/seeding.js';
 import { NFX_PLAY_DIR, NfxWatching } from './nfx/watching.js';
@@ -238,6 +238,8 @@ export class WorkerHost {
   private nfxIroh: NfxIrohSeeding | null = null;
   /** Slice 5d: free NFX play sessions (with or without the net). */
   private nfxWatch: NfxWatching | null = null;
+  /** Slice 5e-4: the iroh node play sessions dial from (ephemeral id; with an iroh helper). */
+  private nfxIrohWatch: NfxIrohNode | null = null;
   private readonly sessions = new Map<string, Session>();
   private readonly corePolicies = new Map<CoreKeyHex, PricePolicy>();
   /**
@@ -338,7 +340,8 @@ export class WorkerHost {
       case 'nfx.configure':
         this.nfxEnabled = req.a.enabled;
         this.nfxIrohRelays = req.a.irohRelays;
-        await this.applyNfxSeeding();
+        // Slice 5e-4: the watching node too (a change of relays stops its helper).
+        await Promise.all([this.applyNfxSeeding(), this.nfxIrohWatch?.setRelays(req.a.irohRelays)]);
         return undefined;
       case 'nfx.endpoint':
         return {
@@ -398,10 +401,29 @@ export class WorkerHost {
     const server = new PlaybackServer({ logger: log, randomHex });
     await server.listen();
     this.live = { init: a, log, server, storage: a.storage, tmpDir };
+    // Slice 5e-4 (ADR 0021): with an iroh helper, play sessions also fetch over iroh, from a node
+    // of their own: no key pair, so an ephemeral id that is never the serving node's
+    // (`nfx/iroh.ts`). It needs no payment providers either; its store is a cache under `tmp/`.
+    if (a.irohHelper !== undefined && a.irohHelper !== null) {
+      this.nfxIrohWatch = new NfxIrohNode(
+        {
+          file: a.irohHelper,
+          spawn: runtime.spawnHelper,
+          isExecutable: (p) => runtime.isExecutable(p),
+          stateDir: fs.join(tmpDir, NFX_IROH_WATCH_DIR),
+          rmTree: (p) => runtime.mediaFs(a.storage).rm(p, { recursive: true }),
+          role: 'watching',
+          logger: log,
+        },
+        NFX_DEFAULT_NAMESPACE,
+      );
+      await this.nfxIrohWatch.setRelays(this.nfxIrohRelays);
+    }
     // Slice 5d: before the providers, which free NFX play does not need. The swarm's DHT and the
     // seeder's key derivation are read when a session dials, so a worker with payment providers
     // dials from its swarm and one without dials from a node of its own (`nfx/watching.ts`).
     this.nfxWatch = new NfxWatching({
+      iroh: this.nfxIrohWatch,
       swarmDht: () => this.net?.node.dht ?? null,
       bootstrap: dev?.bootstrap ?? this.o.testBootstrap ?? null,
       seederKeyPair: (name) => this.net?.seeder.blobs.store.createKeyPair(name) ?? null,

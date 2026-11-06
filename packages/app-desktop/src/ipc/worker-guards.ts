@@ -60,6 +60,7 @@ import type {
   HostMethodTable,
   HostToWorker,
   NfxIrohEndpointWire,
+  NfxPlayOpenArgs,
   PublishDraft,
   WorkerEvent,
   WorkerEventName,
@@ -69,6 +70,7 @@ import type {
 } from './worker-protocol.js';
 import {
   MAX_NFX_IROH_ADDRS,
+  MAX_NFX_PLAY_IROH,
   MAX_NFX_PLAY_PEERS,
   MAX_NFX_RENDITIONS,
   NFX_RESOLUTION,
@@ -218,22 +220,31 @@ const isNfxIrohEndpointShape = obj({
   tickets: wireMap(isNfxTicketKey, isNfxBlobTicket, MAX_NFX_RENDITIONS + 1),
 });
 /** It carries the `meta` collection, without which an iroh-only fetcher has no hash list. */
-const isNfxIrohEndpoint = safe(
+export const isNfxIrohEndpointWire = safe(
   (x: unknown): x is NfxIrohEndpointWire =>
     isNfxIrohEndpointShape(x) && x.tickets.$map.some(([k]) => k === 'meta'),
 );
 
 /** Slice 5d: a free NFX video to watch, from the seeders that beacon it. */
-const isNfxPlayOpen = obj(
+const isNfxPlayOpenArgsShape = obj(
   {
     sid: isSessionId,
     video: isNfxVideoAddr,
     root: isSha256,
     segs: int(1, Number.MAX_SAFE_INTEGER),
-    peers: arrayOf(isNfxHyperdhtEndpoint, MAX_NFX_PLAY_PEERS, 1),
+    peers: arrayOf(isNfxHyperdhtEndpoint, MAX_NFX_PLAY_PEERS),
+    // Slice 5e-4: tried first (NFX-06 §6).
+    iroh: arrayOf(isNfxIrohEndpointWire, MAX_NFX_PLAY_IROH),
     prefetchSeconds: isPrefetch,
   },
   { rendition: isLabel },
+);
+/** At least one source, and each iroh node once (its tickets would otherwise disagree). */
+const isNfxPlayOpen = safe(
+  (x: unknown): x is NfxPlayOpenArgs =>
+    isNfxPlayOpenArgsShape(x) &&
+    x.peers.length + x.iroh.length > 0 &&
+    new Set(x.iroh.map((e) => e.node)).size === x.iroh.length,
 );
 
 /** Arguments of every host → worker request. */
@@ -253,7 +264,7 @@ export const validateWorkerArgs: {
   'nfx.configure': safe(isNfxConfigure),
   'nfx.endpoint': safe(obj({ seeder: isPubkey, video: isNfxVideoAddr })),
   'nfx.videos': safe(obj({}) as Guard<Record<string, never>>),
-  'nfx.play.open': safe(isNfxPlayOpen),
+  'nfx.play.open': isNfxPlayOpen,
   'nfx.play.close': safe(isSid),
   'studio.ffmpeg': safe(obj({ recheck: bool }, { path: isAbsolutePath })),
   'studio.upload': safe(isStudioUpload),
@@ -331,7 +342,7 @@ export const validateWorkerResult: {
   'nfx.endpoint': safe(
     obj({
       hyperdht: union(isNfxHyperdhtEndpoint, literal(null)),
-      iroh: union(isNfxIrohEndpoint, literal(null)),
+      iroh: union(isNfxIrohEndpointWire, literal(null)),
     }),
   ),
   'nfx.videos': safe(obj({ videos: arrayOf(isNfxStoredVideo, MAX_NFX_STORED_VIDEOS) })),

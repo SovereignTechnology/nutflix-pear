@@ -159,8 +159,10 @@ export interface NfxStoredVideoWire {
   readonly segs: number;
 }
 
-/** Slice 5d: the most seeders one `nfx.play.open` names. */
+/** Slice 5d: the most HyperDHT seeders one `nfx.play.open` names. */
 export const MAX_NFX_PLAY_PEERS = 16;
+/** Slice 5e-4: the most iroh endpoints one `nfx.play.open` names. */
+export const MAX_NFX_PLAY_IROH = 8;
 /** Slice 5d: the most renditions one `nfx.play.open` reports (the highest-bandwidth ones). */
 export const MAX_NFX_RENDITIONS = 16;
 /** Slice 5d: a rendition's `resolution` as it crosses (`<w>x<h>`, NFX-05 §2, bounded here). */
@@ -169,7 +171,9 @@ export const NFX_RESOLUTION = /^[0-9]{1,6}x[0-9]{1,6}$/;
 /**
  * Slice 5d (ADR 0020): watch one free NFX video. The host found it (a verified manifest by its
  * author) and the seeders that beacon it (verified beacons, their `bind` checked); the worker
- * fetches its files from them over NFX-12 and serves one rendition as one progressive fMP4.
+ * fetches its files from them and serves one rendition as one progressive fMP4. Slice 5e-4: over
+ * iroh (NFX-06) first, then NFX-12's HyperDHT (NFX-06 §6), so a seeder that speaks iroh only
+ * (nfxd) can be watched. At least one source of either kind.
  */
 export interface NfxPlayOpenArgs {
   /** Host-minted; one id space with `play.open`'s. */
@@ -182,8 +186,14 @@ export interface NfxPlayOpenArgs {
   readonly segs: number;
   /** A rendition id of the hash list; absent: the highest-bandwidth one. */
   readonly rendition?: string;
-  /** The beaconed `hyperdht` endpoints, in the order to try them (1..`MAX_NFX_PLAY_PEERS`). */
+  /** The beaconed `hyperdht` endpoints, in the order to try them (0..`MAX_NFX_PLAY_PEERS`). */
   readonly peers: readonly NfxHyperdhtEndpointWire[];
+  /**
+   * Slice 5e-4: the beaconed `iroh` endpoints, in the order to try them (0..`MAX_NFX_PLAY_IROH`,
+   * unique nodes). Their `relay` is one of the network's or `''`; a ticket's relays the network
+   * does not run are dropped by the worker, never dialled.
+   */
+  readonly iroh: readonly NfxIrohEndpointWire[];
   readonly prefetchSeconds: number;
 }
 

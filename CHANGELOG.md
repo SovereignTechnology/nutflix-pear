@@ -20,6 +20,19 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     The packaged layout check then requires it unpacked and executable.
   - **A choice:** `packaging/cli.ts` needs `--iroh-helper <file>` or `--without-iroh-helper`.
     The inactive GitLab release jobs build none yet; those apps speak HyperDHT only.
+- NFX play fetches over iroh too, NFX-06 through a watching iroh helper (ADR 0020 slice 5e-4, ADR
+  0021), so a seeder that speaks iroh only (nfxd) can be watched.
+  - **Sources:** the host passes each beacon's `iroh` endpoints beside its `hyperdht` ones (the
+    relay kept only when it is one of the network's), and the worker tries iroh first, then
+    HyperDHT, file by file.
+  - **A watching node:** a second helper with an ephemeral id, never the serving one, started on
+    the first fetch that needs it and stopped when no session uses it. Without a helper, an
+    iroh-only session is refused (`no-seeders`).
+  - **The fetch:** NFX-06 §2 on demand. The hash list and playlists place each file in its
+    collection, a file not placed yet is never guessed, and every file comes back only under its
+    hash-list sha256. A source that lies, stalls or breaks the counts is dropped for the session.
+  - **CI:** a worker with no payment providers plays the test video from one that serves it over
+    iroh only, byte for byte, against the real helper.
 - The worker seeds its NFX videos over iroh too, NFX-06 through the iroh helper (ADR 0020 slice
   5e-3, ADR 0021), beside HyperDHT and only while seeding and the NFX setting are both on.
   - **The helper:** one per worker, started when a stored video is to be served and stopped when
