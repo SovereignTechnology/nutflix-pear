@@ -63,6 +63,8 @@ async function beacon(
   o: {
     readonly free?: boolean;
     readonly endpoints?: (hyperdht: nfx.Endpoint) => nfx.Endpoint[];
+    /** Open the video first, as the Watch page does (default); `false`: publish to whoever listens. */
+    readonly listen?: boolean;
   } = {},
 ): Promise<{ readonly peer: string }> {
   const addr = `38504:${creator}:${NS}:${videoId}`;
@@ -73,6 +75,9 @@ async function beacon(
   const tags = nfx.beaconTags(addr, now, 120);
   if (!video.ok || !tags.ok) throw new Error('bad test beacon');
   const free = o.free ?? true;
+  // Beacons are ephemeral (NFX-04): the relay forwards them to live subscriptions only. The
+  // Watch page opens the video's (as the renderer's `nfxVideo` does) before one is published.
+  if (o.listen !== false) await r!.host.adapter.watchNfxVideo(addr as NfxAddress);
   const content = nfx.beaconContentText({
     v: 1,
     video: video.value,
@@ -226,6 +231,27 @@ describe('openNfxSession (contracts v11)', () => {
       r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-2')),
     ).rejects.toThrow(/^no-seeders/);
     expect(r.worker().calls('nfx.play.open')).toEqual([]);
+  });
+
+  it('a beacon that arrives while the play waits opens it (beacons are never stored)', async () => {
+    r = await rig({ nfx: NFX_ON });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    const seeder = new kit.TestSigner();
+    await manifest(creator, 'free-video-7');
+    const address = addrOf(creator.pubkey, 'free-video-7');
+    // Published before anyone listens: gone, as on a real scoped relay.
+    await beacon(seeder, creator.pubkey, 'free-video-7', { listen: false });
+    await expect(r.host.adapter.openNfxSession(7, address)).rejects.toThrow(/^no-seeders/);
+    expect(r.worker().calls('nfx.play.open')).toEqual([]);
+    // A play that is waiting gets the seeder's next beacon (its republish) and opens on it.
+    const opening = r.host.adapter.openNfxSession(9, address);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const { peer } = await beacon(seeder, creator.pubkey, 'free-video-7', { listen: false });
+    const s = await opening;
+    expect(s.videoId).toBe(address);
+    const [open] = r.worker().calls('nfx.play.open') as [{ readonly peers: { peer: string }[] }];
+    expect(open.peers.map((p) => p.peer)).toEqual([peer]);
   });
 
   it('without scoped relays, or with NFX off, nothing opens', async () => {

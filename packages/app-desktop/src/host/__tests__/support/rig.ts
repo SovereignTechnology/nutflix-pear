@@ -91,6 +91,8 @@ export async function rig(o: RigOptions = {}): Promise<Rig> {
   const host = await createHost({
     userData,
     flags: { devMocks: false, devFixtures: false, ...o.flags },
+    // A play's wait for a live NFX beacon (62 s in production): tests that expect none fail fast.
+    nfxBeaconWaitMs: 300,
     post: (m) => {
       out.push(m);
       if (o.onOut !== undefined && late.host !== undefined) {

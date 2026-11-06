@@ -158,6 +158,36 @@ describe('FakeRelayPool', () => {
     ).toEqual(['n1', 'n2', 'new', 'x2', 'y1']);
   });
 
+  it('forwards ephemeral kinds (20000–29999) to live subscriptions and never stores them', async () => {
+    const pool = new FakeRelayPool();
+    const relays = [RELAY_A];
+    const live: unknown[] = [];
+    const un = pool.subscribe(relays, [{ kinds: [20464] }], {
+      onevent: (raw) => {
+        live.push(raw);
+      },
+    });
+    const beacon = await mk(20464, T0, [], 'beacon');
+    pool.store(beacon);
+    await pool.publish(relays, await mk(20464, T0 + 1, [], 'published'));
+    un();
+    expect(live).toHaveLength(2);
+    // A later reader, by query or by subscription, finds nothing (NIP-01; NFX-04 relays too).
+    expect(await pool.query(relays, { kinds: [20464] })).toEqual([]);
+    expect(pool.events()).toEqual([]);
+    const late: unknown[] = [];
+    pool.subscribe(relays, [{ kinds: [20464] }], {
+      onevent: (raw) => {
+        late.push(raw);
+      },
+    });
+    expect(late).toEqual([]);
+    // The bounds: 19999 is replaceable, 30000 addressable; both are stored.
+    pool.store(await mk(19999, T0, [], 'r'));
+    pool.store(await mk(30000, T0, [['d', 'a']], 'a'));
+    expect(pool.events().map((e) => e.content)).toEqual(['r', 'a']);
+  });
+
   it('matches NIP-01 filters, sorts newest-first, applies limit and naive search', async () => {
     const pool = new FakeRelayPool();
     pool.store(

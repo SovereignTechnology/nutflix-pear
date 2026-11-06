@@ -2,8 +2,10 @@
  * In-memory `PoolLike` for tests and for shells that want an offline mode.
  *
  * Behaves like a well-mannered relay: NIP-01 filter matching (via `nostr-tools`
- * `matchFilter`), replaceable/addressable-event semantics, live subscriptions, `limit`
- * applied newest-first, and a naive NIP-50 `search` over content + `title` tags.
+ * `matchFilter`), replaceable/addressable-event semantics, ephemeral kinds (20000–29999)
+ * forwarded to live subscriptions and never stored (as NIP-01 and NFX-04 relays do: a reader
+ * that queries for one finds nothing), live subscriptions, `limit` applied newest-first, and a
+ * naive NIP-50 `search` over content + `title` tags.
  *
  * It also behaves like a MALICIOUS relay on request: `inject(raw)` stores any object
  * verbatim (tampered, unsigned, malformed) so tests can prove the read paths drop it.
@@ -46,8 +48,15 @@ export class FakeRelayPool implements PoolLike {
     this.#opts = opts;
   }
 
-  /** Store a well-formed event with relay semantics (replaceable kinds replace). */
+  /**
+   * Store a well-formed event with relay semantics (replaceable kinds replace; an ephemeral one
+   * reaches live subscriptions only).
+   */
   store(ev: NostrEvent): void {
+    if (isEphemeral(ev.kind)) {
+      this.#deliver(ev);
+      return;
+    }
     const key = replaceableKey(ev);
     if (key !== null) {
       const existing = this.#store.find((s) => s.ev && replaceableKey(s.ev) === key);
@@ -144,6 +153,11 @@ function textMatches(ev: NostrEvent, needle: string): boolean {
   if (ev.content.toLowerCase().includes(needle)) return true;
   const title = tagValue(ev, 'title');
   return title?.toLowerCase().includes(needle) ?? false;
+}
+
+/** NIP-01: kinds 20000–29999 are ephemeral, never stored. */
+function isEphemeral(kind: number): boolean {
+  return kind >= 20000 && kind < 30000;
 }
 
 /** Replaceable (kind 0, 3, 10000–19999) → kind:pubkey; addressable (30000–39999) → +d. */
