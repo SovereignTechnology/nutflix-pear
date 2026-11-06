@@ -10,36 +10,52 @@ import { asarUnpacked } from '../ipc/asar-path.js';
  *   --dev-fixtures     fixture catalogue (design §5a); forwarded to the host
  *   --user-data-dir D  (or `=D`) userData directory — the e2e runs against a temp dir
  *   --e2e-hooks        expose counters (never tokens or URLs) to the e2e harness, main process only
+ *   --dev-bootstrap=127.0.0.1:<port>[,…]   a local hyperdht testnet for `--dev-mocks` (D1),
+ *                      forwarded to the host, which refuses it without `--dev-mocks` or off loopback
  */
 export interface MainOptions {
   readonly devMocks: boolean;
   readonly devFixtures: boolean;
   readonly userDataDir: string | undefined;
   readonly e2eHooks: boolean;
+  /** `--dev-bootstrap=`'s list, as given (1–16 loopback nodes); absent when not given or malformed. */
+  readonly devBootstrap?: string;
 }
 
 /**
  * The flags a PACKAGED build refuses to start with (security review F21): a shipped binary is
  * never a dev build, so its command line cannot switch on mocks, fixtures or the e2e hooks.
  */
-export const DEV_FLAGS = ['--dev-mocks', '--dev-fixtures', '--e2e-hooks'] as const;
+export const DEV_FLAGS = [
+  '--dev-mocks',
+  '--dev-fixtures',
+  '--e2e-hooks',
+  '--dev-bootstrap',
+] as const;
 
-/** The first dev flag in `argv`, if any. */
+/** The first dev flag in `argv`, if any (`--flag` or `--flag=value`). */
 export function devFlagIn(argv: readonly string[]): string | undefined {
-  return argv.find((a) => (DEV_FLAGS as readonly string[]).includes(a));
+  return argv.find((a) => DEV_FLAGS.some((f) => a === f || a.startsWith(`${f}=`)));
 }
+
+/** `--dev-bootstrap`'s value: 1–16 `127.0.0.1:<port>` entries (the host checks the ports). */
+const DEV_BOOTSTRAP = /^127\.0\.0\.1:[1-9][0-9]{0,4}(,127\.0\.0\.1:[1-9][0-9]{0,4}){0,15}$/;
 
 export function parseMainArgs(argv: readonly string[]): MainOptions {
   let devMocks = false;
   let devFixtures = false;
   let e2eHooks = false;
+  let devBootstrap: string | undefined;
   let userDataDir: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? '';
     if (a === '--dev-mocks') devMocks = true;
     else if (a === '--dev-fixtures') devFixtures = true;
     else if (a === '--e2e-hooks') e2eHooks = true;
-    else if (a === '--user-data-dir') {
+    else if (a.startsWith('--dev-bootstrap=')) {
+      const v = a.slice('--dev-bootstrap='.length);
+      devBootstrap = DEV_BOOTSTRAP.test(v) ? v : undefined;
+    } else if (a === '--user-data-dir') {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith('--')) {
         userDataDir = next;
@@ -56,7 +72,13 @@ export function parseMainArgs(argv: readonly string[]): MainOptions {
   ) {
     userDataDir = undefined; // relative paths are refused: they depend on the launcher's cwd
   }
-  return { devMocks, devFixtures, userDataDir, e2eHooks };
+  return {
+    devMocks,
+    devFixtures,
+    userDataDir,
+    e2eHooks,
+    ...(devBootstrap === undefined ? {} : { devBootstrap }),
+  };
 }
 
 /** Relative to `dist/`: the host `utilityProcess` entry (lane L6-B). */
@@ -141,5 +163,8 @@ export function hostArgs(opts: MainOptions, paths: HostPaths): string[] {
   if (paths.keychain === true) args.push('--keychain');
   if (opts.devMocks) args.push('--dev-mocks');
   if (opts.devFixtures) args.push('--dev-fixtures');
+  // Only with --dev-mocks: the host refuses it otherwise (and would exit 2 on every respawn).
+  if (opts.devMocks && opts.devBootstrap !== undefined)
+    args.push(`--dev-bootstrap=${opts.devBootstrap}`);
   return args;
 }

@@ -46,6 +46,7 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import createTestnet from 'hyperdht/testnet.js';
 import type { ElectronApplication, Page } from 'playwright-core';
 
 import { PKG, electronBinary, launch, sandboxReady } from './support.ts';
@@ -271,6 +272,11 @@ void describe(
   () => {
     let work = '';
     let app: ElectronApplication | undefined;
+    /** `--dev-mocks` fences the worker off the public DHT: a loopback testnet, as the dev rig uses. */
+    let dht: {
+      readonly bootstrap: readonly { host: string; port: number }[];
+      destroy(): Promise<void>;
+    } | null = null;
     let page: Page | undefined;
     const the = (): { readonly app: ElectronApplication; readonly page: Page } => {
       if (app === undefined || page === undefined) throw new Error('the app did not start');
@@ -433,13 +439,20 @@ void describe(
         }),
       );
 
+      // support.ts tees the app's stdout/stderr (main, host and worker lines) to the file the TEST
+      // process's NUTFLIX_E2E_LOG names (the first run passed it to the app instead, so the Bare
+      // worker's crash went unrecorded).
+      process.env['NUTFLIX_E2E_LOG'] = join(logDir, 'app.log');
+      // Without it the worker refuses init (`--dev-mocks refuses the public DHT`), the host counts
+      // each refusal as a crash and gives up: the first run's "media worker is down".
+      dht = await createTestnet(3, { host: '127.0.0.1' });
+      const bootstrap = dht.bootstrap.map((b) => `127.0.0.1:${String(b.port)}`).join(',');
       const launched = await launch(
         join(PKG, 'dist', 'main', 'main.js'),
-        ['--dev-mocks', '--user-data-dir', userData, '--e2e-hooks'],
+        ['--dev-mocks', `--dev-bootstrap=${bootstrap}`, '--user-data-dir', userData, '--e2e-hooks'],
         {
           // Dev builds take the helper from here (host/flags.ts); the worker spawns it under Bare.
           NUTFLIX_IROH_HELPER: BIN.helper,
-          NUTFLIX_E2E_LOG: join(logDir, 'app.log'),
         },
       );
       app = launched.app;
@@ -449,6 +462,7 @@ void describe(
 
     after(async () => {
       await app?.close().catch(() => undefined);
+      await dht?.destroy().catch(() => undefined);
       await stopAll();
       if (work !== '' && process.env['NUTFLIX_EXIT_LOGS'] !== undefined)
         rmSync(work, { recursive: true, force: true });
