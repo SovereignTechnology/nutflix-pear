@@ -61,11 +61,25 @@ export const UNPACKED_FILES = [
 ] as const;
 
 /**
+ * Slice 5e-5 (ADR 0021): relative to `app.asar.unpacked/`, the iroh helper the worker spawns
+ * (`crates/iroh-helper`, built for the target by the release job). Must equal
+ * `PACKAGED_IROH_HELPER` in src/main/args.ts (main hands the host this path); a test pins the
+ * two together. Windows adds `.exe` (`packagedIrohHelper`).
+ */
+export const PACKAGED_IROH_HELPER = 'iroh/nutflix-iroh-helper';
+
+/** `PACKAGED_IROH_HELPER` for `platform`. */
+export function packagedIrohHelper(platform: string): string {
+  return platform === 'win32' ? `${PACKAGED_IROH_HELPER}.exe` : PACKAGED_IROH_HELPER;
+}
+
+/**
  * Directories of the staged app that `asar` must leave as real files in `app.asar.unpacked/`:
  * the Bare worker and everything it loads (Bare cannot read an archive), which includes
- * `bare-sidecar`'s prebuilt `bare` (a spawned binary cannot live in one either).
+ * `bare-sidecar`'s prebuilt `bare`, and the iroh helper (a spawned binary cannot live in one
+ * either).
  */
-export const UNPACKED_DIRS = ['worker', 'node_modules'] as const;
+export const UNPACKED_DIRS = ['worker', 'node_modules', 'iroh'] as const;
 
 /**
  * Runtime dependencies of @sovit/app-desktop that are NOT copied into the packaged

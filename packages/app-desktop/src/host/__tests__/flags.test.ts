@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HostArgsError, irohHelperFromEnv, parseHostArgs } from '../flags.js';
+import { HostArgsError, irohHelperFromEnv, irohHelperOf, parseHostArgs } from '../flags.js';
 
 const BASE = ['--user-data-dir=/tmp/ud', '--worker-entry=/opt/app/dist/worker/main.js'];
 
@@ -76,5 +76,34 @@ describe('irohHelperFromEnv (slice 5e-3)', () => {
   it('refuses anything else instead of falling back quietly', () => {
     for (const v of ['nutflix-iroh-helper', './bin/helper', '/opt/a\u0000b'])
       expect(() => irohHelperFromEnv(v), JSON.stringify(v)).toThrow(HostArgsError);
+  });
+});
+
+describe('--iroh-helper and its precedence (slice 5e-5)', () => {
+  const base = ['--user-data-dir=/ud', '--worker-entry=/opt/nutflix/worker/boot.mjs'];
+
+  it('takes an absolute path; absent, nothing', () => {
+    const helper = '/opt/Nutflix/resources/app.asar.unpacked/iroh/nutflix-iroh-helper';
+    expect(parseHostArgs([...base, `--iroh-helper=${helper}`]).irohHelper).toBe(helper);
+    expect(parseHostArgs(base)).not.toHaveProperty('irohHelper');
+  });
+
+  it('refuses a relative path, a NUL or no value', () => {
+    for (const a of ['--iroh-helper=iroh/helper', '--iroh-helper=/a\u0000b', '--iroh-helper'])
+      expect(() => parseHostArgs([...base, a]), a).toThrow(HostArgsError);
+  });
+
+  it('a packaged build’s own helper wins: NUTFLIX_IROH_HELPER is then never read', () => {
+    const env = { NUTFLIX_IROH_HELPER: '/tmp/swapped' };
+    expect(irohHelperOf({ irohHelper: '/opt/own' }, env)).toBe('/opt/own');
+    // Not even validated: a bad value cannot stop a packaged app.
+    expect(irohHelperOf({ irohHelper: '/opt/own' }, { NUTFLIX_IROH_HELPER: 'relative' })).toBe(
+      '/opt/own',
+    );
+    // A dev build (no argument) reads the variable, strictly.
+    expect(irohHelperOf({}, env)).toBe('/tmp/swapped');
+    expect(irohHelperOf({}, {})).toBeNull();
+    expect(irohHelperOf({}, undefined)).toBeNull();
+    expect(() => irohHelperOf({}, { NUTFLIX_IROH_HELPER: 'relative' })).toThrow(HostArgsError);
   });
 });

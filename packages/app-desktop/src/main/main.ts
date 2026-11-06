@@ -42,7 +42,14 @@ import type { HostIn, HostOut, PromptAnswer } from '../ipc/protocol.js';
 import { CHANNEL } from '../ipc/protocol.js';
 import { phraseChecksumOk } from '../ipc/recovery-checksum.js';
 import { PROMPT_FILES, createAppProtocolHandler } from './app-protocol.js';
-import { HOST_ENTRY, devFlagIn, hostArgs, parseMainArgs, workerEntryFor } from './args.js';
+import {
+  HOST_ENTRY,
+  devFlagIn,
+  hostArgs,
+  irohHelperFor,
+  parseMainArgs,
+  workerEntryFor,
+} from './args.js';
 import { FileTokenRegistry } from './file-tokens.js';
 import { HostConfirms } from './host-confirm.js';
 import { HostLink } from './host-link.js';
@@ -77,6 +84,16 @@ const log = createLogger((line) => {
 });
 const opts = parseMainArgs(process.argv.slice(1));
 const distDir = dirname(dirname(fileURLToPath(import.meta.url)));
+
+/** Slice 5e-5: a packaged build's own iroh helper for the host, or nothing in a dev build. */
+function irohHelperPath(): { readonly irohHelper?: string } {
+  const file = irohHelperFor(
+    distDir,
+    appArchive(process.resourcesPath, realpathSync),
+    process.platform,
+  );
+  return file === undefined ? {} : { irohHelper: file };
+}
 
 // ---- before ready ------------------------------------------------------------------------
 
@@ -482,6 +499,7 @@ function start(): void {
         hostArgs(opts, {
           userData: app.getPath('userData'),
           workerEntry: workerEntryFor(distDir, appArchive(process.resourcesPath, realpathSync)),
+          ...irohHelperPath(),
           keychain: keychainOk,
         }),
         { serviceName: 'nutflix-host', stdio: 'inherit' },

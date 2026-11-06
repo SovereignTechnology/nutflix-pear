@@ -101,7 +101,8 @@ export interface WorkerInit {
    * Slice 5e-3 (ADR 0021): the iroh helper's executable, absolute. With it, and while NFX seeding
    * is on, the worker also serves its NFX videos over iroh (NFX-06); without it (absent or `null`)
    * it speaks HyperDHT only, and that is not an error. Dev and CI name it in the host's
-   * environment (`NUTFLIX_IROH_HELPER`); slice 5e-5 supplies a packaged build's own copy.
+   * environment (`NUTFLIX_IROH_HELPER`); a packaged build ships its own copy and passes only
+   * that (slice 5e-5).
    */
   readonly irohHelper?: string | null;
 }

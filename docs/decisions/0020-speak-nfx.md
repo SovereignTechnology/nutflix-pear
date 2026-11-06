@@ -253,6 +253,25 @@ A play session also fetches over NFX-06, so this app can watch a seeder that spe
   that serves it over iroh only, byte for byte.
 - **Not yet:** packaging the helper (5e-5) and the exit run against nfxd (5f).
 
+## Amendment 2026-11-06: the packaged app ships the helper (slice 5e-5)
+
+- **Where.** `resources/app.asar.unpacked/iroh/nutflix-iroh-helper` (`.exe` on Windows), unpacked
+  beside the worker: a spawned binary cannot live in an archive. Main passes it to the host as
+  `--iroh-helper`, which wins over `NUTFLIX_IROH_HELPER`. With it the variable is never read, so
+  nothing in a user's environment can swap the binary a release ships. A packaged build without
+  the file (a `--without-iroh-helper` build) still passes the path; the worker finds no executable
+  there and speaks HyperDHT only.
+- **Built for the release.** `release.yml` builds it from the tagged commit, with the crate's
+  pinned toolchain and `--locked`, and never from a cache. Linux x64 only, like the release
+  itself. The inactive GitLab release jobs pass `--without-iroh-helper` until they build one.
+- **Checked twice.** Staging requires a regular file (never a symlink), executable, at most 64
+  MiB, and an executable for the target, read from its header (an x64 ELF for linux-x64). That
+  last check catches a helper built for the build machine, which would otherwise fail only on a
+  user's computer. After packaging, the layout check requires it unpacked, a regular file, and
+  executable.
+- **A choice, never an omission.** `packaging/cli.ts` refuses to run without `--iroh-helper
+  <file>` or `--without-iroh-helper`.
+
 ## Amendment 2026-11-06: beacons are read live (found by the exit run)
 
 NFX-04 keeps beacons ephemeral: a scoped relay forwards kind 20464 to live subscribers and never

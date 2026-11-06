@@ -49,6 +49,8 @@ export interface ForgeConfigOptions {
   readonly appImageRuntimeDir: string;
   /** Which makers to include (default all; each still only runs on its own platform). */
   readonly targets?: readonly Target[];
+  /** Slice 5e-5: the staged app has the iroh helper, so every package must too (layout.ts). */
+  readonly irohHelper?: boolean;
 }
 
 /** The packaged copy's package.json: the staging-only `devDependencies` (Forge reads it) goes. */
@@ -149,7 +151,7 @@ export function forgeConfig(o: ForgeConfigOptions): ForgeConfig {
         const p: TargetPlatform = platform;
         for (const out of outputPaths) {
           await assertAppFuses(packagedBinary(out, p, APP.name, APP.productName));
-          assertLayout(out, p, arch, APP.productName);
+          assertLayout(out, p, arch, APP.productName, o.irohHelper === true);
         }
       },
     },

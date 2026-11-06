@@ -9,7 +9,7 @@
  */
 import { QUIT_FLUSH_MS, createHost } from './host.js';
 import type { Host } from './host.js';
-import { HostArgsError, IROH_HELPER_ENV, irohHelperFromEnv, parseHostArgs } from './flags.js';
+import { HostArgsError, irohHelperOf, parseHostArgs } from './flags.js';
 import { createLogger } from './log.js';
 import type { Logger } from './log.js';
 import { spawnBareSidecar } from './worker/sidecar.js';
@@ -28,7 +28,10 @@ export interface ParentPortLike {
 export interface RunOptions {
   readonly parentPort: ParentPortLike;
   readonly argv: readonly string[];
-  /** Slice 5e-3: the process environment (only `NUTFLIX_IROH_HELPER` is read). */
+  /**
+   * Slice 5e-3: the process environment (only `NUTFLIX_IROH_HELPER` is read, and only when main
+   * passed no `--iroh-helper`: a packaged build's own copy wins, slice 5e-5).
+   */
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly log: Logger;
   readonly spawn?: SpawnWorker;
@@ -37,7 +40,7 @@ export interface RunOptions {
 /** Wires a host to a parent port. Rejects on bad arguments (the process should then exit 2). */
 export async function runHost(o: RunOptions): Promise<Host> {
   const args = parseHostArgs(o.argv);
-  const irohHelper = irohHelperFromEnv(o.env?.[IROH_HELPER_ENV]);
+  const irohHelper = irohHelperOf(args, o.env);
   const host = await createHost({
     userData: args.userData,
     workerEntry: args.workerEntry,
