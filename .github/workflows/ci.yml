@@ -7,18 +7,25 @@
 # resolutions fail; registry signatures and provenance verified; the native-module inventory
 # is frozen; least-privilege token. The iroh helper (ADR 0021) builds with the runner's own
 # rustup at the pinned toolchain, its Cargo.lock honoured (--locked), as spike-iroh.yml builds it.
+#
+# A weekly run on main (Monday) surfaces a new npm or RUSTSEC advisory without waiting for a push;
+# it has a concurrency group of its own, so a push to main never cancels it. Every job has a
+# timeout, so a hung step cannot hold a runner for Actions' 6 h default. zizmor.yml lints this file.
 name: ci
 
 on:
   push:
     branches: [main, 'stage-*/**']
   pull_request:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'schedule' && 'schedule-' || '' }}${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -30,12 +37,13 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # check-contracts-version diffs against the default branch
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -57,9 +65,12 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - name: locked directories and the contracts version
+        # Through env, never expanded into the script (zizmor: template-injection).
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           bash scripts/check-locked-dirs.sh
-          bash scripts/check-contracts-version.sh "origin/${{ github.event.repository.default_branch }}"
+          bash scripts/check-contracts-version.sh "origin/${DEFAULT_BRANCH}"
       - run: bash scripts/native-module-inventory.sh --check
       - run: npm run lint:electron
 
@@ -79,7 +90,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: the pinned toolchain (the runner's rustup; no other download)
@@ -101,21 +112,54 @@ jobs:
       - name: build (release, --locked)
         working-directory: crates/iroh-helper
         run: cargo build --release --locked
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iroh-helper-linux-x64
           path: crates/iroh-helper/target/release/nutflix-iroh-helper
           if-no-files-found: error
           retention-days: 7
 
+  # RUSTSEC advisories for the iroh helper's Cargo.lock, on every run, as `verify` audits npm: the
+  # weekly run is what surfaces a new one on an unchanged tree. Its own job, so an advisory never
+  # skips `test` or `package`. spike-iroh.yml still runs the helper's whole `cargo deny check`.
+  rust-advisories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUST_VERSION: '1.98.0'
+      CARGO_DENY_VERSION: '0.20.2'
+      CARGO_DENY_SHA256: '9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f'
+      CARGO_TERM_COLOR: never
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: toolchain and cargo-deny (the download checked against its pinned sha256)
+        run: |
+          set -euo pipefail
+          grep -qx "channel = \"${RUST_VERSION}\"" crates/iroh-helper/rust-toolchain.toml
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          curl -sSfLo "$RUNNER_TEMP/deny.tgz" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${CARGO_DENY_SHA256}  $RUNNER_TEMP/deny.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/deny.tgz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny" /usr/local/bin/
+      - name: cargo deny check advisories (crates/iroh-helper)
+        working-directory: crates/iroh-helper
+        run: cargo deny --locked check advisories
+
   test:
     needs: iroh-helper
     runs-on: ubuntu-24.04
+    # 5-27 min measured (2026-11-06).
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -125,7 +169,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm ci --ignore-scripts
       # Outside the checkout, so no lint, build or test glob ever walks it.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: iroh-helper-linux-x64
           path: ${{ runner.temp }}/iroh-helper
@@ -141,11 +185,12 @@ jobs:
 
   e2e:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -166,18 +211,19 @@ jobs:
   package:
     needs: iroh-helper
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
       # Slice 5e-5: the helper the app ships, as the release job builds it.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: iroh-helper-linux-x64
           path: ${{ runner.temp }}/iroh-helper

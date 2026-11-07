@@ -1,14 +1,23 @@
 # The fuzz campaign (execution plan §4; Cameron, 2026-10-02): fast-check, long runs, started by
-# hand — never on a push or a PR. Each shard runs every target in
+# hand — never on a push. Each shard runs every target in
 # packages/core/src/fuzz/__tests__/ for the chosen time with its own seeds; a finding fails its
 # shard and prints the seed and path that replay it (`fc.assert(prop, { seed, path })`).
-# Defaults: 4 shards × 6 h (Actions' job limit) = 24 CPU-hours.
+# By hand, defaults: 4 shards × 6 h (Actions' job limit) = 24 CPU-hours.
+#
+# Since 2026-11-06 (Cameron: rbitcoin's nightly fuzz, applied here) it also runs on a schedule,
+# short, with fresh seeds every night: 4 shards × 15 min, Sunday × 60. A pull request that
+# touches this file runs it for 1 minute, so an edit is proven before it reaches the schedule.
 #
 # Same supply-chain policy as ci.yml: actions pinned by commit SHA, `npm ci --ignore-scripts`,
 # read-only token, no third-party actions (findings go to the job log).
 name: fuzz
 
 on:
+  schedule:
+    - cron: '17 7 * * *'
+  pull_request:
+    paths:
+      - '.github/workflows/fuzz.yml'
   workflow_dispatch:
     inputs:
       minutes:
@@ -20,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fuzz-${{ github.ref }}
+  group: fuzz-${{ github.event_name == 'schedule' && 'schedule-' || '' }}${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -35,10 +44,10 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -46,8 +55,15 @@ jobs:
       - name: fuzz (shard ${{ matrix.shard }})
         env:
           FUZZ_SHARD: ${{ matrix.shard }}
-          MINUTES: ${{ inputs.minutes }}
+          EVENT: ${{ github.event_name }}
+          INPUT_MINUTES: ${{ inputs.minutes }}
         run: |
+          case "$EVENT" in
+            workflow_dispatch) MINUTES=$INPUT_MINUTES ;;
+            schedule) if [ "$(date -u +%u)" = 7 ]; then MINUTES=60; else MINUTES=15; fi ;;
+            pull_request) MINUTES=1 ;;
+            *) echo "unexpected event $EVENT"; exit 1 ;;
+          esac
           case "$MINUTES" in ''|*[!0-9]*) echo "minutes must be a whole number"; exit 1 ;; esac
           if [ "$MINUTES" -gt 340 ] || [ "$MINUTES" -lt 1 ]; then echo "minutes must be 1..340"; exit 1; fi
           # Each target file runs in its own worker, all at once; within a file the targets share the
