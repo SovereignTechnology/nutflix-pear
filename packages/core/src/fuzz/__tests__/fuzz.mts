@@ -1,6 +1,7 @@
 /**
  * The fuzz campaign's harness (execution plan §4; Cameron, 2026-10-02: fast-check, long runs, in a
- * manually started GitHub Actions workflow — `.github/workflows/fuzz.yml`).
+ * GitHub Actions workflow started by hand, and short nightly runs since 2026-11-06 —
+ * `.github/workflows/fuzz.yml`).
  *
  * `fuzzIt` registers one target. In the ordinary suite (no `FUZZ_SECONDS`) it is a quick property
  * test. In a campaign (`FUZZ_SECONDS` > 0) it draws fresh seeds until the deadline; a finding fails
