@@ -94,5 +94,8 @@
  *       network's own iroh relays (NFX-06 §1), `IrohRelayUrl` (`https://host[:port]/`, or `http://`
  *       to a loopback host) and `MAX_NFX_IROH_RELAYS` (4). A local setting, never read from beacons;
  *       absent = none. A stored v10/v11 `nfx` stays valid. Every v11 consumer compiles.
+ *  13 — 2026-11-07 (ADR 0020, the Network feed). Additive: `FeedQuery.source` gains `network`, every free
+ *       video on the chosen NFX network, newest first (a catalogue with no NFX enabled returns an empty
+ *       page). A consumer that switches on `source` must handle it; one that passes it through compiles.
  */
-export const CONTRACTS_VERSION = 12 as const;
+export const CONTRACTS_VERSION = 13 as const;

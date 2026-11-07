@@ -35,7 +35,11 @@ export interface Page<T> {
 }
 
 export interface FeedQuery {
-  readonly source: 'subscriptions' | 'trending' | 'tags' | 'author' | 'shorts';
+  /**
+   * `network` (v13): every free video on the chosen NFX network, newest first, whoever made it.
+   * Needs no sign-in. A catalogue with no NFX network enabled returns an empty page.
+   */
+  readonly source: 'subscriptions' | 'trending' | 'tags' | 'author' | 'shorts' | 'network';
   readonly tags?: readonly string[];
   readonly author?: NostrPubkey;
   readonly cursor?: string;

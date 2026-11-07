@@ -396,7 +396,7 @@ export const isPageLimit = int(1, LIMITS.maxPage);
 // ---- contract shapes (arguments) ------------------------------------------------------------
 
 const isFeedQuery = obj(
-  { source: oneOf(['subscriptions', 'trending', 'tags', 'author', 'shorts'] as const) },
+  { source: oneOf(['subscriptions', 'trending', 'tags', 'author', 'shorts', 'network'] as const) },
   { tags: isTags, author: isPubkey, cursor: isCursor, limit: isPageLimit },
 );
 

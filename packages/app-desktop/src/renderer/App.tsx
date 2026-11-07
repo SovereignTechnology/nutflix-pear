@@ -361,7 +361,14 @@ export function Shell({
   let screen: ReactElement;
   switch (route.name) {
     case 'home':
-      screen = <Home {...common} tab={route.tab} hoverPreview={settings?.hoverPreview} />;
+      screen = (
+        <Home
+          {...common}
+          tab={route.tab}
+          showNetwork={settings?.nfx?.enabled === true}
+          hoverPreview={settings?.hoverPreview}
+        />
+      );
       break;
     case 'watch': {
       // Contracts v9: an NFX address opens the NFX page, which plays nothing yet (ADR 0020).

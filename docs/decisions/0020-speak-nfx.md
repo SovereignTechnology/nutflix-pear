@@ -324,3 +324,18 @@ stored every kind.
   and beacons seen are kept for their lifetime (at most 16 videos and 64 beacons each), so Play
   usually opens at once.
 - **The fake relay follows NIP-01:** kinds 20000–29999 reach live subscriptions only.
+
+## Amendment 2026-11-07: the Network feed (contracts v13)
+
+Home listed NFX videos only through Subscriptions, Your tags and Search, so on a fresh install a network
+full of free videos looked empty: Trending ranks by sats paid and never lists them, and the other two
+need a signer and a follow. A viewer had no way to see what the network holds.
+- **`FeedQuery.source: 'network'`** (contracts v13, additive): every free video on the chosen NFX
+  network, newest first, whoever made it. No sign-in. A catalogue with no NFX network returns an
+  empty page.
+- **Both relay sets are read** and merged by address (the newest revision wins): the scoped relays
+  are the network's own, the read relays carry its mirrors (NFX-04 §4), and a video listed on only
+  one must still show. The other NFX feeds stay "read relays first". The page cursor is the same
+  time cursor, taken from the merged page. It fails only when both relay sets do.
+- **A Home tab, "Network", shown only while `Settings.nfx.enabled`.** Off, the tab is hidden and a
+  route to it lands on Trending. The IPC guard accepts the new source.
