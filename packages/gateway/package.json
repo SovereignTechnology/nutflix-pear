@@ -28,18 +28,18 @@
   "dependencies": {
     "@sovit/core": "0.0.0",
     "@sovit/seeder": "0.0.0",
-    "compact-encoding": "3.4.0",
-    "corestore": "7.12.2",
-    "hyperblobs": "2.12.1",
-    "hypercore": "11.35.3",
+    "compact-encoding": "3.5.2",
+    "corestore": "7.16.1",
+    "hyperblobs": "2.13.0",
+    "hypercore": "11.39.6",
     "hypercore-blob-server": "1.15.0",
-    "protomux": "3.11.0",
+    "protomux": "3.13.0",
     "streamx": "2.28.1",
-    "ws": "8.21.3"
+    "ws": "8.22.0"
   },
   "devDependencies": {
-    "@types/ws": "8.18.1",
-    "hyperdht": "6.34.0",
+    "@types/ws": "8.18.2",
+    "hyperdht": "6.35.0",
     "nostr-tools": "2.25.2"
   }
 }

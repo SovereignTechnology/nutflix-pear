@@ -24,19 +24,19 @@
   },
   "dependencies": {
     "@sovit/core": "0.0.0",
-    "compact-encoding": "3.4.0",
-    "corestore": "7.12.2",
-    "hyperblobs": "2.12.1",
-    "hypercore": "11.35.3",
+    "compact-encoding": "3.5.2",
+    "corestore": "7.16.1",
+    "hyperblobs": "2.13.0",
+    "hypercore": "11.39.6",
     "hyperswarm": "4.17.0",
     "nostr-tools": "2.25.2",
-    "protomux": "3.11.0",
+    "protomux": "3.13.0",
     "sodium-universal": "5.0.1",
-    "ws": "8.21.3"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@hyperswarm/secret-stream": "6.9.1",
-    "@types/ws": "8.18.1",
-    "hyperdht": "6.34.0"
+    "@types/ws": "8.18.2",
+    "hyperdht": "6.35.0"
   }
 }

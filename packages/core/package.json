@@ -26,12 +26,12 @@
     "lint": "eslint src"
   },
   "devDependencies": {
-    "fast-check": "4.9.0"
+    "fast-check": "4.10.2"
   },
   "dependencies": {
-    "@cashu/cashu-ts": "4.10.0",
-    "@scure/bip39": "2.0.1",
-    "compact-encoding": "3.4.0",
+    "@cashu/cashu-ts": "4.13.0",
+    "@scure/bip39": "2.4.0",
+    "compact-encoding": "3.5.2",
     "nostr-tools": "2.25.2",
     "sodium-universal": "5.0.1"
   }
