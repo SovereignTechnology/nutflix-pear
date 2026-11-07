@@ -53,11 +53,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Exit 10-14 names the worst finding's severity; the gate below judges those. Anything
-          # else non-zero is zizmor failing, and fails here.
+          # Exit 10-14 names the worst finding's severity; the gate below judges those. Any other
+          # non-zero exit (an error, or a panic's 101) is zizmor failing, and fails here.
           rc=0
           zizmor --format=sarif --color=never --no-progress . > "$RUNNER_TEMP/zizmor.sarif" || rc=$?
-          if [ "$rc" -ne 0 ] && [ "$rc" -lt 10 ]; then exit "$rc"; fi
+          case "$rc" in 0 | 1[0-4]) ;; *) exit "$rc" ;; esac
       # A fork's pull request gets no security-events write: its findings are in the gate's log.
       - name: upload SARIF to code scanning
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
