@@ -32,7 +32,7 @@
     "corestore": "7.12.2",
     "hyperblobs": "2.12.1",
     "hypercore": "11.35.3",
-    "hypercore-blob-server": "1.15.0",
+    "hypercore-blob-server": "1.15.1",
     "protomux": "3.11.0",
     "streamx": "2.28.1",
     "ws": "8.21.3"
@@ -40,6 +40,6 @@
   "devDependencies": {
     "@types/ws": "8.18.1",
     "hyperdht": "6.34.0",
-    "nostr-tools": "2.25.2"
+    "nostr-tools": "2.25.4"
   }
 }
