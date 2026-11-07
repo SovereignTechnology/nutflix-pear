@@ -18,7 +18,7 @@ This repository, `nutflix-pear`, is the JavaScript implementation: an Electron d
 [Bare](https://github.com/holepunchto/bare) worker, plus the seeder and gateway daemons. A Rust
 implementation built on iroh lives in [nfx](https://github.com/SovereignTechnology/nfx).
 
-> **Status: experimental.** Desktop 0.1.1 for Linux x86_64 was released on 2026-11-06. It is a
+> **Status: experimental.** Desktop 0.1.2 for Linux x86_64 was released on 2026-11-07. It is a
 > demo, not a product you should trust with money you cannot afford to lose. Read
 > [Known limitations](#known-limitations) before you install it.
 
@@ -85,14 +85,17 @@ The threat model, the money-path invariants and the review of the implementation
 
 ## Known limitations
 
-These are the things you would otherwise find out by trying them. Release 0.1.1:
+These are the things you would otherwise find out by trying them. Release 0.1.2:
 
 - **Free videos (NFX) need a network you point it at.** NFX is off by default. To use it, turn it
   on in Settings › NFX network and give it the network's scoped Nostr relay and its iroh relays.
   There is no public scoped relay or iroh relay for `nfx:testnet:1` yet, so today that means one
   you or a friend runs (`nfxd run --embed-relay … --iroh-relay …`, from
   [nfx](https://github.com/SovereignTechnology/nfx)). A play waits for a seeder's next beacon, up
-  to a minute, when the Watch page has not already seen one. Only free videos are on NFX.
+  to a minute, when the Watch page has not already seen one. Only free videos are on NFX. With NFX
+  on, Home's **Network** tab lists every free video on the network. Search finds one only through a
+  relay that answers NIP-50 text search, and nfxd 0.1.0's relay matches a video's description
+  only, so a video published without a description shows in Network but not in Search.
 - **It has not been run end to end against real relays, real peers and a real mint.** The
   real-mint tests use two mint implementations (Nutshell 0.21.0 and cdk-mintd 0.18.1) on a local
   machine with a fake Lightning backend. No real payment is on record. Cashu ecash is bearer money
@@ -120,7 +123,7 @@ Download the files for the latest release from the
 | `Nutflix-<version>-x64.AppImage` | Other distributions. **Not Ubuntu 24.04 or later**: it cannot start there, so use the `.deb` |
 
 ```sh
-sudo apt install ./nutflix_0.1.1_amd64.deb      # the ./ matters
+sudo apt install ./nutflix_0.1.2_amd64.deb      # the ./ matters
 nutflix                                          # or start Nutflix from your menu
 ```
 
@@ -144,7 +147,7 @@ To check the signature, use a checkout of this repository (Node 22.18 or newer; 
 ```sh
 git clone https://github.com/SovereignTechnology/nutflix-pear.git && cd nutflix-pear
 npm ci --ignore-scripts
-node scripts/release-verify.mjs release-event.json nutflix_0.1.1_amd64.deb   # one or more files
+node scripts/release-verify.mjs release-event.json nutflix_0.1.2_amd64.deb   # one or more files
 node scripts/release-verify.mjs release-event.json --all ~/Downloads          # needs both files
 ```
 
