@@ -1,4 +1,4 @@
-**Nutflix desktop for Linux (x86_64).** A peer-to-peer video player that pays seeders in Cashu ecash, and plays free videos over the NFX network (off until you set it up: see the known limitations). It is experimental: read the [known limitations](https://github.com/SovereignTechnology/nutflix-pear#known-limitations) first.
+**Nutflix desktop for Linux (x86_64).** A peer-to-peer video player that pays seeders in Cashu ecash, and plays free videos over the NFX network, with a Network tab listing every one (off until you set it up: see the known limitations). It is experimental: read the [known limitations](https://github.com/SovereignTechnology/nutflix-pear#known-limitations) first.
 
 | File                             | For                                                                                                                         |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |

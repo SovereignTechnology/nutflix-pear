@@ -7,6 +7,20 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-07
+
+A Network tab: every free video on the NFX network, in one place.
+
+### Added
+
+- **Home › Network** lists every free video on the NFX network you pointed the app at, newest
+  first, with no sign-in (contracts v13; ADR 0020's 2026-11-07 amendment). Until now a free NFX
+  video showed up only through Search, a followed channel or a followed tag, so a network full
+  of free videos looked empty. The tab reads the network's own scoped relays and your read
+  relays, merges them and shows each video once, at its newest revision; it fails only when both
+  sets of relays do. It appears only while NFX is turned on in Settings; with NFX off a link to
+  it lands on Trending.
+
 ## [0.1.1] - 2026-11-06
 
 Free video over NFX, and playback that starts on real relays. NFX is off until you turn it on in
@@ -305,6 +319,7 @@ The first release of the desktop app, for Linux x86_64. It is experimental: read
 - Windows, macOS and arm64 builds, automatic updates and operating-system code signing.
 - A web app: `packages/app-web` is an empty scaffold.
 
-[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.1...HEAD
+[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.2...HEAD
+[0.1.2]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.1...desktop-v0.1.2
 [0.1.1]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.0...desktop-v0.1.1
 [0.1.0]: https://github.com/SovereignTechnology/nutflix-pear/releases/tag/desktop-v0.1.0
