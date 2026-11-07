@@ -1,0 +1,119 @@
+# The NFX web mesh (NFX-10), end to end, against nfxd built from nfx at a pinned commit: video
+# data reaching a browser over WebRTC from nfxd. The suites are nfx's own, in web/player:
+#   - `e2e`       the test player resolves a video by address over Nostr and plays it over HTTP,
+#                 every file checked against its sha256 and the hash list in WASM (NFX-05 §4);
+#   - `e2e:mesh`  two headless Chromium contexts share segments over WebRTC through nfxd's embedded
+#                 tracker, a tampered segment is rejected, and then the BRIDGE phase: a second nfxd
+#                 with `--bridge` (a native WebRTC peer) and a viewer whose HTTP path is cut once
+#                 playback starts, so the rest of the video can only arrive over WebRTC from
+#                 nfxd's verified store.
+# Both run on 127.0.0.1 with throwaway keys and a generated clip; nothing leaves the runner.
+#
+# Why here and not in nfx: nfx's lock pins .github/workflows whole, so a new nfx workflow needs the
+# maintainer's read of a pin line; these runs, like nfx-exit, live beside the app that judges nfx.
+#
+# Supply-chain policy as ci.yml (threat T12): first-party actions pinned by commit SHA, Cargo.lock
+# honoured (--locked), least-privilege token, no secrets, inputs only through env. Downloads, all
+# for a test that runs no project code beyond nfx's own: the runner's rustup, wasm-pack (a pinned
+# release, sha256-checked, the pin nfx's own CI uses), ffmpeg (apt), and Playwright's Chromium
+# (the player's own test dependency, installed with `playwright install`). Not a required check.
+name: nfx-web-e2e
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nfx-web-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      nfx_sha:
+        description: 'nfx commit to test (40 lowercase hex); empty = the pinned one'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nfx-web-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: '1.98.0'
+  # nfx 0.1.1's release commit candidate: nfx main (#26, the relay searches titles) with the crate
+  # versions at 0.1.1.
+  NFX_SHA: '20f78acf41bcd804909faf7a576d35303ad6a73b'
+  WASM_PACK_VERSION: '0.13.1'
+  WASM_PACK_SHA256: 'c539d91ccab2591a7e975bcf82c82e1911b03335c80aa83d67ad25ed2ad06539'
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: the nfx commit (40 lowercase hex)
+        id: sha
+        env:
+          INPUT_SHA: ${{ inputs.nfx_sha }}
+        run: |
+          s="${INPUT_SHA:-$NFX_SHA}"
+          [[ $s =~ ^[0-9a-f]{40}$ ]] || { echo "::error::nfx_sha must be 40 lowercase hex"; exit 1; }
+          echo "sha=$s" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SovereignTechnology/nfx
+          ref: ${{ steps.sha.outputs.sha }}
+          path: nfx
+          persist-credentials: false
+      - name: the pinned toolchain and wasm target (the runner's rustup)
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$RUST_VERSION"
+          rustc --version
+      - name: wasm-pack (the pinned release, sha256-checked)
+        run: |
+          curl -sSfLo /tmp/wasm-pack.tgz "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${WASM_PACK_SHA256}  /tmp/wasm-pack.tgz" | sha256sum -c -
+          tar -xzf /tmp/wasm-pack.tgz -C /tmp
+          sudo install -m 0755 "/tmp/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack" /usr/local/bin/
+          wasm-pack --version
+      - name: ffmpeg (the tests generate and package a clip)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: nfx/web/player/package-lock.json
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            nfx/crates/target
+          key: nfx-web-e2e-${{ env.RUST_VERSION }}-${{ steps.sha.outputs.sha }}
+          restore-keys: |
+            nfx-web-e2e-${{ env.RUST_VERSION }}-
+      - name: nfxd and nfx-package, debug builds (the tests look in crates/target/debug)
+        working-directory: nfx/crates
+        run: cargo build --locked -p nfxd -p nfx-media --bins
+      - name: the player's dependencies, and Chromium
+        working-directory: nfx/web/player
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+      - name: build the player (WASM and bundle)
+        working-directory: nfx/web/player
+        run: npm run build
+      - name: unit
+        working-directory: nfx/web/player
+        run: npm run unit
+      - name: e2e (resolve by address, play over HTTP, verified in WASM)
+        working-directory: nfx/web/player
+        run: npm run e2e
+      - name: e2e:mesh (peers over WebRTC, a tampered segment, and the bridge phase)
+        working-directory: nfx/web/player
+        run: npm run e2e:mesh
