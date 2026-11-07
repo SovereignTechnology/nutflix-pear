@@ -89,9 +89,12 @@ These are the things you would otherwise find out by trying them. Release 0.1.2:
 
 - **Free videos (NFX) need a network you point it at.** NFX is off by default. To use it, turn it
   on in Settings › NFX network and give it the network's scoped Nostr relay and its iroh relays.
-  There is no public scoped relay or iroh relay for `nfx:testnet:1` yet, so today that means one
-  you or a friend runs (`nfxd run --embed-relay … --iroh-relay …`, from
-  [nfx](https://github.com/SovereignTechnology/nfx)). A play waits for a seeder's next beacon, up
+  `nfx:testnet:1` has a public iroh relay, `https://iroh.nutflix.xyz/` (its operator, limits and
+  what it can see are in [nfx's testnet page](https://github.com/SovereignTechnology/nfx/blob/main/docs/nfx/testnet.md)).
+  To use it, add it under Settings › NFX network › iroh relays: nothing is added for you, and the
+  URL must be exactly `https://host/` (lower-case, with the trailing slash), at most 4 in all.
+  There is no public scoped Nostr relay yet, so that part today means one you or a friend runs
+  (`nfxd run --embed-relay …`, from [nfx](https://github.com/SovereignTechnology/nfx)). A play waits for a seeder's next beacon, up
   to a minute, when the Watch page has not already seen one. Only free videos are on NFX. With NFX
   on, Home's **Network** tab lists every free video on the network. Search finds one only through a
   relay that answers NIP-50 text search, and nfxd 0.1.0's relay matches a video's description

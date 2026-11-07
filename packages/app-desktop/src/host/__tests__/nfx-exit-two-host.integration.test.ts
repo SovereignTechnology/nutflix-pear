@@ -14,7 +14,9 @@
  *
  * Neither machine accepts a connection, so they meet on relays they are GIVEN: scoped Nostr relays
  * (`NFX_SCOPED_RELAYS`, wss://) for manifests, beacons and the run's signals, and iroh relays
- * (`NFX_IROH_RELAYS`, https://, optionally with a private CA in `NFX_IROH_RELAY_CA`). Everything
+ * (`NFX_IROH_RELAYS`, https://, optionally with a private CA in `NFX_IROH_RELAY_CA`). With
+ * `NFX_RELAY_ONLY=true` nfxd runs with `--relay-only`, so every byte it moves goes through those
+ * iroh relays (the suite passes it no gossip flag, which nfxd refuses with it). Everything
  * else derives from the run id (`NFX_EXIT_RUN_ID`) on both sides: the throwaway keys
  * (`derivedSecret`), the video ids and so the manifest addresses.
  *
@@ -72,6 +74,7 @@ import {
   listening,
   makeClip,
   mustRun,
+  nfxdRelayArgs,
   nowS,
   runOnce,
   setLogDir,
@@ -142,6 +145,7 @@ describe.skipIf(!TWO_HOST)(`slice 5f two-host run, role ${ROLE}`, () => {
     relays = givenRelays();
     if (relays.irohCa !== null && !existsSync(relays.irohCa))
       throw new Error('NFX_IROH_RELAY_CA names no file');
+    result['relayOnly'] = relays.relayOnly;
     const d = await tempDir('nf-exit2-');
     teardown.push(() => d.rm());
     work = d.dir;
@@ -264,11 +268,7 @@ describe.skipIf(!TWO_HOST)(`slice 5f two-host run, role ${ROLE}`, () => {
     while (ours.sent() < base + 3 && Date.now() < end) await sleep(1000);
   }
 
-  const relayArgs = (): string[] => [
-    ...relays.scoped.flatMap((r) => ['--relay', r]),
-    ...relays.iroh.flatMap((r) => ['--iroh-relay', r]),
-    ...(relays.irohCa === null ? [] : ['--iroh-relay-ca', relays.irohCa]),
-  ];
+  const relayArgs = (): string[] => nfxdRelayArgs(relays);
 
   it.runIf(ROLE === 'nfx')(
     'nfx: A packaged, published and seeded; B fetched, verified, seeded and served',

@@ -297,6 +297,12 @@ export interface GivenRelays {
   readonly iroh: readonly IrohRelayUrl[];
   /** A PEM file of CA certificates the iroh relays chain to (a private CA), or `null`. */
   readonly irohCa: string | null;
+  /**
+   * `NFX_RELAY_ONLY=true`: nfxd runs with `--relay-only`, so every byte it moves goes through the
+   * iroh relays and none direct. The pear role is not changed by it (nfxd offers no direct path
+   * for it to take).
+   */
+  readonly relayOnly: boolean;
 }
 
 const WSS_RE = /^wss:\/\/[a-z0-9.-]{1,253}(?::[1-9][0-9]{0,4})?\/?$/;
@@ -316,18 +322,49 @@ function list(name: string, re: RegExp): string[] {
   return items;
 }
 
+/** `NFX_RELAY_ONLY`: unset or empty is false; otherwise exactly `true` or `false`. */
+function relayOnlyFlag(): boolean {
+  const raw = (process.env['NFX_RELAY_ONLY'] ?? '').trim();
+  if (raw === '' || raw === 'false') return false;
+  if (raw === 'true') return true;
+  throw new Error('NFX_RELAY_ONLY: must be true or false');
+}
+
 /**
  * The relays the two-host run is given, validated: `wss://` scoped relays and `https://` iroh
  * relays, at most `MAX_GIVEN_RELAYS` each, at least one of each; `NFX_IROH_RELAY_CA` an optional
- * PEM path (option 1's private CA; a public relay needs none).
+ * PEM path (option 1's private CA; a public relay needs none); `NFX_RELAY_ONLY` an optional
+ * boolean that needs the iroh relays (nfxd refuses `--relay-only` without an `--iroh-relay`).
  */
 export function givenRelays(): GivenRelays {
   const scoped = list('NFX_SCOPED_RELAYS', WSS_RE).map((u) => u.replace(/\/$/, '') as RelayUrl);
   const iroh = list('NFX_IROH_RELAYS', IROH_HTTPS_RE) as IrohRelayUrl[];
+  const relayOnly = relayOnlyFlag();
+  if (relayOnly && iroh.length === 0)
+    throw new Error(
+      'NFX_RELAY_ONLY=true needs NFX_IROH_RELAYS: nfxd --relay-only refuses to start without an --iroh-relay',
+    );
   if (scoped.length === 0) throw new Error('NFX_SCOPED_RELAYS: at least one wss:// relay');
   if (iroh.length === 0) throw new Error('NFX_IROH_RELAYS: at least one https:// iroh relay');
   const ca = (process.env['NFX_IROH_RELAY_CA'] ?? '').trim();
-  return { scoped, iroh, irohCa: ca === '' ? null : ca };
+  return { scoped, iroh, irohCa: ca === '' ? null : ca, relayOnly };
+}
+
+/**
+ * The relay flags of an `nfxd run` for the given relays. With `relayOnly`, nfxd also gets
+ * `--relay-only` (every byte through the iroh relays); it refuses that flag without an
+ * `--iroh-relay` and together with `--gossip`, so the one is checked here and the other is never
+ * passed: this function and the suite pass no gossip flag.
+ */
+export function nfxdRelayArgs(relays: GivenRelays): string[] {
+  if (relays.relayOnly && relays.iroh.length === 0)
+    throw new Error('relay-only needs at least one iroh relay');
+  return [
+    ...relays.scoped.flatMap((r) => ['--relay', r]),
+    ...relays.iroh.flatMap((r) => ['--iroh-relay', r]),
+    ...(relays.irohCa === null ? [] : ['--iroh-relay-ca', relays.irohCa]),
+    ...(relays.relayOnly ? ['--relay-only'] : []),
+  ];
 }
 
 /**

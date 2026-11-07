@@ -13,6 +13,12 @@
 # The same suite takes a private relay set (option 1: home and a VPS) through the same inputs, with
 # NFX_IROH_RELAY_CA for a private CA (wired for nfxd; this app's worker has no CA input yet).
 #
+# relay_only (default false): nfxd then runs with --relay-only, so every byte it moves goes through
+# the iroh relays and none direct (nfxd refuses that flag without an --iroh-relay, and with
+# --gossip, which the suite never passes). It is how a relay's own path is exercised, for example
+# nfx:testnet:1's public iroh relay, https://iroh.nutflix.xyz/ (see nfx docs/nfx/testnet.md), whose
+# QUIC address discovery is off. The pear role is unchanged: nfxd offers it no direct path.
+#
 # DISPATCH ONLY: it publishes to the relays it is given. With the defaults that is
 #   - 2 kind-38504 manifests on wss://offchain.pub (throwaway keys derived from the run id): A's
 #     withdrawn at the end by `nfxd delete` (kind 5), B's with a NIP-40 expiration an hour out and
@@ -36,6 +42,11 @@ on:
         description: "iroh relays (https://host/, the app's form: no trailing dot; at most 4)"
         required: true
         default: 'https://use1-1.relay.n0.iroh.link/ https://euc1-1.relay.n0.iroh.link/'
+      relay_only:
+        description: 'Run nfxd with --relay-only: every byte through the iroh relays, none direct'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -52,6 +63,7 @@ env:
   CARGO_INCREMENTAL: '0'
   NFX_SCOPED_RELAYS: ${{ inputs.scoped_relays }}
   NFX_IROH_RELAYS: ${{ inputs.iroh_relays }}
+  NFX_RELAY_ONLY: ${{ inputs.relay_only }}
 
 jobs:
   build:
@@ -61,7 +73,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: the inputs (wss:// and https:// relays only, at most 4 each)
+      - name: the inputs (wss:// and https:// relays only, at most 4 each; relay_only a boolean)
         run: |
           set -euo pipefail
           check() { # name, regex, value
@@ -74,6 +86,8 @@ jobs:
           }
           check scoped_relays '^wss://[a-z0-9.-]{1,253}(:[1-9][0-9]{0,4})?/?$' "$NFX_SCOPED_RELAYS"
           check iroh_relays '^https://[a-z0-9_.-]{1,253}[a-z0-9_](:[1-9][0-9]{0,4})?/$' "$NFX_IROH_RELAYS"
+          # nfxd --relay-only needs an --iroh-relay; check() above already demands 1 to 4.
+          [[ $NFX_RELAY_ONLY =~ ^(true|false)$ ]] || { echo "::error::relay_only: true or false"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
