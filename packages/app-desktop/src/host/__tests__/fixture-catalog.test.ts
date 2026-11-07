@@ -115,6 +115,14 @@ describe('FixtureCatalog waits for the worker’s first dev.fixtures', () => {
     expect(feed.done()).toBe(true);
   });
 
+  it('the network feed (v13) lists the NFX fixtures only', async () => {
+    const { cat } = make();
+    cat.setLive([LIVE]);
+    const page = await cat.feed({ source: 'network' }, null);
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.every((v) => v.kind === 38504)).toBe(true);
+  });
+
   it('the bound: past FIXTURE_WAIT_MS it answers with what is there and logs once', async () => {
     const { cat, clock, log } = make();
     const feed = track(cat.feed({ source: 'trending' }, mocks.ME));

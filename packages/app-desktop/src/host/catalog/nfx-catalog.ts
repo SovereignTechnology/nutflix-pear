@@ -104,10 +104,44 @@ export class NfxCatalog implements NfxSource {
         if (author === undefined) return { items: [] };
         return this.publicFirst((relays) => page(relays, [author]), empty);
       }
+      case 'network':
+        return this.networkFeed(c, opts);
       case 'trending':
       case 'shorts':
         return { items: [] };
     }
+  }
+
+  /**
+   * Every video on the network, newest first: the scoped relays (the network's own) and the read
+   * relays (which carry its mirrors) are both asked, so a video listed on only one still shows.
+   * One video is one address, whichever relays held it or how many revisions; the newest wins.
+   * Fails only when every relay set does.
+   */
+  private async networkFeed(
+    c: nostr.NostrClient,
+    opts: { readonly limit: number; readonly cursor: string | undefined },
+  ): Promise<Page<NfxVideo>> {
+    const scoped = this.scopedRelays();
+    const read = (relays: readonly RelayUrl[] | undefined): Promise<Page<NfxVideo>> =>
+      nostr.nfxVideoPage(c, this.namespace, {}, { ...opts, relays });
+    const settled = await Promise.allSettled(
+      scoped.length === 0 ? [read(undefined)] : [read(scoped), read(undefined)],
+    );
+    const pages = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
+    const first = settled.find((s) => s.status === 'rejected');
+    if (pages.length === 0 && first !== undefined) throw first.reason;
+    const newest = new Map<string, NfxVideo>();
+    for (const v of pages.flatMap((p) => p.items)) {
+      const seen = newest.get(v.id);
+      if (seen === undefined || v.event.created_at > seen.event.created_at) newest.set(v.id, v);
+    }
+    const items = [...newest.values()]
+      .sort((a, b) => b.event.created_at - a.event.created_at)
+      .slice(0, opts.limit);
+    const more = pages.some((p) => p.next !== undefined);
+    const next = more ? nostr.encodeTimeCursor(items.map((v) => v.event)) : undefined;
+    return next === undefined ? { items } : { items, next };
   }
 
   search(q: SearchQuery): Promise<Page<NfxVideo>> {

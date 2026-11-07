@@ -6,7 +6,7 @@
 import type { NetworkAdapter, NostrEventId, NostrPubkey, VideoId } from '@sovit/core';
 
 export type Route =
-  | { readonly name: 'home'; readonly tab?: 'subscriptions' | 'trending' | 'tags' }
+  | { readonly name: 'home'; readonly tab?: 'subscriptions' | 'trending' | 'tags' | 'network' }
   /** Contracts v9: `videoId` may be an NFX address; the shell shows `NfxWatch` for one. */
   | { readonly name: 'watch'; readonly videoId: VideoId; readonly t?: number }
   | {

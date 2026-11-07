@@ -199,6 +199,9 @@ export class MockNetworkAdapter implements NetworkAdapter {
       case 'shorts':
         items = items.filter((v) => v.kind === 22);
         break;
+      case 'network':
+        items = this.opts.nfx === true ? [...NFX_VIDEOS] : [];
+        break;
     }
     if (q.source !== 'trending') items.sort((a, b) => b.publishedAt - a.publishedAt);
     return this.delay(paginate(items, q.cursor, q.limit ?? 8));

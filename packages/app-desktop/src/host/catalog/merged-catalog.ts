@@ -51,6 +51,7 @@ function coversFeed(q: FeedQuery): Covers {
     }
     case 'trending':
     case 'shorts':
+    case 'network':
       return () => false;
   }
 }
@@ -71,6 +72,8 @@ export class MergedCatalog implements CatalogSource {
 
   feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<CatalogVideo>> {
     if (q.source === 'trending' || q.source === 'shorts') return this.legacy.feed(q, viewer);
+    // The network feed is the NFX side alone: a NIP-71 video is on the network only as its NFX twin.
+    if (q.source === 'network') return this.nfxOrNothing(() => this.nfx.feed(q, viewer));
     return this.stepped(q.cursor, async (cursor) => {
       const at = cursor === undefined ? q : { ...q, cursor };
       const [legacy, nfx] = await Promise.all([

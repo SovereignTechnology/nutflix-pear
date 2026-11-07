@@ -57,6 +57,7 @@ export const VALID: Samples = {
     [{ source: 'shorts', limit: 12, cursor: '12' }],
     [{ source: 'author', author: PUBKEY }],
     [{ source: 'tags', tags: ['physics', 'orbital-mechanics'] }],
+    [{ source: 'network', limit: 12 }],
   ],
   video: [[VIDEO_ID]],
   nfxVideo: [[NFX_ADDR]],

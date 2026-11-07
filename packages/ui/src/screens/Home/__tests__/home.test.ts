@@ -77,7 +77,10 @@ describe('Home — structure and loading', () => {
     expect(r.get('section[aria-labelledby]')).toBeTruthy();
     expect(r.get('h1').textContent).toBe('Home');
     const tabs = r.all('[role="tab"]');
-    expect(tabs.map((t) => t.textContent)).toEqual(HOME_TABS.map((t) => t.label));
+    // The Network tab is offered only while NFX is on (`showNetwork`): off by default.
+    expect(tabs.map((t) => t.textContent)).toEqual(
+      HOME_TABS.filter((t) => t.id !== 'network').map((t) => t.label),
+    );
     expect(tabs.filter((t) => t.getAttribute('aria-selected') === 'true')).toHaveLength(1);
     expect(r.get('[role="tabpanel"]').getAttribute('aria-busy')).toBe('true');
     expect(r.all('.nf-card--skeleton').length).toBeGreaterThan(0);
@@ -545,5 +548,70 @@ describe('Home — free NFX videos (contracts v9)', () => {
     await flush();
     const titles = r.all('.nf-card').map((c) => c.getAttribute('aria-label'));
     for (const v of mocks.NFX_VIDEOS) expect(titles).not.toContain(v.title);
+  });
+});
+
+describe('Home — the Network feed (contracts v13)', () => {
+  const labels = (r: Rendered): (string | null)[] =>
+    r.all('[role="tab"]').map((t) => t.textContent);
+  const selected = (r: Rendered): string | null =>
+    r.get('[role="tab"][aria-selected="true"]').textContent;
+
+  it('offers the Network tab only while NFX is on; without it a route to it lands on Trending', async () => {
+    const off = mount(adapterWith({ signedIn: false }), { tab: 'network' });
+    keep(off.r);
+    await flush();
+    expect(labels(off.r)).toEqual(['Subscriptions', 'Trending', 'Your tags']);
+    expect(selected(off.r)).toBe('Trending');
+
+    const on = mount(adapterWith({ signedIn: false, nfx: true }), {
+      tab: 'network',
+      showNetwork: true,
+    });
+    keep(on.r);
+    await flush();
+    expect(labels(on.r)).toEqual(['Subscriptions', 'Trending', 'Your tags', 'Network']);
+    expect(selected(on.r)).toBe('Network');
+  });
+
+  it('lists every NFX video on the network, newest first, without a sign-in', async () => {
+    const adapter = adapterWith({ signedIn: false, nfx: true });
+    const feed = vi.spyOn(adapter, 'feed');
+    const { r } = mount(adapter, { tab: 'network', showNetwork: true });
+    keep(r);
+    await flush();
+    expect(feed).toHaveBeenCalledWith({ source: 'network', limit: 12 });
+    const expected = await adapter.feed({ source: 'network', limit: 12 });
+    expect(expected.items.length).toBeGreaterThan(0);
+    expect(expected.items.every((v) => v.kind === 38504)).toBe(true);
+    const times = expected.items.map((v) => v.publishedAt);
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+    expect(r.all('.nf-card:not(.nf-card--skeleton)')).toHaveLength(expected.items.length);
+    // No "sign in" gate: Trending and the Network feed are public.
+    expect(r.all('[role="tabpanel"]')[0]!.textContent).not.toContain('Sign in');
+    expect(r.get('.nf-home__hint').textContent).toBe(
+      'Every free video on the NFX network, newest first',
+    );
+  });
+
+  it('opens from its tab: navigates, and keyboard End reaches it', async () => {
+    const { r, navigate } = mount(adapterWith({ nfx: true }), { showNetwork: true });
+    keep(r);
+    await flush();
+    const tab = r.all('[role="tab"]').find((t) => t.textContent === 'Network')!;
+    click(tab);
+    expect(navigate).toHaveBeenCalledWith({ name: 'home', tab: 'network' });
+    keydown(r.get('[role="tablist"]'), 'End');
+    // End from the focused tab: the last tab is Network.
+    expect(r.all('[role="tab"]').at(-1)!.textContent).toBe('Network');
+  });
+
+  it('says so when the network has no videos', async () => {
+    const empty = withFeed(adapterWith({ nfx: true }), () => Promise.resolve({ items: [] }));
+    const { r } = mount(empty, { tab: 'network', showNetwork: true });
+    keep(r);
+    await flush();
+    expect(r.get('[role="tabpanel"]').textContent).toContain('No videos on the network yet');
+    expect(r.all('.nf-card:not(.nf-card--skeleton)')).toHaveLength(0);
   });
 });

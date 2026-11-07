@@ -47,6 +47,15 @@ describe('MockNetworkAdapter', () => {
     expect(subs.items.every((v) => subd.includes(v.author))).toBe(true);
   });
 
+  it('the network feed (v13) lists the NFX videos newest first, and nothing without NFX', async () => {
+    const on = await new MockNetworkAdapter({ nfx: true }).feed({ source: 'network', limit: 50 });
+    expect(on.items.length).toBeGreaterThan(0);
+    expect(on.items.every((v) => v.kind === 38504)).toBe(true);
+    const times = on.items.map((v) => v.publishedAt);
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+    expect((await new MockNetworkAdapter().feed({ source: 'network' })).items).toEqual([]);
+  });
+
   it('search + related + stats', async () => {
     const a = new MockNetworkAdapter();
     expect((await a.search({ text: 'ceramics' })).items.length).toBeGreaterThan(0);

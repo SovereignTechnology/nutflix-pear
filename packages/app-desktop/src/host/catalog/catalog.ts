@@ -77,6 +77,9 @@ export class NostrCatalog implements CatalogSource {
         return q.author === undefined ? { items: [] } : nostr.authorFeed(c, q.author, opts);
       case 'shorts':
         return nostr.shortsFeed(c, opts);
+      case 'network':
+        // The NIP-71 catalogue has no NFX network; `MergedCatalog` routes `network` to the NFX side.
+        return { items: [] };
     }
   }
 

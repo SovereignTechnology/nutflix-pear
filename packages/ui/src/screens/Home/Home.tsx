@@ -50,13 +50,15 @@ import {
 import type { Route, ScreenProps } from '../shared/route.js';
 import { avatarSrc, thumbnailSrc } from '../shared/image.js';
 
-/** The three Home feeds; kept in sync with `Route['tab']` for `name: 'home'`. */
+/** The Home feeds; kept in sync with `Route['tab']` for `name: 'home'`. */
 export type HomeTab = NonNullable<Extract<Route, { readonly name: 'home' }>['tab']>;
 
 export const HOME_TABS: readonly { readonly id: HomeTab; readonly label: string }[] = [
   { id: 'subscriptions', label: 'Subscriptions' },
   { id: 'trending', label: 'Trending' },
   { id: 'tags', label: 'Your tags' },
+  /** Every free video on the NFX network (contracts v13): shown only while NFX is on. */
+  { id: 'network', label: 'Network' },
 ];
 
 /** Default page size; YouTube shows 3–4 rows of 4 before it fetches more. */
@@ -68,6 +70,11 @@ export const PREVIEW_SECONDS = 3;
 export interface HomeProps extends ScreenProps {
   /** Initial feed. Defaults to Subscriptions, or Trending when nobody is signed in. */
   readonly tab?: HomeTab | undefined;
+  /**
+   * Whether to offer the Network feed: `Settings.nfx.enabled`, resolved by the shell. Off, the tab
+   * is not shown and a route asking for it lands on Trending.
+   */
+  readonly showNetwork?: boolean | undefined;
   /**
    * `Settings.hoverPreview`, resolved by the shell (default on for desktop, off for web —
    * build-plan §6.1). When on, hovering/focusing a card shows the preview affordance.
@@ -116,6 +123,7 @@ const INITIAL_FEEDS: Feeds = {
   subscriptions: EMPTY_FEED,
   trending: EMPTY_FEED,
   tags: EMPTY_FEED,
+  network: EMPTY_FEED,
 };
 
 interface Suggestion {
@@ -183,8 +191,9 @@ export function previewCostSats(video: VideoManifest): Sats | undefined {
   return (blocks * video.price.satsPerBlock) as Sats;
 }
 
+/** Trending and the Network feed are public: they need no sign-in. */
 function needsIdentity(tab: HomeTab): boolean {
-  return tab !== 'trending';
+  return tab !== 'trending' && tab !== 'network';
 }
 
 function dedupe(
@@ -207,6 +216,7 @@ export function Home({
   navigate,
   miniPlayer,
   tab,
+  showNetwork = false,
   hoverPreview = false,
   followedTags,
   now,
@@ -228,6 +238,11 @@ export function Home({
       setActiveTab(tab);
     }
   }, [tab]);
+  // The Network feed is offered only while NFX is on: otherwise its tab is hidden, so land elsewhere.
+  useEffect(() => {
+    if (activeTab === 'network' && !showNetwork) setActiveTab('trending');
+  }, [activeTab, showNetwork]);
+  const visibleTabs = HOME_TABS.filter((t) => t.id !== 'network' || showNetwork);
 
   const selectTab = useCallback(
     (next: HomeTab): void => {
@@ -269,8 +284,14 @@ export function Home({
     subscriptions: 0,
     trending: 0,
     tags: 0,
+    network: 0,
   });
-  const fetchedKey = useRef<Record<HomeTab, string>>({ subscriptions: '', trending: '', tags: '' });
+  const fetchedKey = useRef<Record<HomeTab, string>>({
+    subscriptions: '',
+    trending: '',
+    tags: '',
+    network: '',
+  });
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -568,7 +589,7 @@ export function Home({
     else if (e.key === 'End') nextIndex = tabs.length - 1;
     if (nextIndex === undefined) return;
     e.preventDefault();
-    const target = HOME_TABS[nextIndex];
+    const target = visibleTabs[nextIndex];
     tabs[nextIndex]?.focus();
     if (target) selectTab(target.id);
   };
@@ -674,6 +695,15 @@ export function Home({
           description="You are not following any tags yet. Follow a tag from a video and new uploads carrying it will land here."
           action="Explore trending"
           onAction={goTrending}
+        />
+      );
+    }
+    if (activeTab === 'network') {
+      return (
+        <EmptyState
+          preset="no-videos"
+          title="No videos on the network yet"
+          description="Nothing has been published to this NFX network's relays yet, or the relays could not be reached. Check Settings, NFX network."
         />
       );
     }
@@ -846,7 +876,7 @@ export function Home({
           className="nf-home__tabs"
           onKeyDown={onTabKeyDown}
         >
-          {HOME_TABS.map((t) => {
+          {visibleTabs.map((t) => {
             const selected = t.id === activeTab;
             return (
               <Button
@@ -869,6 +899,9 @@ export function Home({
         </div>
         {activeTab === 'trending' ? (
           <p className="nf-home__hint">Ranked by sats paid per hour</p>
+        ) : null}
+        {activeTab === 'network' ? (
+          <p className="nf-home__hint">Every free video on the NFX network, newest first</p>
         ) : null}
       </div>
       <div

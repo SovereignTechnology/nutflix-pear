@@ -152,6 +152,9 @@ export class FixtureCatalog implements CatalogSource {
       case 'shorts':
         items = items.filter((v) => v.kind === 22);
         break;
+      case 'network':
+        items = [...mocks.NFX_VIDEOS];
+        break;
     }
     return paginate(items, q.cursor, q.limit ?? FEED_PAGE);
   }

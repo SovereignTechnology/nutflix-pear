@@ -356,6 +356,103 @@ describe('NfxCatalog (NFX-04 §4)', () => {
     expect(t.asked.every((relays) => !relays.includes(SCOPED))).toBe(true);
   });
 
+  describe('the network feed (contracts v13)', () => {
+    const catalog = (t: ReturnType<typeof twoPools>): NfxCatalog =>
+      new NfxCatalog(
+        () => t.client,
+        NS,
+        () => [SCOPED],
+      );
+    const pages = async (cat: NfxCatalog, limit: number): Promise<string[][]> => {
+      const out: string[][] = [];
+      let cursor: string | undefined;
+      for (let i = 0; i < 8; i++) {
+        const page = await cat.feed(
+          { source: 'network', limit, ...(cursor === undefined ? {} : { cursor }) },
+          null,
+        );
+        out.push(page.items.map((v) => v.title));
+        cursor = page.next;
+        if (cursor === undefined) return out;
+      }
+      throw new Error('too many pages');
+    };
+
+    it('lists every video on the scoped AND the public relays, newest first, one per address', async () => {
+      const t = twoPools();
+      const a = new kit.TestSigner();
+      const b = new kit.TestSigner();
+      const both = await kit.sign(a, nfxDraft('on-both', 5));
+      t.pub.store(both);
+      t.scoped.store(both); // the same manifest on both relay sets: one video
+      t.pub.store(await kit.sign(b, nfxDraft('public-only', 3)));
+      t.scoped.store(await kit.sign(a, nfxDraft('scoped-only', 1)));
+      // A newer revision of `on-both`, on the scoped relays only: still one video, and the newest.
+      t.scoped.store(await kit.sign(a, nfxDraft('on-both', 0.5)));
+      const page = await catalog(t).feed({ source: 'network' }, null);
+      expect(page.items.map((v) => v.title)).toEqual([
+        'NFX on-both',
+        'NFX scoped-only',
+        'NFX public-only',
+      ]);
+      expect(new Set(page.items.map((v) => v.id)).size).toBe(3);
+      expect(page.items[0]!.event.created_at).toBe(mocks.FIXTURE_NOW - 0.5 * HOUR);
+      expect(t.asked.some((relays) => relays.includes(SCOPED))).toBe(true);
+      expect(t.asked.some((relays) => !relays.includes(SCOPED))).toBe(true);
+    });
+
+    it('needs no viewer, and without scoped relays asks the public relays alone', async () => {
+      const t = twoPools();
+      t.pub.store(await kit.sign(new kit.TestSigner(), nfxDraft('only-public', 2)));
+      const cat = new NfxCatalog(
+        () => t.client,
+        NS,
+        () => [],
+      );
+      expect((await cat.feed({ source: 'network' }, null)).items.map((v) => v.title)).toEqual([
+        'NFX only-public',
+      ]);
+      expect(t.asked.every((relays) => !relays.includes(SCOPED))).toBe(true);
+    });
+
+    it('pages newest first across both relay sets, losing and repeating nothing', async () => {
+      const t = twoPools();
+      const a = new kit.TestSigner();
+      for (const [id, hours, pool] of [
+        ['clip-one', 1, t.scoped],
+        ['clip-two', 2, t.pub],
+        ['clip-three', 3, t.scoped],
+        ['clip-four', 4, t.pub],
+        ['clip-five', 5, t.scoped],
+      ] as const)
+        pool.store(await kit.sign(a, nfxDraft(id, hours)));
+      const got = await pages(catalog(t), 2);
+      const flat = got.flat();
+      expect(flat).toEqual([
+        'NFX clip-one',
+        'NFX clip-two',
+        'NFX clip-three',
+        'NFX clip-four',
+        'NFX clip-five',
+      ]);
+      expect(new Set(flat).size).toBe(flat.length);
+      expect(got.length).toBeGreaterThan(1);
+    });
+
+    it('survives one relay set being down, and fails only when both are', async () => {
+      const t = twoPools();
+      t.pub.store(await kit.sign(new kit.TestSigner(), nfxDraft('still-here', 1)));
+      const scopedDown = vi.spyOn(t.scoped, 'query').mockRejectedValue(new Error('scoped down'));
+      const cat = catalog(t);
+      expect((await cat.feed({ source: 'network' }, null)).items.map((v) => v.title)).toEqual([
+        'NFX still-here',
+      ]);
+      expect(scopedDown).toHaveBeenCalled();
+      vi.spyOn(t.pub, 'query').mockRejectedValue(new Error('public down'));
+      await expect(cat.feed({ source: 'network' }, null)).rejects.toThrow(/down/);
+    });
+  });
+
   it('runs on a canonical namespace only, and has nothing for trending or shorts', async () => {
     const t = twoPools();
     for (const bad of ['nutflix:testnet:1', 'nfx:testnet:01', 'nfx:Testnet:1', '']) {
@@ -375,6 +472,11 @@ describe('NfxCatalog (NFX-04 §4)', () => {
     );
     expect(await cat.feed({ source: 'trending' }, null)).toEqual({ items: [] });
     expect(await cat.feed({ source: 'shorts' }, null)).toEqual({ items: [] });
+    expect(t.asked).toEqual([]);
+    // The NIP-71 catalogue alone has no NFX network to list (`MergedCatalog` routes `network`).
+    expect(await new NostrCatalog(() => t.client).feed({ source: 'network' }, null)).toEqual({
+      items: [],
+    });
     expect(t.asked).toEqual([]);
   });
 });
@@ -400,6 +502,45 @@ describe('MergedCatalog', () => {
     const merged = new MergedCatalog(new NostrCatalog(() => client), failing, log);
     const page = await merged.feed({ source: 'tags', tags: ['space'] }, null);
     expect(page.items.map((v) => v.id)).toEqual([seeded[0]!.video.id]);
+    expect(log.lines.some((l) => l.msg.includes('nfx catalog read failed'))).toBe(true);
+  });
+
+  it('the network feed is the NFX side alone: the NIP-71 catalogue is never asked', async () => {
+    const pool = new nostr.FakeRelayPool();
+    const client = new nostr.NostrClient({
+      pool,
+      relays: [{ url: 'wss://a.test' as RelayUrl, read: true, write: true }],
+    });
+    const legacy = new NostrCatalog(() => client);
+    const legacyFeed = vi.spyOn(legacy, 'feed');
+    const nfxFeed = vi.fn<NfxSource['feed']>(() => Promise.resolve({ items: [] }));
+    const nfx: NfxSource = {
+      feed: nfxFeed,
+      search: () => Promise.resolve({ items: [] }),
+      video: () => Promise.resolve(null),
+      twinsOf: () => Promise.resolve([]),
+      playable: () => true,
+    };
+    const merged = new MergedCatalog(legacy, nfx, memoryLogger('debug'));
+    expect(await merged.feed({ source: 'network', limit: 5 }, null)).toEqual({ items: [] });
+    expect(nfxFeed).toHaveBeenCalledWith({ source: 'network', limit: 5 }, null);
+    expect(legacyFeed).not.toHaveBeenCalled();
+  });
+
+  it('the network feed lists nothing, and logs, when the NFX side fails', async () => {
+    const pool = new nostr.FakeRelayPool();
+    const client = new nostr.NostrClient({
+      pool,
+      relays: [{ url: 'wss://a.test' as RelayUrl, read: true, write: true }],
+    });
+    const down = (): Promise<never> => Promise.reject(new Error('relay down'));
+    const log = memoryLogger('debug');
+    const merged = new MergedCatalog(
+      new NostrCatalog(() => client),
+      { feed: down, search: down, video: down, twinsOf: down, playable: () => true },
+      log,
+    );
+    expect(await merged.feed({ source: 'network' }, null)).toEqual({ items: [] });
     expect(log.lines.some((l) => l.msg.includes('nfx catalog read failed'))).toBe(true);
   });
 });
