@@ -7,6 +7,21 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs: the public iroh relay.** `nfx:testnet:1` now has a public iroh relay,
+  `https://iroh.nutflix.xyz/`. The README's known limitations say how to opt in (Settings › NFX
+  network › iroh relays; nothing is added for you, the URL must be exactly `https://host/`, at most
+  4) and that there is still no public scoped Nostr relay. No code, defaults or contracts changed.
+
+### CI
+
+- **`nfx-exit-two-host` takes a `relay_only` input** (default false). Set, nfxd runs with
+  `--relay-only`, so every byte it moves goes through the iroh relays, to exercise a relay's own
+  path such as the public one. The suite fails at once if it is set without iroh relays, and passes
+  nfxd no gossip flag, which nfxd refuses with it. Dispatch only; the app and its tests are
+  unchanged.
+
 ## [0.1.2] - 2026-11-07
 
 A Network tab: every free video on the NFX network, in one place.
