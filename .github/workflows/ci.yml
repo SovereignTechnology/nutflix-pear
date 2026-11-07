@@ -150,6 +150,37 @@ jobs:
         working-directory: crates/iroh-helper
         run: cargo deny --locked check advisories
 
+  # The helper on the next rustc, as rbitcoin-org/rbitcoin's rust-forward job checks its own: the
+  # shipped toolchain stays rust-toolchain.toml's (nfx's, by hand); this proves the code still
+  # builds, warning-free, on the channel in crates/iroh-helper/rust-forward.toml before that move.
+  rust-forward:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: '-D warnings'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: the forward toolchain (the runner's rustup)
+        run: |
+          set -euo pipefail
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' crates/iroh-helper/rust-forward.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          # Over rust-toolchain.toml, for every later step.
+          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
+      - name: cargo check (all targets, --locked)
+        working-directory: crates/iroh-helper
+        run: |
+          rustc --version
+          cargo check --locked --all-targets
+
   test:
     needs: iroh-helper
     runs-on: ubuntu-24.04
@@ -178,10 +209,20 @@ jobs:
       # The app-desktop suites read sibling packages from dist/ and the packaging tests stage
       # the built app, so the build comes first.
       - run: npm run build
-      # Only the test step sees the helper: the worker's iroh suite spawns it.
-      - run: npm test
+      # Only the test step sees the helper: the worker's iroh suite spawns it. With --coverage
+      # (v8), the floors in vitest.config.ts gate it, as rbitcoin's coverage job gates its own.
+      - run: npm test -- --coverage
         env:
           NUTFLIX_IROH_HELPER: ${{ runner.temp }}/iroh-helper/nutflix-iroh-helper
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage/coverage-summary.json
+            coverage/lcov.info
+          if-no-files-found: ignore
+          retention-days: 14
 
   e2e:
     runs-on: ubuntu-24.04

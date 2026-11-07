@@ -1,0 +1,6 @@
+# The next rustc the helper must build on, warning-free (ci.yml's rust-forward job), as
+# rbitcoin-org/rbitcoin's rust-forward.toml. The shipped toolchain stays rust-toolchain.toml's,
+# which follows nfx's; raise this one when a new stable is out, and move rust-toolchain.toml
+# only once nfx moves.
+[toolchain]
+channel = "1.99.1"

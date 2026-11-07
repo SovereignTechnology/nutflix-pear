@@ -18,6 +18,13 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],
       exclude: ['**/__tests__/**', '**/*.test.ts', '**/contracts/**'],
+      // CI's `test` job runs with --coverage (as rbitcoin-org/rbitcoin's coverage job gates line
+      // coverage): a summary in the log, json-summary and lcov as the job's artifact.
+      reporter: ['text-summary', 'json-summary', 'lcov'],
+      // Floors: the rates measured 2026-11-07 (lines 92.11, statements 89.16, branches 84.29,
+      // functions 87.54) less 0.5 for run-to-run variance, rounded down. Raise them by a commit as
+      // coverage grows; never lower one without saying why in that commit.
+      thresholds: { lines: 91, statements: 88, branches: 83, functions: 87 },
     },
   },
 });
