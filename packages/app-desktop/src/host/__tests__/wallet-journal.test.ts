@@ -316,7 +316,11 @@ describe('the money plane over the sealed journal', () => {
     (await open(s, true)).close();
     const p = journalPath(join(dir, WALLET_DIR), me);
     const env = JSON.parse(await readFile(p, 'utf8')) as { box: string };
-    const damaged = JSON.stringify({ ...env, box: `${env.box.slice(0, -2)}00` });
+    // Complement the tag's last byte, so the file always changes. Writing a fixed `00` changed nothing
+    // one run in 256 (the tag is random: it ended in 00), the damage was no damage, the journal
+    // opened, and this test failed on a green tree.
+    const flipped = (Number.parseInt(env.box.slice(-2), 16) ^ 0xff).toString(16).padStart(2, '0');
+    const damaged = JSON.stringify({ ...env, box: `${env.box.slice(0, -2)}${flipped}` });
     await writeFile(p, damaged, { mode: 0o600 });
     await expect(open(s)).rejects.toThrow(/^journal-unreadable: /);
     expect(await readFile(p, 'utf8')).toBe(damaged);
