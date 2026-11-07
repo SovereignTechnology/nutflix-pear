@@ -7,6 +7,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Changed
+
+- **A fourth default relay, `relay.ditto.pub`** (ADR 0009's 2026-11-07 amendment). Search is a
+  NIP-50 query and none of the three old defaults answers it, so on a first run Search found
+  nothing; this relay is free, open and does. It also means one more relay operator sees a fresh
+  install's IP address and queries (README, SECURITY.md). A saved relay list still replaces the
+  defaults, so existing installs are unchanged.
+
 ## [0.1.2] - 2026-11-07
 
 A Network tab: every free video on the NFX network, in one place.

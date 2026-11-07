@@ -53,7 +53,7 @@ implementation built on iroh lives in [nfx](https://github.com/SovereignTechnolo
 - **Sign in** with a local key (kept encrypted on disk) or a NIP-46 remote signer such as a bunker.
 
 Defaults are chosen for privacy and safety: no default mint, seeding off, remote images off, and
-three public relays (`relay.damus.io`, `nos.lol`, `relay.primal.net`) that see your IP address and
+four public relays (`relay.damus.io`, `nos.lol`, `relay.primal.net`, `relay.ditto.pub`) that see your IP address and
 what you ask them for. You can change the relays and mints in Settings.
 
 ## How it works

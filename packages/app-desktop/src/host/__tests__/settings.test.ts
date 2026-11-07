@@ -27,6 +27,26 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+describe('the first-run relays (ADR 0009 and its 2026-11-07 amendment)', () => {
+  it('are exactly the four public relays the README and SECURITY.md name, each read and write over wss', () => {
+    expect(DEFAULT_SETTINGS.relays.map((r) => r.url)).toEqual([
+      'wss://relay.damus.io',
+      'wss://nos.lol',
+      'wss://relay.primal.net',
+      // The only free, open relay found that answers NIP-50, which Search relies on.
+      'wss://relay.ditto.pub',
+    ]);
+    expect(DEFAULT_SETTINGS.relays.every((r) => r.read && r.write)).toBe(true);
+    expect(new Set(DEFAULT_SETTINGS.relays.map((r) => r.url)).size).toBe(4);
+  });
+
+  it('are replaced, not extended, by a stored list: an install with saved relays is unchanged', () => {
+    const saved = [{ url: 'wss://only.example' as RelayUrl, read: true, write: false }];
+    const parsed = parseStoredSettings({ v: 1, settings: { relays: saved } });
+    expect(parsed?.settings.relays).toEqual(saved);
+  });
+});
+
 describe('SettingsStore (atomic JSON in userData)', () => {
   it('starts from defaults on a first run, persists an update, and reads it back', async () => {
     const log = memoryLogger();
