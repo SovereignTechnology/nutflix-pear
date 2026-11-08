@@ -36,3 +36,22 @@ Settings (read/write per relay), and the stored list replaces the defaults.
 - Revisit this in Stage 3 (packaging and first-run polish). A first-run notice naming the relays,
   or adding a SovTech relay to the list, would not reverse this decision.
 - `docs/status.md` records the answer under the the maintainer inputs table.
+
+## Amendment 2026-11-07: a fourth default, relay.ditto.pub
+
+Decision by the maintainer, 2026-11-07, answering a measurement.
+
+The app's Search is a NIP-50 text query to the read relays. None of the three defaults answers
+NIP-50, so on a first run Search found nothing, for NIP-71 and NFX videos alike. A read-only probe of
+sixteen public relays that day found one free, open relay that answers search and also held our
+NFX manifests: `wss://relay.ditto.pub`. (The others that advertise search were paid and
+write-restricted, empty, or a bridge relay for another network.)
+
+- **Decision: add `relay.ditto.pub`** to the defaults, read and write. `DEFAULT_SETTINGS.relays` has
+  four entries. A stored list still replaces the defaults, so existing installs with saved relays
+  are unchanged.
+- **The privacy cost grows by one operator.** A fresh install now contacts four third-party relay
+  operators, and each sees its IP address and the filters it sends. The decision above stands: the
+  app makes no claim of private first-run browsing, and `README.md` and `SECURITY.md` name all
+  four.
+- It does not reverse the rest of this ADR: no SovTech relay, no empty start.

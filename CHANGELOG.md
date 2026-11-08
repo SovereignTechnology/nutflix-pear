@@ -9,6 +9,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Changed
 
+- **A fourth default relay, `relay.ditto.pub`** (ADR 0009's 2026-11-07 amendment). Search is a
+  NIP-50 query and none of the three old defaults answers it, so on a first run Search found
+  nothing; this relay is free, open and does. It also means one more relay operator sees a fresh
+  install's IP address and queries (README, SECURITY.md). A saved relay list still replaces the
+  defaults, so existing installs are unchanged.
 - **Docs: the public iroh relay.** `nfx:testnet:1` now has a public iroh relay,
   `https://iroh.nutflix.xyz/`. The README's known limitations say how to opt in (Settings › NFX
   network › iroh relays; nothing is added for you, the URL must be exactly `https://host/`, at most

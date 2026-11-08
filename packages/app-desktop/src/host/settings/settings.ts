@@ -17,7 +17,7 @@ export const DESKTOP_FILE = 'desktop.json';
 const FILE_V = 1 as const;
 
 /**
- * First-run settings. Decisions (docs/archive/lanes/L6-B.md): three widely used public relays so a
+ * First-run settings. Decisions (docs/archive/lanes/L6-B.md; ADR 0009): four public relays so a
  * first run shows something; no default mint (the user chooses who holds their money);
  * seeding OFF until the user opts in (it spends disk and upload bandwidth); a 30 s prefetch
  * ("buffer = money"); theme follows the system.
@@ -27,6 +27,9 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
     Object.freeze({ url: 'wss://relay.damus.io' as RelayUrl, read: true, write: true }),
     Object.freeze({ url: 'wss://nos.lol' as RelayUrl, read: true, write: true }),
     Object.freeze({ url: 'wss://relay.primal.net' as RelayUrl, read: true, write: true }),
+    // ADR 0009's 2026-11-07 amendment: the one free, open relay that answers NIP-50 text search,
+    // which this app's Search relies on. Without it Search finds nothing on a first run.
+    Object.freeze({ url: 'wss://relay.ditto.pub' as RelayUrl, read: true, write: true }),
   ]),
   defaultMints: Object.freeze([]),
   // ADR 0015: once seeding is on, creators' thumbnails and avatars are shared too (free).
