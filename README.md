@@ -54,7 +54,10 @@ implementation built on iroh lives in [nfx](https://github.com/SovereignTechnolo
 
 Defaults are chosen for privacy and safety: no default mint, seeding off, remote images off, and
 four public relays (`relay.damus.io`, `nos.lol`, `relay.primal.net`, `relay.ditto.pub`) that see your IP address and
-what you ask them for. You can change the relays and mints in Settings.
+what you ask them for. NFX (free video) is on, on its test network's public relays, which SovTech
+runs: `wss://relay.nutflix.xyz` and `https://iroh.nutflix.xyz/`, and they see your IP address too.
+You can change the relays and mints in Settings, and switch NFX off or change its relays in
+Settings › NFX network.
 
 ## How it works
 
@@ -87,18 +90,18 @@ The threat model, the money-path invariants and the review of the implementation
 
 These are the things you would otherwise find out by trying them. Release 0.1.2:
 
-- **Free videos (NFX) need a network you point it at.** NFX is off by default. To use it, turn it
-  on in Settings › NFX network and give it the network's scoped Nostr relay and its iroh relays.
-  `nfx:testnet:1` has a public iroh relay, `https://iroh.nutflix.xyz/` (its operator, limits and
-  what it can see are in [nfx's testnet page](https://github.com/SovereignTechnology/nfx/blob/main/docs/nfx/testnet.md)).
-  To use it, add it under Settings › NFX network › iroh relays: nothing is added for you, and the
-  URL must be exactly `https://host/` (lower-case, with the trailing slash), at most 4 in all.
-  There is no public scoped Nostr relay yet, so that part today means one you or a friend runs
-  (`nfxd run --embed-relay …`, from [nfx](https://github.com/SovereignTechnology/nfx)). A play waits for a seeder's next beacon, up
-  to a minute, when the Watch page has not already seen one. Only free videos are on NFX. With NFX
-  on, Home's **Network** tab lists every free video on the network. Search finds one only through a
-  relay that answers NIP-50 text search, and nfxd 0.1.0's relay matches a video's description
-  only, so a video published without a description shows in Network but not in Search.
+- **Free videos (NFX) use SovTech's test-network relays unless you change them.** NFX is on by
+  default, on `nfx:testnet:1`'s public scoped relay `wss://relay.nutflix.xyz` (where videos are
+  listed and seeders announce themselves) and its iroh relay `https://iroh.nutflix.xyz/` (which
+  connects peers behind home routers; its operator, limits and what it can see are in
+  [nfx's testnet page](https://github.com/SovereignTechnology/nfx/blob/main/docs/nfx/testnet.md)).
+  Both see your IP address. Switch NFX off, or replace or remove either relay, in Settings › NFX
+  network; a list you saved is never overwritten, and a setting this version cannot read turns NFX
+  off rather than on. A play waits for a seeder's next beacon, up to a minute, when the Watch page
+  has not already seen one. Only free videos are on NFX. Home's **Network** tab lists every free
+  video on the network. Search finds one only through a relay that answers NIP-50 text search; an
+  nfxd 0.1.0 relay matches a video's description only, so a video published there without one
+  shows in Network but not in Search (nfxd 0.1.1 matches titles too).
 - **It has not been run end to end against real relays, real peers and a real mint.** The
   real-mint tests use two mint implementations (Nutshell 0.21.0 and cdk-mintd 0.18.1) on a local
   machine with a fake Lightning backend. No real payment is on record. Cashu ecash is bearer money

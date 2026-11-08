@@ -8,6 +8,7 @@ import type { IrohRelayUrl, MintUrl, NfxSettings, RelayUrl, Sats, Settings } fro
 
 import { memoryLogger } from '../log.js';
 import {
+  DEFAULT_NFX,
   DEFAULT_SETTINGS,
   SETTINGS_FILE,
   SettingsStore,
@@ -84,7 +85,7 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parsed?.settings).toEqual({ ...DEFAULT_SETTINGS, theme: 'dark' });
   });
 
-  it('contracts v10: a valid `nfx` is kept; an invalid one is dropped alone (NFX off)', () => {
+  it('contracts v10: a valid `nfx` is kept; an invalid one goes alone, to the defaults OFF', () => {
     const nfx = {
       enabled: true,
       network: 'nfx:testnet:1',
@@ -102,11 +103,40 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       'on',
     ]) {
       const parsed = parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx: bad } });
-      expect(parsed?.settings).toEqual({ ...DEFAULT_SETTINGS, theme: 'dark' });
+      // Never the default ON: a value this build cannot read turns NFX off (2026-11-08).
+      expect(parsed?.settings).toEqual({
+        ...DEFAULT_SETTINGS,
+        theme: 'dark',
+        nfx: { ...DEFAULT_NFX, enabled: false },
+      });
     }
     // Every other key still fails the whole file, as before.
     expect(parseStoredSettings({ v: 1, settings: { theme: 'neon', nfx } })).toBeNull();
-    expect(DEFAULT_SETTINGS.nfx).toBeUndefined();
+  });
+
+  it("ADR 0020 2026-11-08: NFX is on by default, on the test network's public relays, and every part is the user's to change", () => {
+    expect(DEFAULT_SETTINGS.nfx).toEqual({
+      enabled: true,
+      network: 'nfx:testnet:1',
+      scopedRelays: ['wss://relay.nutflix.xyz'],
+      irohRelays: ['https://iroh.nutflix.xyz/'],
+    });
+    // The defaults pass the same checks a user's settings do (wss://, the iroh relay's form).
+    expect(parseStoredSettings({ v: 1, settings: { nfx: DEFAULT_NFX } })?.settings.nfx).toEqual(
+      DEFAULT_NFX,
+    );
+    // No stored `nfx` (a first run, or an install that never touched NFX): the default, on.
+    expect(parseStoredSettings({ v: 1, settings: { theme: 'dark' } })?.settings.nfx).toEqual(
+      DEFAULT_NFX,
+    );
+    // The user's own choice always wins: off, other relays, or none at all.
+    for (const mine of [
+      { ...DEFAULT_NFX, enabled: false },
+      { ...DEFAULT_NFX, scopedRelays: ['wss://my.example'], irohRelays: [] },
+      { ...DEFAULT_NFX, scopedRelays: [], irohRelays: [] },
+    ]) {
+      expect(parseStoredSettings({ v: 1, settings: { nfx: mine } })?.settings.nfx).toEqual(mine);
+    }
   });
 
   it('contracts v12: stored `irohRelays` round-trip; a bad one drops `nfx` alone', async () => {
@@ -141,6 +171,7 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       expect(parsed?.settings, JSON.stringify(irohRelays)).toEqual({
         ...DEFAULT_SETTINGS,
         theme: 'dark',
+        nfx: { ...DEFAULT_NFX, enabled: false },
       });
     }
   });

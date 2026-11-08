@@ -33,6 +33,7 @@ import {
   int,
   isCount,
   isEventId,
+  isIrohRelays,
   isMintUrl,
   isPeerSpend,
   isPricePolicy,
@@ -166,8 +167,19 @@ const isSettings = obj(
     loadRemoteImages: bool,
     theme: oneOf(['dark', 'light', 'system'] as const),
   },
-  // v6 / issue #2: `amountSats` (1 … AUTO_TOP_UP_MAX_SATS) may be present.
-  { autoTopUp: obj({ belowSats: isSats, fromMint: isMintUrl }, { amountSats: int(1, 10_000) }) },
+  {
+    // v6 / issue #2: `amountSats` (1 … AUTO_TOP_UP_MAX_SATS) may be present.
+    autoTopUp: obj({ belowSats: isSats, fromMint: isMintUrl }, { amountSats: int(1, 10_000) }),
+    // Contracts v10/v12: the NFX network, on by default since ADR 0020's 2026-11-08 amendment.
+    nfx: obj(
+      {
+        enabled: bool,
+        network: oneOf(['nfx:testnet:1'] as const),
+        scopedRelays: arrayOf(isRelayUrl, 8),
+      },
+      { irohRelays: isIrohRelays },
+    ),
+  },
 );
 const isMintQuote = obj({
   mint: isMintUrl,

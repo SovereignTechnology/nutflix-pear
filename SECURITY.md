@@ -58,7 +58,9 @@ the locked directories.
 These are known limits of the released app, not bugs awaiting a report:
 
 - **Relays see you.** The four default relays learn your IP address and what you ask them for
-  (ADR 0009). The app makes no private-browsing claim.
+  (ADR 0009), and so do NFX's two default relays, `relay.nutflix.xyz` and `iroh.nutflix.xyz`, which
+  SovTech runs (ADR 0020, 2026-11-08); switch NFX off in Settings to stop contacting them. The app
+  makes no private-browsing claim.
 - **Images can reveal your IP.** With remote images off (the default), an `https` image is fetched
   only when its publisher signed its hash, and the host it comes from still sees your address.
 - **Builds are signed by key, not by a vendor.** There is no operating-system code signing and no

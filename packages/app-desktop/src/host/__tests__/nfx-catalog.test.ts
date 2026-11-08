@@ -29,6 +29,7 @@ import { memoryLogger } from '../log.js';
 import { NostrCatalog } from '../catalog/catalog.js';
 import { MergedCatalog } from '../catalog/merged-catalog.js';
 import { NfxCatalog, type NfxSource } from '../catalog/nfx-catalog.js';
+import { DEFAULT_NFX } from '../settings/settings.js';
 import { seedVideos } from './support/catalog.js';
 import { coreTestKit, type TestSignerLike } from './support/core-helpers.js';
 import type { Rig } from './support/rig.js';
@@ -101,16 +102,14 @@ async function allPages(a: NetworkAdapter, q: FeedQuery, max = 10): Promise<Cata
 const filtersOf = (spy: { mock: { calls: unknown[][] } }): NostrFilter[] =>
   spy.mock.calls.map((c) => c[1] as NostrFilter);
 
-describe('dormant until Settings.nfx is enabled (contracts v10)', () => {
+describe('dormant while Settings.nfx is off (contracts v10)', () => {
   it.each([
-    ['absent', undefined],
-    ['present but off', { ...NFX_ON, enabled: false }],
+    ['switched off', { ...NFX_ON, enabled: false }],
+    // ADR 0020 2026-11-08: the public relays pre-filled, but the user switched NFX off.
+    ['the default, switched off', { ...DEFAULT_NFX, enabled: false }],
   ] as const)('%s: never asks for kind 38504, an `n` or an `a`', async (_name, nfx) => {
     const creator = new kit.TestSigner();
-    r = await rig({
-      identity: new SignerIdentity(creator),
-      ...(nfx === undefined ? {} : { nfx }),
-    });
+    r = await rig({ identity: new SignerIdentity(creator), nfx });
     await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
     await storeNfx(r.pool, creator, 'lagrange-points', 1);
     const query = vi.spyOn(r.pool, 'query');
@@ -127,9 +126,20 @@ describe('dormant until Settings.nfx is enabled (contracts v10)', () => {
     }
   });
 
-  it('switching NFX on and off takes effect on the next read', async () => {
+  it("absent (a fresh install): the default, NFX on, on the test network's public relays (ADR 0020 2026-11-08)", async () => {
     const creator = new kit.TestSigner();
     r = await rig({ identity: new SignerIdentity(creator) });
+    await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
+    await storeNfx(r.pool, creator, 'lagrange-points', 1);
+    const a = r.host.adapter;
+    expect((await a.settings()).nfx).toEqual(DEFAULT_NFX);
+    const kinds = (await a.feed({ source: 'tags', tags: ['space'] })).items.map((v) => v.kind);
+    expect(kinds).toEqual([38504, 21]);
+  });
+
+  it('switching NFX on and off takes effect on the next read', async () => {
+    const creator = new kit.TestSigner();
+    r = await rig({ identity: new SignerIdentity(creator), nfx: { ...NFX_ON, enabled: false } });
     await seedVideos(kit, r.pool, creator, [fixture('hohmann')]);
     await storeNfx(r.pool, creator, 'lagrange-points', 1);
     const a = r.host.adapter;

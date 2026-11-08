@@ -9,6 +9,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Changed
 
+- **NFX is on by default, on the test network's public relays** (ADR 0020's 2026-11-08
+  amendment): `wss://relay.nutflix.xyz` to find videos and `https://iroh.nutflix.xyz/` to reach
+  seeders behind home routers, both run by SovTech. Free videos show up with no setup. Everything
+  stays yours to change in Settings › NFX network (switch it off, replace or remove either relay);
+  a saved NFX setting is never overwritten, and one this version cannot read turns NFX off. An
+  install that never touched NFX gets the new default when it updates. Both relays see the app's
+  IP address (README, SECURITY.md).
 - **A fourth default relay, `relay.ditto.pub`** (ADR 0009's 2026-11-07 amendment). Search is a
   NIP-50 query and none of the three old defaults answers it, so on a first run Search found
   nothing; this relay is free, open and does. It also means one more relay operator sees a fresh

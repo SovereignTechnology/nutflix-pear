@@ -54,4 +54,6 @@ write-restricted, empty, or a bridge relay for another network.)
   operators, and each sees its IP address and the filters it sends. The decision above stands: the
   app makes no claim of private first-run browsing, and `README.md` and `SECURITY.md` name all
   four.
-- It does not reverse the rest of this ADR: no SovTech relay, no empty start.
+- It does not reverse the rest of this ADR: no SovTech relay among these general Nostr relays, no
+  empty start. (NFX's own two relays, which SovTech runs, are a separate list: ADR 0020's
+  2026-11-08 amendment.)
