@@ -339,3 +339,20 @@ need a signer and a follow. A viewer had no way to see what the network holds.
   time cursor, taken from the merged page. It fails only when both relay sets do.
 - **A Home tab, "Network", shown only while `Settings.nfx.enabled`.** Off, the tab is hidden and a
   route to it lands on Trending. The IPC guard accepts the new source.
+
+## Amendment 2026-11-08: NFX on by default, on the test network's public relays
+
+Decided by the maintainer, 2026-11-08, once `nfx:testnet:1` had public relays (both run by SovTech,
+on alpha): the scoped relay `wss://relay.nutflix.xyz` (nfx-node, NIP-50 with titles) and the iroh
+relay `https://iroh.nutflix.xyz/`. Until now NFX was off and empty, so a new user saw no free video
+and had to find and type both relays.
+- **`DEFAULT_NFX`** (`host/settings/settings.ts`): `enabled: true`, `nfx:testnet:1`, those two
+  relays. It is a default, not a constant: Settings › NFX network switches it off and edits both
+  lists, and a stored `nfx` always wins. No contract changes (`Settings.nfx` stays optional).
+- **An install that never touched NFX** (no stored `nfx`) gets the default, so an upgrade turns NFX
+  on there. One whose stored `nfx` this build cannot read gets the defaults switched **off**: an
+  unreadable value never becomes "on".
+- **The cost:** two more operators, SovTech's, see a running app's IP address: the scoped relay
+  what it lists and plays, the iroh relay its node id and traffic volume (never content: end to
+  end encrypted). Seeding stays off by default, so a fresh install announces nothing.
+

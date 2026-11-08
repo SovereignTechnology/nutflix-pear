@@ -245,7 +245,9 @@ describe('seeder over the worker; settings side effects', () => {
     await r.ready();
     const a = r.host.adapter;
     expect(r.worker().calls('init')[0]).toMatchObject({
-      nfx: { enabled: false, irohRelays: [] },
+      // ADR 0020 2026-11-08: a fresh install (no stored settings) starts with NFX on, on the test
+      // network's public iroh relay.
+      nfx: { enabled: true, irohRelays: ['https://iroh.nutflix.xyz/'] },
       // Slice 5e-3: no helper unless the environment names one (the entry reads it).
       irohHelper: null,
     });

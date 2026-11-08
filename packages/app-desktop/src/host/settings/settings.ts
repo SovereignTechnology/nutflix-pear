@@ -5,7 +5,7 @@
  */
 import { join } from 'node:path';
 
-import type { MintUrl, RelayUrl, Sats, Settings } from '@sovit/core';
+import type { IrohRelayUrl, MintUrl, NfxSettings, RelayUrl, Sats, Settings } from '@sovit/core';
 
 import { isAbsolutePath, obj } from '../../ipc/guards.js';
 import { validateArgs } from '../../ipc/guards.js';
@@ -19,9 +19,23 @@ const FILE_V = 1 as const;
 /**
  * First-run settings. Decisions (docs/archive/lanes/L6-B.md; ADR 0009): four public relays so a
  * first run shows something; no default mint (the user chooses who holds their money);
- * seeding OFF until the user opts in (it spends disk and upload bandwidth); a 30 s prefetch
- * ("buffer = money"); theme follows the system.
+ * seeding OFF until the user opts in (it spends disk and upload bandwidth); NFX on, on the test
+ * network's public relays (ADR 0020, 2026-11-08: `DEFAULT_NFX`); a 30 s prefetch ("buffer =
+ * money"); theme follows the system.
  */
+/**
+ * ADR 0020's 2026-11-08 amendment (the maintainer): NFX is on from the first run, on the test
+ * network's public relays, which SovTech runs: wss://relay.nutflix.xyz (the scoped relay: manifests
+ * and beacons) and https://iroh.nutflix.xyz/ (the iroh relay, for peers behind NAT). Nothing is fixed:
+ * Settings › NFX network switches it off, and either list can be emptied or replaced.
+ */
+export const DEFAULT_NFX: NfxSettings = Object.freeze({
+  enabled: true,
+  network: 'nfx:testnet:1',
+  scopedRelays: Object.freeze(['wss://relay.nutflix.xyz' as RelayUrl]),
+  irohRelays: Object.freeze(['https://iroh.nutflix.xyz/' as IrohRelayUrl]),
+});
+
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
   relays: Object.freeze([
     Object.freeze({ url: 'wss://relay.damus.io' as RelayUrl, read: true, write: true }),
@@ -39,6 +53,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   // Security review F18: only hash-addressed images until the user opts in.
   loadRemoteImages: false,
   theme: 'system' as const,
+  nfx: DEFAULT_NFX,
 });
 
 const SETTINGS_KEYS: readonly (keyof Settings)[] = [
@@ -62,8 +77,9 @@ export function isSettingsPatch(patch: unknown): patch is Partial<Settings> {
  * A stored settings object → `Settings`, or `null`. Unknown keys (e.g. written by a newer
  * build) are ignored; missing keys take their defaults; every present key must be valid —
  * except `nfx` (contracts v10), which is checked on its own: an invalid one (say, a network a
- * newer build added, or a bad v12 `irohRelays`) is dropped, so NFX is off, and leaves the rest of
- * the file standing. A v10/v11 `nfx` (no `irohRelays`) is still valid.
+ * newer build added, or a bad v12 `irohRelays`) is replaced by the defaults switched OFF, never by
+ * the default ON (`DEFAULT_NFX`), and leaves the rest of the file standing. An absent one is the
+ * default: on (ADR 0020's 2026-11-08 amendment). A v10/v11 `nfx` (no `irohRelays`) is still valid.
  */
 export function parseStoredSettings(raw: unknown): StoredSettings | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
@@ -77,7 +93,8 @@ export function parseStoredSettings(raw: unknown): StoredSettings | null {
   const { nfx, ...rest } = picked;
   if (!isSettingsPatch(rest)) return null;
   const nfxPatch: unknown = nfx === undefined ? {} : { nfx };
-  const kept = isSettingsPatch(nfxPatch) ? nfxPatch : {};
+  // A stored `nfx` this build cannot read never becomes "on": it falls back to the defaults, off.
+  const kept = isSettingsPatch(nfxPatch) ? nfxPatch : { nfx: { ...DEFAULT_NFX, enabled: false } };
   return { v: FILE_V, settings: { ...DEFAULT_SETTINGS, ...rest, ...kept } };
 }
 
