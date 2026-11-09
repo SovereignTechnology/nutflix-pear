@@ -139,6 +139,20 @@ describe('the bundle deny list', () => {
         rule.what,
       ).toBe(true);
   });
+
+  it('refuses a denied package nested under an allowed one', () => {
+    const nested = [
+      '/r/node_modules/foo/node_modules/sodium-native/index.js',
+      '/r/node_modules/nostr-tools/node_modules/@cashu/cashu-ts/lib/index.js',
+      '/r/node_modules/@scope/pkg/node_modules/hyperswarm/index.js',
+    ];
+    const out = deniedInputs(nested);
+    expect(out).toHaveLength(nested.length);
+    expect(out[0]).toContain('(sodium)');
+    expect(out[1]).toContain('(Cashu)');
+    expect(out[2]).toContain('(Hypercore)');
+    expect(npmPackages(nested)).toEqual(['@cashu/cashu-ts', 'hyperswarm', 'sodium-native']);
+  });
 });
 
 describe('the tree hash and source.json', () => {

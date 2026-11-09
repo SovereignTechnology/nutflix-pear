@@ -120,13 +120,19 @@ export function deniedInputs(inputs: readonly string[]): string[] {
   return out;
 }
 
-/** The npm packages among `inputs`, by name, sorted: what the page is made of, for the log. */
+/**
+ * The npm packages among `inputs`, by name, sorted: what the page is made of, for the log.
+ * A nested copy (`…/node_modules/a/node_modules/b/…`) is `b`: the name after the LAST
+ * `/node_modules/` is the package the file belongs to.
+ */
 export function npmPackages(inputs: readonly string[]): string[] {
   const names = new Set<string>();
+  const marker = '/node_modules/';
   for (const raw of inputs) {
-    const m = /\/node_modules\/((?:@[^/]+\/)?[^/]+)\/(?!.*\/node_modules\/)/.exec(
-      raw.split(sep).join('/'),
-    );
+    const p = raw.split(sep).join('/');
+    const at = p.lastIndexOf(marker);
+    if (at < 0) continue;
+    const m = /^((?:@[^/]+\/)?[^/]+)\//.exec(p.slice(at + marker.length));
     if (m?.[1] !== undefined) names.add(m[1]);
   }
   return [...names].sort();
