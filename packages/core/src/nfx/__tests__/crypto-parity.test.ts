@@ -127,23 +127,28 @@ describe('verifyHyperdhtBind (@noble/curves) against libsodium', () => {
     }
   });
 
-  it('answers as libsodium for every single-bit flip of the signature and of the key', () => {
-    for (const k of keys.slice(0, 2)) {
-      const sig = libsodiumSign(k, MSG);
-      for (let bit = 0; bit < 512; bit++) {
-        const bad = sig.slice();
-        bad[bit >> 3] = (bad[bit >> 3] ?? 0) ^ (1 << (bit & 7));
-        expect(ours(bad, k.pk), `signature bit ${String(bit)}`).toBe(
-          libsodiumVerify(bad, MSG, k.pk),
-        );
+  // 1,536 verifications in pure JS: 3.5 to 7 s on a CI runner under coverage, past vitest's 5 s.
+  it(
+    'answers as libsodium for every single-bit flip of the signature and of the key',
+    { timeout: 60_000 },
+    () => {
+      for (const k of keys.slice(0, 2)) {
+        const sig = libsodiumSign(k, MSG);
+        for (let bit = 0; bit < 512; bit++) {
+          const bad = sig.slice();
+          bad[bit >> 3] = (bad[bit >> 3] ?? 0) ^ (1 << (bit & 7));
+          expect(ours(bad, k.pk), `signature bit ${String(bit)}`).toBe(
+            libsodiumVerify(bad, MSG, k.pk),
+          );
+        }
+        for (let bit = 0; bit < 256; bit++) {
+          const bad = k.pk.slice();
+          bad[bit >> 3] = (bad[bit >> 3] ?? 0) ^ (1 << (bit & 7));
+          expect(ours(sig, bad), `key bit ${String(bit)}`).toBe(libsodiumVerify(sig, MSG, bad));
+        }
       }
-      for (let bit = 0; bit < 256; bit++) {
-        const bad = k.pk.slice();
-        bad[bit >> 3] = (bad[bit >> 3] ?? 0) ^ (1 << (bit & 7));
-        expect(ours(sig, bad), `key bit ${String(bit)}`).toBe(libsodiumVerify(sig, MSG, bad));
-      }
-    }
-  });
+    },
+  );
 
   it('refuses S at or past L (a malleable twin), as libsodium does', () => {
     for (const k of keys) {
