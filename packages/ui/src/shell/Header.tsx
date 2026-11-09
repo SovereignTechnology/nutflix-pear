@@ -8,8 +8,8 @@
  */
 import { useEffect, useState, type ReactElement, type SyntheticEvent } from 'react';
 import type { Sats } from '@sovit/core';
-import { Avatar, Button, IconButton, WalletChip, shortPubkey } from '@sovit/ui';
-import type { Route } from '@sovit/ui';
+import { Avatar, Button, IconButton, shortPubkey } from '../components/index.js';
+import { WalletChip, type Route } from '../screens/index.js';
 import type { Identity } from './hooks.js';
 
 export interface HeaderProps {
@@ -24,6 +24,8 @@ export interface HeaderProps {
   readonly balance: Sats | undefined;
   /** sats/min of the session that is paying now; 0 = none. */
   readonly ratePerMin: number;
+  /** ADR 0022: offer "Connect signer" while signed out. Default: yes (the desktop app). */
+  readonly signIn?: boolean | undefined;
   /** ADR 0013: the signer actions, when the host offers the flow. */
   readonly signer?:
     | {
@@ -141,7 +143,7 @@ export function Header(props: HeaderProps): ReactElement {
               </>
             ) : null}
           </>
-        ) : identity.status === 'signed-out' ? (
+        ) : identity.status === 'signed-out' && props.signIn !== false ? (
           <Button
             variant="secondary"
             size="sm"

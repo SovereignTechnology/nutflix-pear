@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { mocks } from '@sovit/core';
-import type { Route } from '@sovit/ui';
+import type { Route } from '../../screens/index.js';
 import { MAX_HISTORY, Router, sameRoute } from '../router.js';
 
 const V1 = mocks.VIDEOS[0]!.id;

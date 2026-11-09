@@ -20,7 +20,7 @@
  * Framework-free: React code subscribes with `subscribe()` and reads `snapshot()`.
  */
 import type { NetworkAdapter, NostrEventId, PlaySession, Unsubscribe } from '@sovit/core';
-import type { Route, WatchHandoff } from '@sovit/ui';
+import type { Route, WatchHandoff } from '../screens/index.js';
 
 type Owner =
   | { readonly kind: 'screen'; readonly key: number }

@@ -4,10 +4,10 @@
  * tests build them around `MockNetworkAdapter`.
  */
 import type { NetworkAdapter } from '@sovit/core';
-import type { Route } from '@sovit/ui';
+import type { Route } from '../screens/index.js';
 import { PlaybackCoordinator } from './coordinator.js';
 import { Router } from './router.js';
-import { connectRouter, pauseScreenMedia } from './App.js';
+import { connectRouter, pauseScreenMedia } from './Shell.js';
 
 export interface ShellModel {
   /** The coordinator-wrapped adapter every screen gets (stable identity). */

@@ -12,8 +12,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { mocks } from '@sovit/core';
 import type { NostrEventId } from '@sovit/core';
-import type { FfmpegStatus, Route } from '@sovit/ui';
-import { Shell } from '../App.js';
+import type { FfmpegStatus, Route } from '../../screens/index.js';
+import { Shell } from '../Shell.js';
 import { createShellModel, type ShellModel } from '../model.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

@@ -7,7 +7,8 @@
  *                                                   workspace modules), `electron` external
  *   static/index.html      → dist/renderer/index.html
  *   @sovit/ui/ui.css       → dist/renderer/ui.css    copied, linked with <link rel=stylesheet>
- *   src/renderer/shell.css → dist/renderer/shell.css (nothing is injected: CSP style-src 'self')
+ *   @sovit/ui/shell.css    → dist/renderer/shell.css (nothing is injected: CSP style-src 'self';
+ *                                                   the shell moved into @sovit/ui, ADR 0022)
  *
  * Those four files are exactly `APP_FILES` in src/main/app-protocol.ts — all the `app:`
  * protocol serves at `app://nutflix`. ADR 0013 adds main's trusted prompt window, served at its
@@ -170,15 +171,17 @@ async function bundlePromptPreload(): Promise<void> {
 async function copyStatic(): Promise<void> {
   const require = createRequire(import.meta.url);
   let uiCss: string;
+  let shellCss: string;
   try {
     uiCss = require.resolve('@sovit/ui/ui.css');
+    shellCss = require.resolve('@sovit/ui/shell.css');
   } catch {
-    fail('@sovit/ui/ui.css not found — run `npm run -w packages/ui build:css` first');
+    fail('@sovit/ui/ui.css or shell.css not found — run `npm run -w packages/ui build:css` first');
   }
   await mkdir(rendererOut, { recursive: true });
   await copyFile(join(pkg, 'static', 'index.html'), join(rendererOut, 'index.html'));
   await copyFile(uiCss, join(rendererOut, 'ui.css'));
-  await copyFile(join(pkg, 'src', 'renderer', 'shell.css'), join(rendererOut, 'shell.css'));
+  await copyFile(shellCss, join(rendererOut, 'shell.css'));
   await mkdir(promptOut, { recursive: true });
   await copyFile(join(pkg, 'static', 'prompt.html'), join(promptOut, 'prompt.html'));
   await copyFile(

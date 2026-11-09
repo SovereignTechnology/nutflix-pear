@@ -76,6 +76,13 @@ export interface HomeProps extends ScreenProps {
    */
   readonly showNetwork?: boolean | undefined;
   /**
+   * ADR 0022: the feeds this shell offers, shown in `HOME_TABS` order. Absent: all of them (the
+   * desktop app). A route asking for a feed not offered (and a signed-out visitor) lands on the
+   * first public feed offered, Trending, then Network, else on the first feed that is; "Explore
+   * trending" is offered only with Trending.
+   */
+  readonly tabs?: readonly HomeTab[] | undefined;
+  /**
    * `Settings.hoverPreview`, resolved by the shell (default on for desktop, off for web —
    * build-plan §6.1). When on, hovering/focusing a card shows the preview affordance.
    */
@@ -217,6 +224,7 @@ export function Home({
   miniPlayer,
   tab,
   showNetwork = false,
+  tabs,
   hoverPreview = false,
   followedTags,
   now,
@@ -230,7 +238,19 @@ export function Home({
   followedTagsRef.current = followedTags;
 
   // ---- tab -------------------------------------------------------------------------
-  const [activeTab, setActiveTab] = useState<HomeTab>(tab ?? 'subscriptions');
+  // ADR 0022: the feeds this shell offers; the Network feed only while NFX is on, too.
+  const offered = (t: HomeTab): boolean =>
+    (tabs === undefined || tabs.includes(t)) && (t !== 'network' || showNetwork);
+  const visibleTabs = HOME_TABS.filter((t) => offered(t.id));
+  /** Where a feed that is not offered (or a signed-out visitor) lands. */
+  const fallbackTab: HomeTab = offered('trending')
+    ? 'trending'
+    : offered('network')
+      ? 'network'
+      : (visibleTabs[0]?.id ?? 'trending');
+  const [activeTab, setActiveTab] = useState<HomeTab>(
+    tab ?? (offered('subscriptions') ? 'subscriptions' : fallbackTab),
+  );
   const userChoseTab = useRef(tab !== undefined);
   useEffect(() => {
     if (tab !== undefined) {
@@ -238,11 +258,11 @@ export function Home({
       setActiveTab(tab);
     }
   }, [tab]);
-  // The Network feed is offered only while NFX is on: otherwise its tab is hidden, so land elsewhere.
+  // A feed not offered (the Network feed while NFX is off) has no tab, so land elsewhere.
+  const activeOffered = offered(activeTab);
   useEffect(() => {
-    if (activeTab === 'network' && !showNetwork) setActiveTab('trending');
-  }, [activeTab, showNetwork]);
-  const visibleTabs = HOME_TABS.filter((t) => t.id !== 'network' || showNetwork);
+    if (!activeOffered) setActiveTab(fallbackTab);
+  }, [activeOffered, fallbackTab]);
 
   const selectTab = useCallback(
     (next: HomeTab): void => {
@@ -252,6 +272,9 @@ export function Home({
     },
     [navigate],
   );
+
+  const fallbackRef = useRef(fallbackTab);
+  fallbackRef.current = fallbackTab;
 
   // ---- identity --------------------------------------------------------------------
   const [me, setMe] = useState<Me>('pending');
@@ -265,7 +288,7 @@ export function Home({
         if (cancelled) return;
         setMe(pk);
         // A signed-out visitor lands on Trending unless the route asked for a feed.
-        if (pk === null && !userChoseTab.current) setActiveTab('trending');
+        if (pk === null && !userChoseTab.current) setActiveTab(fallbackRef.current);
       },
       (err: unknown) => {
         if (!cancelled) setIdentityError(err);
@@ -609,9 +632,12 @@ export function Home({
   const goSettings = (): void => {
     navigate({ name: 'settings' });
   };
-  const goTrending = (): void => {
-    selectTab('trending');
-  };
+  /** "Explore trending", offered only where Trending is (ADR 0022). */
+  const goTrending = offered('trending')
+    ? (): void => {
+        selectTab('trending');
+      }
+    : undefined;
 
   const skeletonGrid = (count: number): ReactElement => (
     <ul className="nf-home__grid" aria-hidden="true">
