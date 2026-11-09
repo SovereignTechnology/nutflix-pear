@@ -1,2 +1,2 @@
-// @sovit/app-web — scaffold. Implementation lands in Stage 1 (docs/archive/execution-plan.md §2).
+// @sovit/app-web: the web client for NFX videos (ADR 0022). Being built; nothing ships yet.
 export const PACKAGE = '@sovit/app-web' as const;

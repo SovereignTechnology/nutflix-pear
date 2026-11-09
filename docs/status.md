@@ -50,7 +50,8 @@ In no order of priority, and not scheduled:
 
 - The problems listed under the README's known limitations, starting with the playback gate.
 - Windows, macOS and arm64 builds, and a way to update the app.
-- Removing the empty `packages/app-web` scaffold (see [ADR 0019](decisions/0019-scope-pear-desktop-only.md)).
+- The web client for NFX videos at web.nutflix.xyz, in `packages/app-web` (see
+  [ADR 0022](decisions/0022-a-web-client-for-nfx.md)).
 - Open issue: [free (zero-price) videos](https://github.com/SovereignTechnology/nutflix-pear/issues/15).
 
 ## Elsewhere

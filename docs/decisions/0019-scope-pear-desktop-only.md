@@ -5,6 +5,10 @@ Date: 2026-10-02
 ## Status
 
 Accepted. Amends ADR 0002 and ADR 0003, which describe a web portal as part of the design.
+Scope amended by [ADR 0020](0020-speak-nfx.md) (the app speaks NFX). The web-portal ruling is
+reversed in part by [ADR 0022](0022-a-web-client-for-nfx.md) (2026-11-09): an NFX-only web client
+lives in `packages/app-web`. The portal described here, with Hypercore in the page and a gateway,
+stays out.
 
 ## Context
 
@@ -34,10 +38,12 @@ the same change, because the TypeScript project references and a few tests enume
 - ADR 0002's web shell and ADR 0003's browser-Hypercore result (spike A8) stand as research, but
   nothing is built on them.
 - Threat T13 (malicious portal JavaScript) and invariant 8 in `SECURITY.md` describe a browser shell.
-  They are kept for a future one and annotated as not applicable to 0.1.0.
+  They are kept for a future one and annotated as not applicable to 0.1.0. *(2026-11-09, ADR 0022:
+  both apply again, to the NFX web client.)*
 - The web-only tooling (`scripts/reproducible-web-build.sh`, `scripts/csp-sri.mjs`) has no shipping
-  target in this repository.
+  target in this repository. *(2026-11-09, ADR 0022: the NFX web client is one.)*
 - Numbers 0006 and 0008 are used by the nfx repository and are not used here. This is why the
   sequence skips them.
 - Follow-up, not done by this decision: delete `packages/app-web` and the web-only tooling. That is
   a code change that also touches the TypeScript references and the tests that enumerate packages.
+  *(Withdrawn 2026-11-09 by ADR 0022: `packages/app-web` holds the NFX web client.)*

@@ -111,8 +111,14 @@ original build plan (`docs/plan/build-plan.md`, now a historical document) and i
 
 Two rows describe the original plan more than the released app:
 
-- **T13** is about a web portal. No web shell ships in 0.1.0 (`packages/app-web` is an empty
-  scaffold), so the row is kept for a future one.
+- **T13** is about a web portal. No web shell ships in 0.1.0, and the row applies again to the
+  NFX web client being built in `packages/app-web` for web.nutflix.xyz
+  ([ADR 0022](docs/decisions/0022-a-web-client-for-nfx.md)). Whoever serves that page can change
+  it. The controls are the row's: open source with a link to the exact source in the page, SRI on
+  every script and on the wasm, a CSP with nothing inline, a reproducible build and its hash in a
+  signed Nostr event, and the page says that a browser cannot fully protect against this. The
+  client holds no key and no money in its first version, so the loss is the web session: what it
+  shows and plays, and the viewer's IP address.
 - **T16** now works through ADR 0015: an image is shown only if it matches a hash its publisher
   signed. If the user turns on remote images, any `https` image loads without that check.
 
@@ -140,7 +146,10 @@ Specified in `docs/plan/build-plan.md` §1–§3 and enforced by the adversary t
 8. **No browser persistence of proofs or keys.** The web shell holds NIP-60 state in memory
    only.
 
-Invariant 8 is about a browser shell, which does not ship in 0.1.0; it applies to any future one.
+Invariant 8 applies to the NFX web client (ADR 0022), which is not released yet. Its first version
+has no wallet and no signer, so it holds no proof and no key at all. Browser storage holds its
+settings and nothing else; NIP-60 state, when a later version has a wallet, stays in memory; and
+with NIP-07 sign-in the key stays in the browser extension.
 
 ## Locked directories
 

@@ -2,7 +2,7 @@
   "name": "@sovit/app-web",
   "version": "0.0.0",
   "private": true,
-  "description": "Static web shell: NetworkAdapter over WS to gateway, in-page Hypercore, service worker player, NIP-07/46 signer",
+  "description": "Web client for NFX videos (ADR 0022): the @sovit/ui screens, NFX over ordinary Nostr relays, video over WebRTC",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "./dist/index.js",

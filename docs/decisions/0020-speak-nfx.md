@@ -10,7 +10,9 @@ Amended 2026-10-29 by [ADR 0021](0021-speak-iroh-through-a-helper.md): the app a
 (NFX-06), through a thin helper process, because nfx will not speak HyperDHT. Amended 2026-10-30
 (Phase 1 slice 4a): the identity change is contracts version 9; a manifest links back to its legacy
 event with an `e` tag; the beacon publisher and its seeder key live in the host. Amended 2026-10-31
-(Phase 1 slice 4b): how NFX videos are listed, below.
+(Phase 1 slice 4b): how NFX videos are listed, below. Amended 2026-11-09 by
+[ADR 0022](0022-a-web-client-for-nfx.md): the web-portal ruling this record kept from ADR 0019 no
+longer covers an NFX-only web client, which `packages/app-web` now holds.
 
 ## Context
 
@@ -46,7 +48,9 @@ ADR 0019 kept this repository to the Hypercore stack and left the multi-network 
   the free path never undercuts a paid legacy video. Paid NFX follows once NFX-07 is frozen and
   nfx's M2.1 lands, in this repository's locked money directories with a security stage of its
   own; a creator share on NFX follows nfx's ADR 0102 after that.
-- ADR 0019 still holds otherwise: Pear/desktop only, no web portal.
+- ADR 0019 still holds otherwise: Pear/desktop only, no web portal. *(Amended 2026-11-09,
+  [ADR 0022](0022-a-web-client-for-nfx.md): except an NFX-only web client in `packages/app-web`,
+  which runs nfx's web player as a library. The desktop app stays the independent implementation.)*
 
 ## Consequences
 
