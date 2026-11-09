@@ -41,6 +41,7 @@ import {
   isRelayUrl,
   isSats,
   isSeederStatusWire,
+  isTrackers,
   isUnixSeconds,
   isVideoManifest,
   literal,
@@ -171,13 +172,14 @@ const isSettings = obj(
     // v6 / issue #2: `amountSats` (1 … AUTO_TOP_UP_MAX_SATS) may be present.
     autoTopUp: obj({ belowSats: isSats, fromMint: isMintUrl }, { amountSats: int(1, 10_000) }),
     // Contracts v10/v12: the NFX network, on by default since ADR 0020's 2026-11-08 amendment.
+    // v14 (ADR 0022): `trackers` may be present; neither side writes it by default.
     nfx: obj(
       {
         enabled: bool,
         network: oneOf(['nfx:testnet:1'] as const),
         scopedRelays: arrayOf(isRelayUrl, 8),
       },
-      { irohRelays: isIrohRelays },
+      { irohRelays: isIrohRelays, trackers: isTrackers },
     ),
   },
 );

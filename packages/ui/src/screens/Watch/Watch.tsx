@@ -108,6 +108,7 @@ import { NutzapSheet, ReportSheet, ShortcutsSheet } from './WatchSheets.js';
 import { PeerOverlay, PricePanel, StageNote, UpNextOverlay } from './WatchParts.js';
 import { WatchRelated, type RelatedList } from './WatchRelated.js';
 import { avatarSrc, thumbnailSrc } from '../shared/image.js';
+import { playSourceUrl } from '../shared/play-source.js';
 
 export interface WatchProps extends ScreenProps {
   /** The video to watch (`Route { name: 'watch', videoId }`). A change reloads the screen. */
@@ -1597,7 +1598,7 @@ export function Watch({
     <video
       ref={attachVideo}
       className="nf-watch__video"
-      src={binding.session.source.kind === 'mediasource' ? undefined : binding.session.source.url}
+      src={playSourceUrl(binding.session.source)}
       poster={data.thumbSrc}
       playsInline
       preload="metadata"

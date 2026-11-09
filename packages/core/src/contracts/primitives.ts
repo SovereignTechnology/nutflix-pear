@@ -50,6 +50,14 @@ export type RelayUrl = Branded<string, 'RelayUrl'>;
  */
 export type IrohRelayUrl = Branded<string, 'IrohRelayUrl'>;
 
+/**
+ * v14 (NFX-10 §1, ADR 0022): a WebTorrent tracker URL for the NFX browser mesh, in the form nfx's
+ * web player reduces one to: lower-case `wss://host[:port]` and the path, if any, other than a
+ * bare `/`; or `ws://` to a loopback host (`127.0.0.1`, `[::1]`, `localhost`) for a local tracker
+ * (tests). No user-info, query or fragment. Compared as strings.
+ */
+export type TrackerUrl = Branded<string, 'TrackerUrl'>;
+
 /** Satoshis. Always an integer. Never a float, never a string on the wire. */
 export type Sats = Branded<number, 'Sats'>;
 

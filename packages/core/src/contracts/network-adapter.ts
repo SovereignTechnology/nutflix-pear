@@ -10,6 +10,7 @@ import type {
   RelayUrl,
   Sats,
   Sha256Hex,
+  TrackerUrl,
   UnixSeconds,
 } from './primitives.js';
 import type { SignerStatus } from './signer.js';
@@ -20,7 +21,7 @@ import type { Wallet } from './wallet.js';
  *
  * `@sovit/ui` imports nothing else from core at runtime. Two implementations:
  *   - app-desktop: over worker IPC (preload exposes exactly these methods)
- *   - app-web: over WebSocket to a gateway + in-page Hypercore (or MSE fallback per S-B)
+ *   - app-web (ADR 0022): NFX only, over Nostr relays, with nfx's web player for playback
  * plus `MockNetworkAdapter` (fixture videos, fake sats) for screens and Storybook.
  *
  * Every method that returns Nostr-derived data returns it already signature-verified.
@@ -99,15 +100,40 @@ export interface MediaSourceLike {
 }
 
 /**
+ * v14 (ADR 0022): marker for a DOM `HTMLMediaElement` (a `<video>`), which a screen renders and
+ * hands to an `element` source. Core has no DOM lib; the web shell narrows it to the real element.
+ */
+export interface MediaElementLike {
+  readonly currentTime: number;
+  readonly paused: boolean;
+}
+
+/**
+ * v14 (ADR 0022): a source the adapter plays into a media element the screen owns, for a player
+ * that drives the element itself (the web client: nfx's player, hls.js and the WebRTC mesh).
+ */
+export interface ElementPlaySource {
+  readonly kind: 'element';
+  /**
+   * Plays the session into `el` and returns the detach, which stops feeding `el` and leaves the
+   * session open; the session's `close()` detaches too. One element at a time: attaching another
+   * detaches the first. The screen sets no `src` of its own on `el`.
+   */
+  attach(el: MediaElementLike): Unsubscribe;
+}
+
+/**
  * Spike S-B PASSED: Hypercore 11 + Hyperblobs run in-page over a WebSocket Duplex with an
  * in-memory `hypercore-storage` backend, so the web shell's primary source is
  * `service-worker` (SW answers `<video>` range requests from the in-page core). `mediasource`
- * is the A8 fallback (gateway-served sha256 segments + MSE) and stays available.
+ * is the A8 fallback (gateway-served sha256 segments + MSE) and stays available. (ADR 0022 built
+ * no in-page Hypercore: the web client plays NFX only, through `element`, v14.)
  */
 export type PlaySource =
   | { readonly kind: 'url'; readonly url: string } // desktop: hypercore-blob-server localhost range URL
   | { readonly kind: 'service-worker'; readonly url: string } // web: SW-served range URL from in-page core
-  | { readonly kind: 'mediasource'; readonly mediaSource: MediaSourceLike }; // web fallback: MSE
+  | { readonly kind: 'mediasource'; readonly mediaSource: MediaSourceLike } // web fallback: MSE
+  | ElementPlaySource; // v14, web client: the adapter's player drives the screen's element
 
 export interface PlaySession {
   readonly videoId: NostrEventId;
@@ -140,13 +166,21 @@ export interface NfxRenditionInfo {
 /**
  * v11 (ADR 0020 slice 5d): a free NFX play session. Nothing is paid, so it carries no price,
  * spend or peers, and nothing on it reaches the money plane. Switching rendition is closing it
- * and opening another.
+ * and opening another, unless the session offers `setRendition` (v14).
  */
 export interface NfxPlaySession {
   readonly videoId: NfxAddress;
+  /** The rendition playing (after a `setRendition`, the one it switched to). */
   readonly rendition: string;
   readonly renditions: readonly NfxRenditionInfo[];
   readonly source: PlaySource;
+  /**
+   * v14 (ADR 0022): switch to rendition `id` (one of `renditions`) inside this session, the
+   * element playing on; it resolves once the switch is under way and rejects `invalid-argument`
+   * for an id not listed. Absent: switching is closing this session and opening another
+   * (`playNfx(addr, id)`), as before v14.
+   */
+  setRendition?(id: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -227,6 +261,9 @@ export const MAX_NFX_SCOPED_RELAYS = 8 as const;
 /** v12: the most iroh relays (NFX-06 §1) one network may list. */
 export const MAX_NFX_IROH_RELAYS = 4 as const;
 
+/** v14: the most WebTorrent trackers (NFX-10 §1) a client uses for one network. */
+export const MAX_NFX_TRACKERS = 4 as const;
+
 /**
  * v10 (ADR 0020): taking part in an NFX network. Off unless `enabled`: no NFX query, listing,
  * seeding or beacon happens without it.
@@ -248,6 +285,13 @@ export interface NfxSettings {
    * not at all. A local setting, never taken from a beacon.
    */
   readonly irohRelays?: readonly IrohRelayUrl[];
+  /**
+   * v14 (NFX-10 §1, ADR 0022): the network's WebTorrent trackers, the signalling path of the
+   * browser mesh. `TrackerUrl`'s form; unique; at most `MAX_NFX_TRACKERS`. Absent = none. A web
+   * client also uses the trackers that seeders' beacons name, within the same limit in all. The
+   * desktop app has no browser mesh and does not use them. A stored v10 to v13 `nfx` stays valid.
+   */
+  readonly trackers?: readonly TrackerUrl[];
 }
 
 export interface Settings {

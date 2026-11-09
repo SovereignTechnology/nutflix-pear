@@ -37,13 +37,15 @@ export interface WalletMints {
 }
 
 /** The wallet's own mints and balances (read-only; used for chips and suggestions). */
-export function useWalletMints(adapter: NetworkAdapter): WalletMints {
+/** `enabled: false` (a shell without the Mints section, ADR 0022): the wallet is never asked. */
+export function useWalletMints(adapter: NetworkAdapter, enabled = true): WalletMints {
   const [state, setState] = useState<WalletMints>({
     status: 'loading',
     mints: [],
     balances: new Map(),
   });
   useEffect(() => {
+    if (!enabled) return undefined;
     let cancelled = false;
     Promise.all([adapter.wallet.mints(), adapter.wallet.balances()]).then(
       ([mints, balances]) => {
@@ -56,7 +58,7 @@ export function useWalletMints(adapter: NetworkAdapter): WalletMints {
     return () => {
       cancelled = true;
     };
-  }, [adapter]);
+  }, [adapter, enabled]);
   return state;
 }
 

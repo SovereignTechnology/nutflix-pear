@@ -97,5 +97,11 @@
  *  13 — 2026-11-07 (ADR 0020, the Network feed). Additive: `FeedQuery.source` gains `network`, every free
  *       video on the chosen NFX network, newest first (a catalogue with no NFX enabled returns an empty
  *       page). A consumer that switches on `source` must handle it; one that passes it through compiles.
+ *  14 — 2026-11-09 (ADR 0022, the NFX web client). Additive: `PlaySource` gains `ElementPlaySource`
+ *       (`kind: 'element'`, `attach(el: MediaElementLike): Unsubscribe`), for a player that drives a
+ *       media element the screen owns; `NfxPlaySession.setRendition?(id)`, a switch inside the
+ *       session; `NfxSettings.trackers?` (NFX-10 §1), `TrackerUrl` and `MAX_NFX_TRACKERS` (4). A
+ *       consumer that reads `source.url` narrows on `kind` first. A stored v10 to v13 `nfx` stays
+ *       valid.
  */
-export const CONTRACTS_VERSION = 13 as const;
+export const CONTRACTS_VERSION = 14 as const;
