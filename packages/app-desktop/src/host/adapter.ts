@@ -84,7 +84,6 @@ import type { CatalogSource, SearchQuery } from './catalog/catalog.js';
 import { NostrCatalog } from './catalog/catalog.js';
 import type { FixtureCatalog } from './catalog/fixture-catalog.js';
 import { MergedCatalog } from './catalog/merged-catalog.js';
-import { NfxCatalog } from './catalog/nfx-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
 import { NfxBeacons } from './nfx/beacons.js';
@@ -165,6 +164,12 @@ export interface DesktopAdapterOptions {
   readonly nfxDir?: string;
   /** TESTS ONLY: how long a play waits for a live beacon (`NFX_BEACON_WAIT_MS`). */
   readonly nfxBeaconWaitMs?: number;
+  /**
+   * ADR 0022: the NIP-11 request, so NFX search sends `search` only to relays that list NIP-50
+   * and reads the others with a plain query matched here. Absent (tests with a fake pool, offline
+   * dev): every relay is sent `search`, as before.
+   */
+  readonly relayInfo?: nostr.RelayInfoFetch;
 }
 
 /** Per page in the in-memory paged lists (history). */
@@ -203,6 +208,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly nip71Catalog: NostrCatalog;
   /** Contracts v10: the merged catalogue for the current `Settings.nfx`, rebuilt when it changes. */
   private merged: { readonly nfx: NfxSettings; readonly catalog: CatalogSource } | null = null;
+  /** ADR 0022: which relays answer NIP-50, from NIP-11, cached per relay (with `relayInfo`). */
+  private readonly relaySearch: nostr.RelaySearchSupport | null;
   private readonly seederListeners = new Set<(s: SeederStatus) => void>();
   /** uploadId → the owner (webContents) that started it. */
   private readonly uploads = new Map<string, { readonly owner: number }>();
@@ -239,6 +246,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     this.now = opts.now ?? nostr.nowSeconds;
     this.wallet = opts.wallet.wallet;
     this.nip71Catalog = new NostrCatalog(() => this.client());
+    this.relaySearch =
+      opts.relayInfo === undefined ? null : new nostr.RelaySearchSupport(opts.relayInfo);
     const nfxDir = opts.nfxDir;
     this.seeded = nfxDir === undefined ? null : new SeededVideos(nfxDir, this.log);
     this.beacons =
@@ -301,10 +310,11 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     const nfx = this.o.settings.get().nfx;
     if (nfx?.enabled !== true) return this.nip71Catalog;
     if (this.merged?.nfx !== nfx) {
-      const source = new NfxCatalog(
+      const source = new nostr.NfxCatalog(
         () => this.client(),
         nfx.network,
         () => nfx.scopedRelays,
+        this.relaySearch === null ? {} : { searchSupport: this.relaySearch.supports },
       );
       const catalog = new MergedCatalog(this.nip71Catalog, source, this.log.child('nfx-catalog'));
       this.merged = { nfx, catalog };

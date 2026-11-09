@@ -24,6 +24,7 @@ import { WORKER_V } from '../ipc/worker-protocol.js';
 import { hostError } from './errors.js';
 import { DesktopNetworkAdapter, nfxWorkerArgs } from './adapter.js';
 import { NFX_DIR } from './nfx/seeder-key.js';
+import { hostRelayInfoFetch } from './nfx/relay-info.js';
 import { FixtureCatalog } from './catalog/fixture-catalog.js';
 import type { HandlerTable } from './dispatch.js';
 import { handlers } from './dispatch.js';
@@ -73,6 +74,11 @@ export interface HostOptions {
   readonly spawn: SpawnWorker;
   /** Relay port; default `SimplePoolAdapter` (or an offline `FakeRelayPool` with fixtures). */
   readonly pool?: nostr.PoolLike;
+  /**
+   * ADR 0022: the NIP-11 request NFX search routes by. Default: `hostRelayInfoFetch` with the
+   * real pool, none with an injected or offline one.
+   */
+  readonly relayInfo?: nostr.RelayInfoFetch;
   readonly imageTransport?: ImageTransport;
   /**
    * Signer seam. Default: the desktop signer flow (ADR 0013) — `DevViewerIdentity` with
@@ -664,6 +670,13 @@ export async function createHost(o: HostOptions): Promise<Host> {
     ...(o.now === undefined ? {} : { now: o.now }),
     nfxDir: join(o.userData, NFX_DIR),
     ...(o.nfxBeaconWaitMs === undefined ? {} : { nfxBeaconWaitMs: o.nfxBeaconWaitMs }),
+    // ADR 0022: NIP-11 decides where `search` goes, on the real network only (an injected or
+    // offline pool answers no HTTP).
+    ...(o.relayInfo !== undefined
+      ? { relayInfo: o.relayInfo }
+      : o.pool === undefined && !flags.devFixtures
+        ? { relayInfo: hostRelayInfoFetch() }
+        : {}),
   });
   const host = new Host({
     adapter,

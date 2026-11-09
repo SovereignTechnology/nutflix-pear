@@ -9,7 +9,7 @@
 import { hexToBytes } from 'nostr-tools/utils';
 import sodium from 'sodium-universal';
 
-import type { NostrEvent } from '../contracts/index.js';
+import type { NfxVideo, NostrEvent, NostrFilter } from '../contracts/index.js';
 import { fail, ok, type NfxResult, type Verified } from './errors.js';
 import { KIND_BEACON, KIND_MANIFEST, MAX_CLOCK_SKEW, singleTag, verifyEvent } from './event.js';
 import { RESERVED_RENDITION_ID } from './hashlist.js';
@@ -24,6 +24,15 @@ import {
   parseU64Strict,
   utf8,
 } from './util.js';
+
+/**
+ * The beacon filter for one video (NFX-04 §5, "Live availability"): kind 20464 tagged with the
+ * video's namespace and address. Beacons are ephemeral, so this filter only ever matches a live
+ * subscription. (Moved from the desktop host, ADR 0022.)
+ */
+export function beaconFilter(video: Pick<NfxVideo, 'namespace' | 'id'>): NostrFilter {
+  return { kinds: [KIND_BEACON], '#n': [video.namespace], '#a': [video.id] };
+}
 
 /** Allowed `expiration - created_at`, in seconds (NFX-03 §1). */
 export const TTL_MIN = 60;

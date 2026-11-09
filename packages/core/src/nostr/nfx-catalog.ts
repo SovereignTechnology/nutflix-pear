@@ -6,6 +6,11 @@
  * (`nostr.nfxVideoPage`).
  *
  * Built only while `Settings.nfx` is enabled (contracts v10); off by default.
+ *
+ * Moved from the desktop host into core (ADR 0022), so the web client lists the network the same
+ * way; the client and the relays are passed in. Search goes through NIP-11 (`searchSupport`): a
+ * relay that does not list NIP-50 is never sent `search`, and is read with a plain query matched
+ * here instead (`searchNfxVideosRouted`).
  */
 import type {
   FeedQuery,
@@ -15,14 +20,44 @@ import type {
   NostrPubkey,
   Page,
   RelayUrl,
-} from '@sovit/core';
-import { nfx, nostr } from '@sovit/core';
-import { FEED_PAGE, type SearchQuery } from './catalog.js';
+  SearchFilters,
+} from '../contracts/index.js';
+import { parseATag } from '../nfx/beacon.js';
+import { Namespace } from '../nfx/namespace.js';
+import type { NostrClient } from './client.js';
+import { encodeTimeCursor } from './cursor.js';
+import { fetchSubscriptions } from './follows.js';
+import {
+  fetchNfxVideo,
+  nfxAuthorsFeed,
+  nfxTagsFeed,
+  nfxTwinsOf,
+  nfxVideoPage,
+  searchNfxVideos,
+  searchNfxVideosRouted,
+} from './nfx-feeds.js';
+
+/** Page size when the caller gives none (the desktop catalogue's and the mock's). */
+export const NFX_FEED_PAGE = 20;
+
+export interface NfxSearchQuery {
+  readonly text: string;
+  readonly cursor?: string;
+  readonly filters?: SearchFilters;
+}
+
+export interface NfxCatalogOptions {
+  /**
+   * Whether a relay answers NIP-50 search, from its NIP-11 document (`RelaySearchSupport`).
+   * Absent: every relay is sent `search`, as before ADR 0022.
+   */
+  readonly searchSupport?: ((relay: RelayUrl) => Promise<boolean>) | undefined;
+}
 
 export interface NfxSource {
   /** Subscriptions, tags and author; trending and shorts have no NFX videos. */
   feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<NfxVideo>>;
-  search(q: SearchQuery): Promise<Page<NfxVideo>>;
+  search(q: NfxSearchQuery): Promise<Page<NfxVideo>>;
   /** `null` for an address outside this source's network. */
   video(addr: NfxAddress): Promise<NfxVideo | null>;
   /**
@@ -40,23 +75,26 @@ export interface NfxSource {
 }
 
 export class NfxCatalog implements NfxSource {
-  private readonly client: () => nostr.NostrClient;
+  private readonly client: () => NostrClient;
   readonly namespace: string;
   private readonly scopedRelays: () => readonly RelayUrl[];
+  private readonly searchSupport: ((relay: RelayUrl) => Promise<boolean>) | undefined;
 
   /** Throws on a namespace NFX-01 refuses: a source never runs on one. */
   constructor(
-    client: () => nostr.NostrClient,
+    client: () => NostrClient,
     namespace: string,
     scopedRelays: () => readonly RelayUrl[],
+    opts: NfxCatalogOptions = {},
   ) {
-    const ns = nfx.Namespace.parse(namespace);
+    const ns = Namespace.parse(namespace);
     if (!ns.ok || ns.value.toString() !== namespace) {
       throw new Error('NfxCatalog: not a canonical NFX namespace');
     }
     this.client = client;
     this.namespace = namespace;
     this.scopedRelays = scopedRelays;
+    this.searchSupport = opts.searchSupport;
   }
 
   /**
@@ -80,23 +118,22 @@ export class NfxCatalog implements NfxSource {
 
   async feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<NfxVideo>> {
     const c = this.client();
-    const opts = { limit: q.limit ?? FEED_PAGE, cursor: q.cursor };
+    const opts = { limit: q.limit ?? NFX_FEED_PAGE, cursor: q.cursor };
     const page = (
       relays: readonly RelayUrl[] | undefined,
       authors: readonly NostrPubkey[],
-    ): Promise<Page<NfxVideo>> =>
-      nostr.nfxAuthorsFeed(c, this.namespace, authors, { ...opts, relays });
+    ): Promise<Page<NfxVideo>> => nfxAuthorsFeed(c, this.namespace, authors, { ...opts, relays });
     const empty = (p: Page<NfxVideo>): boolean => p.items.length === 0;
     switch (q.source) {
       case 'subscriptions': {
         if (viewer === null) return { items: [] };
-        const { pubkeys } = await nostr.fetchSubscriptions(c, viewer);
+        const { pubkeys } = await fetchSubscriptions(c, viewer);
         if (pubkeys.length === 0) return { items: [] };
         return this.publicFirst((relays) => page(relays, pubkeys), empty);
       }
       case 'tags':
         return this.publicFirst(
-          (relays) => nostr.nfxTagsFeed(c, this.namespace, q.tags ?? [], { ...opts, relays }),
+          (relays) => nfxTagsFeed(c, this.namespace, q.tags ?? [], { ...opts, relays }),
           empty,
         );
       case 'author': {
@@ -119,12 +156,12 @@ export class NfxCatalog implements NfxSource {
    * Fails only when every relay set does.
    */
   private async networkFeed(
-    c: nostr.NostrClient,
+    c: NostrClient,
     opts: { readonly limit: number; readonly cursor: string | undefined },
   ): Promise<Page<NfxVideo>> {
     const scoped = this.scopedRelays();
     const read = (relays: readonly RelayUrl[] | undefined): Promise<Page<NfxVideo>> =>
-      nostr.nfxVideoPage(c, this.namespace, {}, { ...opts, relays });
+      nfxVideoPage(c, this.namespace, {}, { ...opts, relays });
     const settled = await Promise.allSettled(
       scoped.length === 0 ? [read(undefined)] : [read(scoped), read(undefined)],
     );
@@ -140,19 +177,23 @@ export class NfxCatalog implements NfxSource {
       .sort((a, b) => b.event.created_at - a.event.created_at)
       .slice(0, opts.limit);
     const more = pages.some((p) => p.next !== undefined);
-    const next = more ? nostr.encodeTimeCursor(items.map((v) => v.event)) : undefined;
+    const next = more ? encodeTimeCursor(items.map((v) => v.event)) : undefined;
     return next === undefined ? { items } : { items, next };
   }
 
-  search(q: SearchQuery): Promise<Page<NfxVideo>> {
+  search(q: NfxSearchQuery): Promise<Page<NfxVideo>> {
     const c = this.client();
+    const supports = this.searchSupport;
     return this.publicFirst(
-      (relays) =>
-        nostr.searchNfxVideos(c, this.namespace, q.text, q.filters ?? {}, {
-          cursor: q.cursor,
-          limit: FEED_PAGE,
-          relays,
-        }),
+      (relays) => {
+        const opts = { cursor: q.cursor, limit: NFX_FEED_PAGE, relays };
+        return supports === undefined
+          ? searchNfxVideos(c, this.namespace, q.text, q.filters ?? {}, opts)
+          : searchNfxVideosRouted(c, this.namespace, q.text, q.filters ?? {}, {
+              ...opts,
+              supports,
+            });
+      },
       (p) => p.items.length === 0,
     );
   }
@@ -163,7 +204,7 @@ export class NfxCatalog implements NfxSource {
     if (legacy.length === 0) return Promise.resolve([]);
     // Not `publicFirst`: a copy only the scoped relays hold is missed by a feed whose read relays
     // list other NFX videos, and then its NIP-71 video must stay (a duplicate, never a gap).
-    return nostr.nfxTwinsOf(this.client(), this.namespace, legacy);
+    return nfxTwinsOf(this.client(), this.namespace, legacy);
   }
 
   playable(): boolean {
@@ -171,13 +212,13 @@ export class NfxCatalog implements NfxSource {
   }
 
   video(addr: NfxAddress): Promise<NfxVideo | null> {
-    const target = nfx.parseATag(addr);
+    const target = parseATag(addr);
     if (!target.ok || target.value.addr.namespace.toString() !== this.namespace) {
       return Promise.resolve(null);
     }
     const c = this.client();
     return this.publicFirst(
-      (relays) => nostr.fetchNfxVideo(c, addr, { relays }),
+      (relays) => fetchNfxVideo(c, addr, { relays }),
       (v) => v === null,
     );
   }

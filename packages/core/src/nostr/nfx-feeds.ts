@@ -121,6 +121,29 @@ export function nfxTagsFeed(
   return nfxVideoPage(client, namespace, { '#t': t }, opts);
 }
 
+/** A search's relay-side filter fields other than `search` itself. */
+function searchBase(filters: SearchFilters): NostrFilter {
+  return {
+    ...(filters.since === undefined ? {} : { since: filters.since }),
+    ...(filters.until === undefined ? {} : { until: filters.until }),
+    ...(filters.author === undefined ? {} : { authors: [filters.author] }),
+    ...(filters.tags && filters.tags.length > 0 ? { '#t': filters.tags } : {}),
+  };
+}
+
+/** A search's duration limits, which no relay filters on. */
+function withinDuration(filters: SearchFilters): (v: NfxVideo) => boolean {
+  const min = filters.minDurationSec;
+  const max = filters.maxDurationSec;
+  return (v) => {
+    if (min === undefined && max === undefined) return true;
+    if (v.durationSec === undefined) return false;
+    return (
+      (min === undefined || v.durationSec >= min) && (max === undefined || v.durationSec <= max)
+    );
+  };
+}
+
 /** NIP-50 search over a namespace's manifests, with the same filters as `searchVideos`. */
 export function searchNfxVideos(
   client: NostrClient,
@@ -131,22 +154,113 @@ export function searchNfxVideos(
 ): Promise<Page<NfxVideo>> {
   const q = text.trim();
   if (q === '') return Promise.resolve({ items: [] });
-  const base: NostrFilter = {
-    search: q,
-    ...(filters.since === undefined ? {} : { since: filters.since }),
-    ...(filters.until === undefined ? {} : { until: filters.until }),
-    ...(filters.author === undefined ? {} : { authors: [filters.author] }),
-    ...(filters.tags && filters.tags.length > 0 ? { '#t': filters.tags } : {}),
-  };
-  const min = filters.minDurationSec;
-  const max = filters.maxDurationSec;
-  return nfxVideoPage(client, namespace, base, opts, (v) => {
-    if (min === undefined && max === undefined) return true;
-    if (v.durationSec === undefined) return false;
-    return (
-      (min === undefined || v.durationSec >= min) && (max === undefined || v.durationSec <= max)
-    );
-  });
+  return nfxVideoPage(
+    client,
+    namespace,
+    { search: q, ...searchBase(filters) },
+    opts,
+    withinDuration(filters),
+  );
+}
+
+/**
+ * Whether `video` matches search `text` here, for a relay that does not search: every word of it
+ * (split on white space, case-insensitive) appears in the title, the description or a `t` tag.
+ */
+export function nfxVideoMatchesText(video: NfxVideo, text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w !== '');
+  if (words.length === 0) return false;
+  const hay = [video.title, video.description, ...video.tags].join('\n').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+/** How many manifests one page of a client-side search reads from a relay that does not search. */
+export const NFX_SCAN_PAGE = MAX_PAGE;
+
+/**
+ * Search on relays that do not answer NIP-50 (ADR 0022): a plain query for the namespace's
+ * manifests (`kinds: [38504], #n`, with the search's other filters), matched here on title,
+ * description and tags (`nfxVideoMatchesText`). `search` is never sent to them: a stock relay
+ * may refuse an unknown field, or ignore it and return whatever matches the rest. One page reads
+ * at most `NFX_SCAN_PAGE` manifests; when it found fewer matches than `limit` but read a full
+ * page, the cursor continues from the oldest manifest read, so older matches are still reached.
+ */
+export async function scanNfxVideos(
+  client: NostrClient,
+  namespace: string,
+  text: string,
+  filters: SearchFilters = {},
+  opts: NfxReadOptions = {},
+): Promise<Page<NfxVideo>> {
+  const q = text.trim();
+  if (q === '') return { items: [] };
+  const limit = clampLimit(opts.limit);
+  const applied = applyTimeCursor(
+    { ...searchBase(filters), kinds: [KIND_MANIFEST], '#n': [namespace], limit: NFX_SCAN_PAGE },
+    decodeTimeCursor(opts.cursor),
+  );
+  const read = await client.query(applied.filter, opts.relays);
+  const events = read.filter(applied.keep);
+  const inRange = withinDuration(filters);
+  const videos = (await listed(client, namespace, events, opts.relays)).filter(
+    (v) => inRange(v) && nfxVideoMatchesText(v, q),
+  );
+  const items = videos.slice(0, limit);
+  const next =
+    items.length === limit
+      ? encodeTimeCursor(items.map((v) => v.event))
+      : read.length >= NFX_SCAN_PAGE
+        ? encodeTimeCursor(events)
+        : undefined;
+  return next === undefined ? { items } : { items, next };
+}
+
+/**
+ * Search routed by what each relay supports (ADR 0022): `search` goes only to the relays whose
+ * NIP-11 document lists NIP-50 (`supports`), the others are read with `scanNfxVideos`, and the
+ * two are merged by address, the newest revision winning. It fails only when every relay set
+ * does. `opts.relays` absent means the client's read relays.
+ */
+export async function searchNfxVideosRouted(
+  client: NostrClient,
+  namespace: string,
+  text: string,
+  filters: SearchFilters,
+  opts: NfxReadOptions & { readonly supports: (relay: RelayUrl) => Promise<boolean> },
+): Promise<Page<NfxVideo>> {
+  if (text.trim() === '') return { items: [] };
+  const relays = opts.relays ?? client.readRelays;
+  if (relays.length === 0) return { items: [] };
+  const flags = await Promise.all(relays.map((r) => opts.supports(r).catch(() => false)));
+  const nip50 = relays.filter((_, i) => flags[i] === true);
+  const plain = relays.filter((_, i) => flags[i] !== true);
+  const page = { limit: opts.limit, cursor: opts.cursor };
+  const settled = await Promise.allSettled([
+    ...(nip50.length > 0
+      ? [searchNfxVideos(client, namespace, text, filters, { ...page, relays: nip50 })]
+      : []),
+    ...(plain.length > 0
+      ? [scanNfxVideos(client, namespace, text, filters, { ...page, relays: plain })]
+      : []),
+  ]);
+  const pages = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
+  const failed = settled.find((s) => s.status === 'rejected');
+  if (pages.length === 0 && failed !== undefined) throw failed.reason;
+  const newest = new Map<string, NfxVideo>();
+  for (const v of pages.flatMap((p) => p.items)) {
+    const seen = newest.get(v.id);
+    if (seen === undefined || v.event.created_at > seen.event.created_at) newest.set(v.id, v);
+  }
+  const items = [...newest.values()]
+    .sort((a, b) => b.event.created_at - a.event.created_at)
+    .slice(0, clampLimit(opts.limit));
+  const more = pages.map((p) => p.next).filter((n): n is string => n !== undefined);
+  const next =
+    more.length === 0 ? undefined : (encodeTimeCursor(items.map((v) => v.event)) ?? more[0]);
+  return next === undefined ? { items } : { items, next };
 }
 
 /** The most NIP-71 events one `nfxTwinsOf` call asks about (a page's worth). */

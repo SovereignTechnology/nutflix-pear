@@ -3,16 +3,17 @@
  * holds a live subscription until one names a source, at most one republish interval; what
  * arrived is cached for a beacon's lifetime, bounded; the Watch page opens it ahead of a play.
  */
-import type { NfxVideo, NostrEvent, NostrFilter, RelayUrl } from '@sovit/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { NfxVideo, NostrEvent, NostrFilter, RelayUrl } from '../../contracts/index.js';
+import { KIND_BEACON, beaconFilter } from '../../nfx/index.js';
 import {
   MAX_BEACONS_PER_VIDEO,
   MAX_BEACON_VIDEOS,
   NFX_BEACON_KEEP_S,
   NFX_BEACON_WAIT_MS,
   NfxBeaconWatch,
-} from '../nfx/beacon-watch.js';
+} from '../nfx-beacon-watch.js';
 
 const R1 = 'wss://scoped-1.test' as RelayUrl;
 const R2 = 'wss://scoped-2.test' as RelayUrl;
@@ -85,6 +86,39 @@ function rigged(): {
 }
 
 const any = (evs: readonly NostrEvent[]): boolean => evs.length > 0;
+
+describe('NfxBeaconWatch in core (ADR 0022)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("beaconFilter: kind 20464 with the video's namespace and address (NFX-04 §5)", () => {
+    const v = video(1);
+    expect(beaconFilter(v)).toEqual({
+      kinds: [KIND_BEACON],
+      '#n': ['nfx:testnet:1'],
+      '#a': [v.id],
+    });
+  });
+
+  it("runs on the runtime's own timers when none are passed (a browser has no unref)", async () => {
+    vi.useFakeTimers();
+    let closed = 0;
+    const w = new NfxBeaconWatch({
+      subscribe: () => () => {
+        closed++;
+      },
+      now: () => Math.floor(Date.now() / 1000),
+    });
+    const waited = w.wait(video(2), [R1], (e) => e.length > 0, 1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(waited).resolves.toEqual([]);
+    expect(closed).toBe(0);
+    await vi.advanceTimersByTimeAsync(NFX_BEACON_WAIT_MS * 2);
+    expect(closed).toBe(1);
+    w.close();
+  });
+});
 
 describe('NfxBeaconWatch', () => {
   it('a waiting play opens on the first beacon that names a source, not before', async () => {
