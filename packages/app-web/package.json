@@ -18,21 +18,23 @@
   ],
   "scripts": {
     "build": "tsc -b",
+    "build:site": "node scripts/build-site.ts",
+    "nfx-lib": "bash scripts/nfx-lib.sh",
     "test": "vitest run",
-    "lint": "eslint src"
+    "test:e2e": "node e2e/web.e2e.ts",
+    "lint": "eslint src site scripts e2e"
   },
   "dependencies": {
-    "@noble/curves": "1.9.7",
     "@sovit/core": "0.0.0",
     "@sovit/ui": "0.0.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "sodium-javascript": "0.8.0"
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "esbuild": "0.28.2",
-    "jsdom": "29.1.1"
+    "jsdom": "29.1.1",
+    "playwright-core": "1.63.0"
   }
 }

@@ -58,6 +58,12 @@ export const SETTINGS_SECTIONS: readonly {
   { id: 'nfx', label: 'NFX network' },
 ];
 
+/** ADR 0022: the page's source link (`Settings`' `source`). */
+export interface SettingsSource {
+  /** A same-site path, such as `source.json`. */
+  readonly href: string;
+}
+
 export interface SettingsProps extends ScreenProps {
   /**
    * ADR 0022: the sections this shell offers, shown in `SETTINGS_SECTIONS` order whatever the
@@ -68,6 +74,12 @@ export interface SettingsProps extends ScreenProps {
   readonly nfxParts?: NfxSectionParts | undefined;
   /** ADR 0022: which parts of the Appearance section to show. Absent: all of them. */
   readonly appearanceParts?: AppearanceSectionParts | undefined;
+  /**
+   * ADR 0022 (T13, AGPL-3.0 §13): where the page links to the exact source it was built from (the
+   * web client's `source.json`), with the line saying a browser cannot fully protect the viewer
+   * from whoever serves the page. Absent: no such line (the desktop app).
+   */
+  readonly source?: SettingsSource | undefined;
   /**
    * Shell-owned signer flow (connect / switch), called with the signer type the viewer
    * picked. The v3 contract has no "change signer" method, so without this prop the choice
@@ -109,6 +121,7 @@ export function Settings({
   sections,
   nfxParts,
   appearanceParts,
+  source,
   onChangeSigner,
   recovery,
   topUpHolds,
@@ -385,6 +398,19 @@ export function Settings({
           </nav>
           <div className="nf-settings__body" aria-busy={!ready}>
             {renderBody()}
+            {source !== undefined ? (
+              <footer className="nf-settings__source">
+                <p className="nf-settings__desc">
+                  This page is free software (AGPL-3.0-or-later).{' '}
+                  <a href={source.href} className="nf-settings__link">
+                    The source it was built from
+                  </a>{' '}
+                  names the exact commits and the sha256 of every file it serves. Whoever serves
+                  this page can change it, and a browser cannot fully protect you from that: compare
+                  those hashes with a build of your own.
+                </p>
+              </footer>
+            ) : null}
           </div>
         </div>
       )}

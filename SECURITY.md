@@ -173,7 +173,10 @@ packages/gateway/src/auth/
 ## No model writes crypto
 
 Hashing, signatures, blinding, DLEQ, key derivation and secure memory come from
-`@cashu/cashu-ts`, `sodium-native` / `sodium-universal`, `nostr-tools` and `hypercore`.
+`@cashu/cashu-ts`, `sodium-native` / `sodium-universal`, `nostr-tools` and `hypercore`. The NFX
+code that the web client runs (`@sovit/core/nfx`, ADR 0022) takes SHA-256 and Ed25519 from
+`@noble/hashes` and `@noble/curves`, the libraries `nostr-tools` and `cashu-ts` are built on, so
+that no sodium reaches a page; tests hold them to libsodium's answers.
 No code in this project, whether a person or an AI model wrote it, implements a cryptographic
 primitive. A contributor who finds that a change needs one stops and opens an issue.
 

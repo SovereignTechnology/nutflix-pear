@@ -23,6 +23,9 @@
 //   --connect <origin>  extra connect-src origin, repeatable (gateway WS, relays)
 //   --img <src>         extra img-src source, repeatable
 //   --media <src>       extra media-src source, repeatable
+//   --wasm              allow WebAssembly to compile: script-src gains 'wasm-unsafe-eval' (not
+//                       'unsafe-eval': no eval(), no new Function()). The NFX web client's
+//                       verifier is WASM (ADR 0022); the WASM itself is still fetched with SRI
 //   --check             do not write anything; exit 1 if the file would change or violates
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -34,11 +37,11 @@ const COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 /** Build the CSP directive list. Meta CSP ignores frame-ancestors/sandbox/report-*, so those
  *  are emitted only in the headers variant. */
-export function buildCsp({ connect = [], img = [], media = [] } = {}) {
+export function buildCsp({ connect = [], img = [], media = [], wasm = false } = {}) {
   const uniq = (xs) => [...new Set(xs)];
   const common = [
     "default-src 'none'",
-    "script-src 'self'",
+    wasm ? "script-src 'self' 'wasm-unsafe-eval'" : "script-src 'self'",
     "style-src 'self'",
     `img-src ${uniq(["'self'", 'blob:', ...img]).join(' ')}`,
     `media-src ${uniq(["'self'", 'blob:', ...media]).join(' ')}`,
@@ -200,7 +203,7 @@ export function processHtml(html, { root, htmlDir, csp }) {
 }
 
 function parseArgs(argv) {
-  const opts = { connect: [], img: [], media: [], check: false };
+  const opts = { connect: [], img: [], media: [], wasm: false, check: false };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -227,6 +230,9 @@ function parseArgs(argv) {
       case '--media':
         opts.media.push(next());
         break;
+      case '--wasm':
+        opts.wasm = true;
+        break;
       case '--check':
         opts.check = true;
         break;
@@ -248,7 +254,12 @@ export function run(argv) {
   const root = resolve(opts.root ?? htmlDir);
   const outPath = resolve(opts.out ?? htmlPath);
   const headersPath = resolve(opts.headers ?? join(dirname(outPath), '_headers.txt'));
-  const csp = buildCsp({ connect: opts.connect, img: opts.img, media: opts.media });
+  const csp = buildCsp({
+    connect: opts.connect,
+    img: opts.img,
+    media: opts.media,
+    wasm: opts.wasm,
+  });
   const input = readFileSync(htmlPath, 'utf8');
   const result = processHtml(input, { root, htmlDir, csp });
 

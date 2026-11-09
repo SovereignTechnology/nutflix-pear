@@ -1,0 +1,15 @@
+{
+  // The web client's end-to-end run (e2e/web.e2e.ts): plain Node with type stripping, never part of
+  // `npm test` (it needs nfxd, strfry, ffmpeg and a browser; .github/workflows/web-site.yml runs
+  // it). `tsc -b` from the root checks it; nothing is emitted. DOM for the page's side of
+  // `page.evaluate`.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["./*.ts"]
+}

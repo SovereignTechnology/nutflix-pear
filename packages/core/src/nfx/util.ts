@@ -1,11 +1,12 @@
 /**
  * Small helpers that mirror nfx-proto's `hex32` module and the Rust string semantics the
  * parsers depend on. NFX writes every key, hash and signature as lowercase hex; uppercase or
- * mixed case is rejected, never normalized. Hashing is libsodium's (`sodium-universal`), as in
- * the worker; nothing here implements a hash.
+ * mixed case is rejected, never normalized. SHA-256 is `@noble/hashes`' (the library nostr-tools
+ * is built on), so `@sovit/core/nfx` runs in a page without sodium (ADR 0022); its digests are
+ * libsodium's byte for byte (`__tests__/crypto-parity.test.ts`). Nothing here implements a hash.
  */
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from 'nostr-tools/utils';
-import sodium from 'sodium-universal';
 
 export const U64_MAX = 0xffff_ffff_ffff_ffffn;
 
@@ -125,9 +126,7 @@ export function decodeUtf8(bytes: Uint8Array): string | undefined {
 }
 
 export function sha256(bytes: Uint8Array): Uint8Array {
-  const out = new Uint8Array(sodium.crypto_hash_sha256_BYTES);
-  sodium.crypto_hash_sha256(out, bytes);
-  return out;
+  return nobleSha256(bytes);
 }
 
 export function sha256Hex(bytes: Uint8Array): string {

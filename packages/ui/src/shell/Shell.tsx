@@ -66,6 +66,7 @@ import type {
   Route,
   SearchFilterState,
   SettingsSectionId,
+  SettingsSource,
   TopUpHoldControls,
 } from '../screens/index.js';
 import { applyTheme } from '../tokens/index.js';
@@ -122,6 +123,8 @@ export interface ShellOffer {
   readonly nfxParts?: NfxSectionParts | undefined;
   /** The parts of Settings › Appearance (`Settings`' `appearanceParts`). */
   readonly appearanceParts?: AppearanceSectionParts | undefined;
+  /** Settings' link to the page's own source (`Settings`' `source`). Default: none. */
+  readonly source?: SettingsSource | undefined;
   /** "Connect signer" in the header while signed out. Default: offered. */
   readonly signIn?: boolean | undefined;
 }
@@ -480,6 +483,7 @@ export function Shell({
           {...(offer?.appearanceParts === undefined
             ? {}
             : { appearanceParts: offer.appearanceParts })}
+          {...(offer?.source === undefined ? {} : { source: offer.source })}
           onSettingsChange={onSettingsChange}
           onToast={pushToast}
           {...(flowOn ? { onChangeSigner, recovery } : {})}

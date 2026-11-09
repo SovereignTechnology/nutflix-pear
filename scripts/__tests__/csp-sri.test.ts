@@ -76,6 +76,39 @@ describe('scripts/csp-sri.mjs', () => {
     expect(h).toContain('Cross-Origin-Opener-Policy: same-origin');
   });
 
+  it('--wasm lets WebAssembly compile and nothing else: wasm-unsafe-eval, never unsafe-eval', () => {
+    const html = join(work, 'pass', 'index.html');
+    const out = join(work, 'out.html');
+    const headers = join(work, 'headers.txt');
+    const plain = runNode('csp-sri.mjs', [html, '--out', out, '--headers', headers]);
+    expect(plain.status, plain.stderr).toBe(0);
+    expect(readFileSync(out, 'utf8')).not.toContain('wasm-unsafe-eval');
+    const r = runNode('csp-sri.mjs', [
+      html,
+      '--out',
+      out,
+      '--headers',
+      headers,
+      '--wasm',
+      '--connect',
+      'https:',
+      '--connect',
+      'wss:',
+      '--connect',
+      'blob:',
+    ]);
+    expect(r.status, r.stderr).toBe(0);
+    const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(
+      readFileSync(out, 'utf8'),
+    )![1]!;
+    expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval';");
+    expect(csp).not.toMatch(/'unsafe-eval'|'unsafe-inline'/);
+    expect(csp).toContain("connect-src 'self' https: wss: blob:;");
+    expect(readFileSync(headers, 'utf8')).toContain(
+      `Content-Security-Policy: ${csp}; frame-ancestors 'none'`,
+    );
+  });
+
   it('is idempotent and --check passes on an up-to-date output', () => {
     const html = join(work, 'pass', 'index.html');
     const out = join(work, 'out.html');

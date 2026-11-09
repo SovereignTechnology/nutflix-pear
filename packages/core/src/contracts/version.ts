@@ -103,5 +103,10 @@
  *       session; `NfxSettings.trackers?` (NFX-10 §1), `TrackerUrl` and `MAX_NFX_TRACKERS` (4). A
  *       consumer that reads `source.url` narrows on `kind` first. A stored v10 to v13 `nfx` stays
  *       valid.
+ *  15 — 2026-11-09 (ADR 0022, the web client's site build, M4). Additive: `NfxPlaySession.problems?`
+ *       (`NfxPlayProblem`: a file refused, an origin's hash list that did not verify, a play that
+ *       stopped; at most `MAX_NFX_PLAY_PROBLEMS` 16) and `NfxPlaySession.onChange?(cb)`, so a watch
+ *       page sees renditions an `element` source learns once attached, and says what went wrong.
+ *       Every v14 consumer compiles.
  */
-export const CONTRACTS_VERSION = 14 as const;
+export const CONTRACTS_VERSION = 15 as const;

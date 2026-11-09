@@ -994,9 +994,14 @@ interface Checks {
    * Contracts v11: the same for a free NFX session; its one method is `session.close`. v14: the
    * optional `setRendition` (a possibly-absent member, so not a method key here) is left out: this
    * app's sessions do not offer it, and a switch closes the session and opens another, as before.
+   * v15: so are the optional `problems` and `onChange`: a session here plays a URL whose renditions
+   * are known when it opens, and reports no problems on the session.
    */
   nfxPlayKeys: IsNever<
-    Exclude<NonMethodKeys<NfxPlaySession>, keyof NfxPlaySessionWire | 'setRendition'>
+    Exclude<
+      NonMethodKeys<NfxPlaySession>,
+      keyof NfxPlaySessionWire | 'setRendition' | 'problems' | 'onChange'
+    >
   >;
   nfxPlayData: Mutual<Pick<NfxPlaySessionWire, NfxPlayData>, Pick<NfxPlaySession, NfxPlayData>>;
   nfxPlaySource: NfxPlaySessionWire['source'] extends NfxPlaySession['source'] ? true : false;

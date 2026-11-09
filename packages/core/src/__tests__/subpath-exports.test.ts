@@ -93,15 +93,22 @@ describe('core entry points (ADR 0022)', () => {
           f,
         ).toBe(false);
       }
-      // No cashu code at all (M3 moved the one curve-point check in NFX manifests to @noble/curves), and
-      // @noble/curves is reached for that check only.
+      // No cashu code at all (M3 moved the one curve-point check in NFX manifests to @noble/curves).
       expect(packages.has('@cashu/cashu-ts')).toBe(false);
-      const curves = [...(packages.get('@noble/curves') ?? [])];
+      // No sodium (M4): a page would get sodium-javascript. SHA-256 is @noble/hashes' (nfx/util.ts)
+      // and the NFX-12 bind check @noble/curves' Ed25519 (nfx/beacon.ts).
+      expect([...packages.keys()].filter((p) => p.includes('sodium'))).toEqual([]);
+      const curves = [...(packages.get('@noble/curves') ?? [])].sort();
       expect(
-        curves.every((f) => f === 'nfx/manifest.ts'),
+        curves.every((f) => f === 'nfx/manifest.ts' || f === 'nfx/beacon.ts'),
         curves.join(', '),
       ).toBe(true);
-      const allowed = ['nostr-tools', '@noble/curves', 'sodium-universal'];
+      const hashes = [...(packages.get('@noble/hashes') ?? [])];
+      expect(
+        hashes.every((f) => f === 'nfx/util.ts'),
+        hashes.join(', '),
+      ).toBe(true);
+      const allowed = ['nostr-tools', '@noble/curves', '@noble/hashes'];
       expect([...packages.keys()].filter((p) => !allowed.includes(p))).toEqual([]);
     });
   }

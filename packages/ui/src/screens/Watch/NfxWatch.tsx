@@ -12,11 +12,16 @@
  * Contracts v14 (ADR 0022): a session's source may be a URL (the desktop app's media link) or an
  * `element` source, which the adapter's own player feeds into this page's `<video>` (`attach`);
  * a session with `setRendition` switches quality in place, any other is closed and reopened.
+ *
+ * Contracts v15: a session with `onChange` is re-read when it changes, so renditions an `element`
+ * source learns once attached reach the quality picker, and its `problems` are shown: files the
+ * player refused, origins whose hash list did not verify, and a play that stopped (with a retry).
  */
 import {
   useCallback,
   useEffect,
   useId,
+  useReducer,
   useRef,
   useState,
   type ReactElement,
@@ -25,6 +30,7 @@ import {
 import type {
   NetworkAdapter,
   NfxAddress,
+  NfxPlayProblem,
   NfxPlaySession,
   NfxVideo,
   NostrEventId,
@@ -82,24 +88,84 @@ type PlayState =
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/** What the player ran into (v15), as the viewer reads it: a stop, refused files, origins skipped. */
+function NfxProblems({
+  problems,
+  onRetry,
+}: {
+  readonly problems: readonly NfxPlayProblem[];
+  readonly onRetry: () => void;
+}): ReactElement | null {
+  const stopped = problems.findLast((p) => p.kind === 'stopped');
+  const refused = problems.filter((p) => p.kind === 'refused');
+  const origins = problems.filter((p) => p.kind === 'origin');
+  if (stopped === undefined && refused.length === 0 && origins.length === 0) return null;
+  return (
+    <div className="nf-nfxwatch__problems">
+      {stopped !== undefined ? (
+        <div className="nf-nfxwatch__problem nf-nfxwatch__problem--stopped" role="alert">
+          <p className="nf-nfxwatch__problem-text">
+            <strong>Playback stopped.</strong> {stopped.message}
+          </p>
+          <Button variant="secondary" onClick={onRetry}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      {refused.length > 0 ? (
+        <p className="nf-nfxwatch__problem" role="status">
+          <strong>
+            {refused.length === 1
+              ? 'A file did not match the video’s hash list and was refused.'
+              : `${String(refused.length)} files did not match the video’s hash list and were refused.`}
+          </strong>{' '}
+          {refused.at(-1)?.message}
+        </p>
+      ) : null}
+      {origins.length > 0 ? (
+        <p className="nf-nfxwatch__problem" role="status">
+          <strong>
+            {origins.length === 1
+              ? 'An origin did not serve a hash list that verifies, so it was skipped.'
+              : `${String(origins.length)} origins did not serve a hash list that verifies, so they were skipped.`}
+          </strong>{' '}
+          {origins.at(-1)?.message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * A playing session's `<video>` and quality picker. An `element` source (v14) is attached to the
  * element while both live and detached when either goes; a URL source is the element's `src`.
  * `onReopen` closes the session and opens the rendition anew: the only switch a session without
- * `setRendition` has, and the fallback when an in-place switch fails.
+ * `setRendition` has, and the fallback when an in-place switch fails. A session with `onChange`
+ * (v15) is re-read on every change; `onRetry` opens the video anew after the play stopped.
  */
 function NfxPlayer({
   session,
   title,
   onReopen,
+  onRetry,
 }: {
   readonly session: NfxPlaySession;
   readonly title: string;
   readonly onReopen: (rendition: string) => void;
+  readonly onRetry: () => void;
 }): ReactElement {
   const [rendition, setRendition] = useState(session.rendition);
   const [switching, setSwitching] = useState(false);
+  const [, changed] = useReducer((n: number) => n + 1, 0);
+  useEffect(
+    () =>
+      session.onChange?.(() => {
+        changed();
+      }),
+    [session],
+  );
   const source = session.source;
+  const renditions = session.renditions;
   const detach = useRef<(() => void) | null>(null);
   const videoRef: RefCallback<HTMLVideoElement> = useCallback(
     (el: HTMLVideoElement | null) => {
@@ -148,17 +214,22 @@ function NfxPlayer({
         playsInline
         aria-label={title}
       />
-      {session.renditions.length > 1 ? (
+      {renditions.length > 1 ? (
         <label className="nf-nfxwatch__quality">
           Quality{' '}
           <select
-            value={rendition}
+            value={renditions.some((r) => r.id === rendition) ? rendition : ''}
             disabled={switching}
             onChange={(e) => {
               pick(e.currentTarget.value);
             }}
           >
-            {session.renditions.map((r) => (
+            {renditions.some((r) => r.id === rendition) ? null : (
+              <option value="" disabled>
+                Auto
+              </option>
+            )}
+            {renditions.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.resolution ?? r.id}
               </option>
@@ -166,6 +237,7 @@ function NfxPlayer({
           </select>
         </label>
       ) : null}
+      <NfxProblems problems={session.problems ?? []} onRetry={onRetry} />
     </div>
   );
 }
@@ -283,6 +355,9 @@ function NfxStage({
           title={video.title}
           onReopen={(rendition) => {
             open(rendition);
+          }}
+          onRetry={() => {
+            open();
           }}
         />
       );

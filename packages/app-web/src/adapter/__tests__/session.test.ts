@@ -10,7 +10,7 @@ import type { MediaElementLike, NfxAddress } from '@sovit/core';
 import { FakeNfxPlayer } from '../../__tests__/support/fake-nfx-lib.js';
 import { tick } from '../../__tests__/support/nfx.js';
 import { WebAdapterError } from '../../errors.js';
-import { WebNfxSession, levelId, levelOf } from '../session.js';
+import { WEB_MAX_PLAY_PROBLEMS, WebNfxSession, levelId, levelOf, problemOf } from '../session.js';
 
 const ADDR = `38504:${'a'.repeat(64)}:nfx:testnet:1:v` as NfxAddress;
 
@@ -168,5 +168,111 @@ describe('WebNfxSession', () => {
     attach(s, document.createElement('video'));
     await tick();
     expect(player.opens).toHaveLength(1);
+  });
+
+  it('v15: renditions that arrive after attach, and every problem, are told to onChange', async () => {
+    const player = new FakeNfxPlayer();
+    const { s } = session(player);
+    let told = 0;
+    const off = s.onChange(() => {
+      told += 1;
+    });
+    attach(s, document.createElement('video'));
+    await tick();
+    expect(s.renditions).toEqual([]);
+    expect(told).toBe(0);
+    const lib = player.last.session;
+    lib.parsed([
+      { index: 0, width: 640, height: 360, bitrate: 800_000 },
+      { index: 1, width: 1280, height: 720, bitrate: 2_500_000 },
+    ]);
+    expect(told).toBe(1);
+    expect(s.renditions.map((r) => r.id)).toEqual(['l0', 'l1']);
+    await s.setRendition('l1');
+    expect(told).toBe(2);
+    expect(s.rendition).toBe('l1');
+    lib.emit({
+      type: 'origin',
+      origin: 'https://a.example/o',
+      ok: false,
+      why: 'hash list: HTTP 503',
+    });
+    lib.emit({ type: 'origin', origin: 'https://b.example/o', ok: true });
+    lib.emit({
+      type: 'rejected',
+      sha256: 'f'.repeat(64),
+      url: 'https://b.example/o/' + 'e'.repeat(64) + '.m4s',
+      why: 'sha256 mismatch',
+    });
+    lib.emit({ type: 'verified', sha256: 'f'.repeat(64), url: 'https://b.example/o/x.m4s' });
+    lib.emit({ type: 'playing' });
+    lib.emit({ type: 'error', message: 'play: NotAllowedError' });
+    lib.emit({ type: 'error', message: 'networkError:fragLoadError' });
+    expect(s.problems).toEqual([
+      { kind: 'origin', message: 'https://a.example/o: hash list: HTTP 503' },
+      { kind: 'refused', message: `Refused b.example/…/${'e'.repeat(64)}.m4s: sha256 mismatch` },
+      { kind: 'stopped', message: 'networkError:fragLoadError' },
+    ]);
+    expect(told).toBe(5);
+    expect(s.error).toBe('networkError:fragLoadError');
+    off();
+    lib.emit({ type: 'error', message: 'again' });
+    expect(told).toBe(5);
+    expect(s.problems).toHaveLength(4);
+  });
+
+  it('v15: a refusal at open is a stopped problem; nothing is told after close', async () => {
+    const player = new FakeNfxPlayer();
+    player.refuse =
+      'no origin served a hash list that verifies (https://a.example/o: hash list: HTTP 503)';
+    const { s } = session(player);
+    const seen: string[] = [];
+    s.onChange(() => {
+      seen.push(s.problems.at(-1)?.kind ?? 'none');
+    });
+    attach(s, document.createElement('video'));
+    await tick();
+    expect(seen).toEqual(['stopped']);
+    expect(s.problems[0]?.message).toMatch(/^no origin served a hash list that verifies/);
+    await s.close();
+    let late = 0;
+    s.onChange(() => {
+      late += 1;
+    })();
+    expect(late).toBe(0);
+  });
+
+  it('v15: problems are capped at the newest WEB_MAX_PLAY_PROBLEMS', async () => {
+    const player = new FakeNfxPlayer();
+    const { s } = session(player);
+    attach(s, document.createElement('video'));
+    await tick();
+    for (let i = 0; i < WEB_MAX_PLAY_PROBLEMS + 5; i++) {
+      player.last.session.emit({ type: 'error', message: `e${String(i)}` });
+    }
+    expect(s.problems).toHaveLength(WEB_MAX_PLAY_PROBLEMS);
+    expect(s.problems[0]?.message).toBe('e5');
+  });
+
+  it('v15: the mesh’s refused segments, which nfx’s player only logs, are refusals too', () => {
+    expect(
+      problemOf({
+        type: 'log',
+        message: 'mesh: rejected p2p bytes for https://o.example/o/abc.m4s: sha256 mismatch',
+      }),
+    ).toEqual({
+      kind: 'refused',
+      message: 'Refused o.example/…/abc.m4s from a peer: sha256 mismatch',
+    });
+    expect(
+      problemOf({
+        type: 'log',
+        message: 'mesh: rejected http bytes for https://o.example/o/abc.m4s: not on the hash list',
+      }),
+    ).toEqual({
+      kind: 'refused',
+      message: 'Refused o.example/…/abc.m4s from an origin: not on the hash list',
+    });
+    expect(problemOf({ type: 'log', message: 'levels: 360p 720p' })).toBeNull();
   });
 });

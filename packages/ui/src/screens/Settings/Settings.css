@@ -649,6 +649,13 @@ p.nf-settings__label {
   text-decoration: underline;
 }
 
+/* ADR 0022: the web client's link to the source it was built from. */
+.nf-settings__source {
+  margin-top: var(--nf-space-24);
+  padding-top: var(--nf-space-16);
+  border-top: 1px solid var(--nf-color-border);
+}
+
 /* ---- inputs ---------------------------------------------------------------------------- */
 .nf-settings__input {
   box-sizing: border-box;

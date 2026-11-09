@@ -3,7 +3,7 @@
  * `export *`, so generic helper names (validators, `Validation`, …) stay internal.
  */
 export { SETTINGS_SECTIONS, Settings } from './Settings.js';
-export type { SettingsProps, SettingsSectionId } from './Settings.js';
+export type { SettingsProps, SettingsSectionId, SettingsSource } from './Settings.js';
 export type {
   RecoveryControls,
   RecoveryProgressView,

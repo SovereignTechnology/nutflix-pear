@@ -164,6 +164,23 @@ export interface NfxRenditionInfo {
 }
 
 /**
+ * v15 (ADR 0022): something that went wrong in a play, for the watch page to say.
+ *
+ * - `refused`: a file did not match the hash list and was dropped (the play may go on from
+ *   another source);
+ * - `origin`: an origin's copy of the hash list did not verify, and the next origin was tried;
+ * - `stopped`: the play cannot go on (no origin served a hash list that verifies, a media error).
+ */
+export interface NfxPlayProblem {
+  readonly kind: 'refused' | 'origin' | 'stopped';
+  /** One line for a viewer; it names no key or secret. */
+  readonly message: string;
+}
+
+/** v15: at most this many problems are kept on a session (`NfxPlaySession.problems`). */
+export const MAX_NFX_PLAY_PROBLEMS = 16 as const;
+
+/**
  * v11 (ADR 0020 slice 5d): a free NFX play session. Nothing is paid, so it carries no price,
  * spend or peers, and nothing on it reaches the money plane. Switching rendition is closing it
  * and opening another, unless the session offers `setRendition` (v14).
@@ -181,6 +198,18 @@ export interface NfxPlaySession {
    * (`playNfx(addr, id)`), as before v14.
    */
   setRendition?(id: string): Promise<void>;
+  /**
+   * v15 (ADR 0022): what went wrong so far, oldest first, at most `MAX_NFX_PLAY_PROBLEMS` (the
+   * newest kept). Absent: the session reports none.
+   */
+  readonly problems?: readonly NfxPlayProblem[];
+  /**
+   * v15 (ADR 0022): `cb` is called after `renditions`, `rendition` or `problems` change, for a
+   * session that learns them while it plays (an `element` source learns its renditions once
+   * attached). Returns the unsubscribe; nothing is called after `close`. Absent: they are fixed
+   * when `playNfx` resolves.
+   */
+  onChange?(cb: () => void): Unsubscribe;
   close(): Promise<void>;
 }
 

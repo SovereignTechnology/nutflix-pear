@@ -1028,4 +1028,18 @@ describe('Settings — the web client’s parts (ADR 0022)', () => {
     const desktop = await ready(adapterWith(), { sections: ['appearance'] });
     expect(desktop.r.container.querySelector('[id$="-appearance-remote-images"]')).not.toBeNull();
   });
+
+  it('the source link: a shell that names its source gets the line, the desktop does not', async () => {
+    const web = await ready(adapterWith(), {
+      sections: ['appearance'],
+      source: { href: 'source.json' },
+    });
+    const link = web.r.get('.nf-settings__source a');
+    expect(link.getAttribute('href')).toBe('source.json');
+    const text = web.r.get('.nf-settings__source').textContent;
+    expect(text).toContain('AGPL-3.0-or-later');
+    expect(text).toContain('a browser cannot fully protect you');
+    const desktop = await ready(adapterWith(), { sections: ['appearance'] });
+    expect(desktop.r.container.querySelector('.nf-settings__source')).toBeNull();
+  });
 });

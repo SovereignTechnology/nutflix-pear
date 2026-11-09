@@ -20,6 +20,7 @@ export type {
   RecoveryStatusView,
   SettingsProps,
   SettingsSectionId,
+  SettingsSource,
   TopUpHoldControls,
   TopUpHoldReason,
   TopUpHoldView,
