@@ -19,7 +19,7 @@ import type {
   WalletIntent,
   WatchHandoff,
   WatchPlaylist,
-} from '@sovit/ui';
+} from '../screens/index.js';
 
 export interface RouteExtras {
   readonly searchFilters?: Partial<SearchFilterState> | undefined;

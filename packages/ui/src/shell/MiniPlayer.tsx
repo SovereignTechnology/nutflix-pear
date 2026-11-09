@@ -11,9 +11,9 @@
  *   - Close → `coordinator.dismissMini()` closes the session.
  */
 import { useEffect, useRef, type ReactElement } from 'react';
-import { IconButton, SatsBadge } from '@sovit/ui';
-import type { Route } from '@sovit/ui';
-import type { MiniState, PlaybackCoordinator } from '../coordinator.js';
+import { IconButton, SatsBadge } from '../components/index.js';
+import type { Route } from '../screens/index.js';
+import type { MiniState, PlaybackCoordinator } from './coordinator.js';
 
 export interface MiniPlayerProps {
   readonly mini: MiniState;

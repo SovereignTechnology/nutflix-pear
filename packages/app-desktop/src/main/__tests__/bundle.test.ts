@@ -131,9 +131,9 @@ describe('scripts/bundle.ts', () => {
     expect(cjs).not.toMatch(/\bimport\s/);
   });
 
-  it('ui.css is copied from @sovit/ui, shell.css from src/renderer', () => {
+  it('ui.css and shell.css are copied from @sovit/ui (the shell moved there, ADR 0022)', () => {
     expect(readFileSync(join(out, 'renderer', 'shell.css'), 'utf8')).toBe(
-      readFileSync(join(pkg, 'src', 'renderer', 'shell.css'), 'utf8'),
+      readFileSync(join(pkg, '..', 'ui', 'src', 'shell', 'shell.css'), 'utf8'),
     );
     expect(readFileSync(join(out, 'renderer', 'ui.css'), 'utf8')).toContain('--nf-color-bg');
   });

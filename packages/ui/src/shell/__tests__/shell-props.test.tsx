@@ -8,9 +8,9 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
-import type * as Ui from '@sovit/ui';
-import type { FfmpegStatus, Route } from '@sovit/ui';
-import { Shell } from '../App.js';
+import type * as Screens from '../../screens/index.js';
+import type { FfmpegStatus, Route } from '../../screens/index.js';
+import { Shell } from '../Shell.js';
 import { createShellModel, type ShellModel } from '../model.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,8 +20,8 @@ const seen = vi.hoisted(() => ({
   mounts: new Map<string, number>(),
 }));
 
-vi.mock('@sovit/ui', async (importOriginal) => {
-  const orig = await importOriginal<typeof Ui>();
+vi.mock('../../screens/index.js', async (importOriginal) => {
+  const orig = await importOriginal<typeof Screens>();
   const { useEffect } = await import('react');
   const stub =
     (name: string) =>

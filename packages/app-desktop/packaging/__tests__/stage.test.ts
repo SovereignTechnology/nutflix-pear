@@ -368,14 +368,16 @@ describe('the build the stage copies must be current (cross-lane review, round 4
       'src/renderer/main.tsx',
       'src/renderer/prompt/prompt.ts',
     ]);
-    expect(copies.length).toBe(4); // index.html, shell.css, prompt.html, prompt.css
+    expect(copies.length).toBe(3); // index.html, prompt.html, prompt.css
     for (const f of [...entries, ...copies])
       expect(
         BUNDLE_SOURCES.some((d) => f.startsWith(`${d}/`)),
         f,
       ).toBe(true);
-    // The fifth copy is @sovit/ui's stylesheet: a bundled workspace, checked as one.
+    // The other two copies are @sovit/ui's stylesheets (ui.css, and shell.css since ADR 0022): a
+    // bundled workspace, checked as one.
     expect(script).toMatch(/require\.resolve\('@sovit\/ui\/ui\.css'\)/);
+    expect(script).toMatch(/require\.resolve\('@sovit\/ui\/shell\.css'\)/);
   });
 
   // Lane R6-reconcile (the round-5 verifier): the freshness rule watches the bundle's own

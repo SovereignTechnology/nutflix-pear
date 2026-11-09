@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
 import type { NostrEventId, PlaySession } from '@sovit/core';
-import type { WatchHandoff } from '@sovit/ui';
+import type { WatchHandoff } from '../../screens/index.js';
 import { PlaybackCoordinator } from '../coordinator.js';
 
 const { MockNetworkAdapter, VIDEOS } = mocks;

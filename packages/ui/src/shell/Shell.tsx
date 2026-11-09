@@ -1,5 +1,10 @@
 /**
- * The desktop shell (design §4): header, sidebar, the routed screen, the mini-player and ONE
+ * The app shell (design §4), moved into `@sovit/ui` from the desktop app so the web client renders
+ * the same one (ADR 0022). A shell says what it offers (`offer`): the sidebar's sections and the
+ * routes behind them, Home's feeds, Settings' sections and NFX parts, and whether the header offers
+ * a sign-in. Without `offer` everything is offered, as on the desktop, which renders as before.
+ *
+ * Header, sidebar, the routed screen, the mini-player and ONE
  * shell `ToastStack` (fed by Settings and Library through `onToast`; it outlives the screens,
  * and a toast's action closes that toast before it runs, once). Every prop the screens expect
  * from a shell (docs/archive/status-2026-10-04.md "Shell contract the screens expect") is wired here:
@@ -38,6 +43,8 @@ import {
   type ReactElement,
 } from 'react';
 import type { NetworkAdapter, Settings as SettingsData } from '@sovit/core';
+import { ToastStack, isNfxAddress, isTextEntryTarget } from '../components/index.js';
+import type { ToastItem } from '../components/index.js';
 import {
   Channel,
   Home,
@@ -47,26 +54,26 @@ import {
   Settings,
   Shorts,
   Studio,
-  ToastStack,
   Wallet,
   Watch,
-  applyTheme,
-  isNfxAddress,
-  isTextEntryTarget,
-} from '@sovit/ui';
+} from '../screens/index.js';
 import type {
   FfmpegStatus,
+  HomeTab,
+  NfxSectionParts,
   RecoveryControls,
+  Route,
   SearchFilterState,
-  ToastItem,
+  SettingsSectionId,
   TopUpHoldControls,
-} from '@sovit/ui';
+} from '../screens/index.js';
+import { applyTheme } from '../tokens/index.js';
 import type { PlaybackCoordinator } from './coordinator.js';
 import type { Router } from './router.js';
-import { Header } from './shell/Header.js';
-import { MiniPlayer } from './shell/MiniPlayer.js';
-import { Sidebar } from './shell/Sidebar.js';
-import { useCoordinator, useIdentity, useRouterState, useWalletTotal } from './shell/hooks.js';
+import { Header } from './Header.js';
+import { MiniPlayer } from './MiniPlayer.js';
+import { Sidebar, routeSection, type ShellSection } from './Sidebar.js';
+import { useCoordinator, useIdentity, useRouterState, useWalletTotal } from './hooks.js';
 
 export const MAX_SHELL_TOASTS = 3;
 
@@ -99,7 +106,26 @@ function flowErrorToast(err: unknown): ToastItem | null {
   };
 }
 
+/** ADR 0022: what a shell offers. Each part absent = all of it (the desktop app). */
+export interface ShellOffer {
+  /**
+   * The sidebar's sections, and the routes behind them: a route in a section not offered shows
+   * Home instead. Watch, Channel and Search are always offered.
+   */
+  readonly sections?: readonly ShellSection[] | undefined;
+  /** Home's feeds (`Home`'s `tabs`). */
+  readonly homeTabs?: readonly HomeTab[] | undefined;
+  /** Settings' sections (`Settings`' `sections`). */
+  readonly settingsSections?: readonly SettingsSectionId[] | undefined;
+  /** The parts of Settings › NFX (`Settings`' `nfxParts`). */
+  readonly nfxParts?: NfxSectionParts | undefined;
+  /** "Connect signer" in the header while signed out. Default: offered. */
+  readonly signIn?: boolean | undefined;
+}
+
 export interface ShellProps {
+  /** ADR 0022: what this shell offers; absent = everything. */
+  readonly offer?: ShellOffer | undefined;
   /** The coordinator-wrapped adapter (stable identity for the app's lifetime). */
   readonly adapter: NetworkAdapter;
   readonly coordinator: PlaybackCoordinator;
@@ -147,6 +173,7 @@ export function connectRouter(router: Router, coordinator: PlaybackCoordinator):
 }
 
 export function Shell({
+  offer,
   adapter,
   coordinator,
   router,
@@ -358,34 +385,43 @@ export function Shell({
 
   // ---- the screen ---------------------------------------------------------------------------
   const common = { adapter, navigate } as const;
+  const sections = offer?.sections;
+  const section = routeSection(route);
+  // ADR 0022: a route in a section this shell does not offer shows Home.
+  const shown: Route =
+    sections === undefined || section === null || sections.includes(section)
+      ? route
+      : { name: 'home' };
+  const homeTabs = offer?.homeTabs;
   let screen: ReactElement;
-  switch (route.name) {
+  switch (shown.name) {
     case 'home':
       screen = (
         <Home
           {...common}
-          tab={route.tab}
+          tab={shown.tab}
           showNetwork={settings?.nfx?.enabled === true}
+          {...(homeTabs === undefined ? {} : { tabs: homeTabs })}
           hoverPreview={settings?.hoverPreview}
         />
       );
       break;
     case 'watch': {
       // Contracts v9: an NFX address opens the NFX page, which plays nothing yet (ADR 0020).
-      if (isNfxAddress(route.videoId)) {
-        screen = <NfxWatch {...common} videoId={route.videoId} />;
+      if (isNfxAddress(shown.videoId)) {
+        screen = <NfxWatch {...common} videoId={shown.videoId} />;
         break;
       }
       const handed = extras.resumeSession;
       const resume =
-        handed?.videoId === route.videoId && coordinator.canResume(handed.session)
+        handed?.videoId === shown.videoId && coordinator.canResume(handed.session)
           ? handed
           : undefined;
       screen = (
         <Watch
           {...common}
-          videoId={route.videoId}
-          startAtSec={route.t}
+          videoId={shown.videoId}
+          startAtSec={shown.t}
           onMiniPlayer={coordinator.handOff}
           resumeSession={resume}
           playlist={extras.watchPlaylist}
@@ -395,14 +431,14 @@ export function Shell({
     }
     case 'channel':
       screen = (
-        <Channel {...common} pubkey={route.pubkey} tab={route.tab} seedingVideos={undefined} />
+        <Channel {...common} pubkey={shown.pubkey} tab={shown.tab} seedingVideos={undefined} />
       );
       break;
     case 'search':
       screen = (
         <Search
           {...common}
-          q={route.q}
+          q={shown.q}
           filters={extras.searchFilters}
           onFiltersChange={onFiltersChange}
         />
@@ -410,19 +446,19 @@ export function Shell({
       break;
     case 'shorts':
       screen = (
-        <Shorts {...common} videoId={route.videoId} onPlaybackStart={coordinator.pauseMini} />
+        <Shorts {...common} videoId={shown.videoId} onPlaybackStart={coordinator.pauseMini} />
       );
       break;
     case 'library':
       screen = (
-        <Library {...common} tab={route.tab} playlistId={extras.playlistId} onToast={pushToast} />
+        <Library {...common} tab={shown.tab} playlistId={extras.playlistId} onToast={pushToast} />
       );
       break;
     case 'studio':
       screen = (
         <Studio
           {...common}
-          tab={route.tab}
+          tab={shown.tab}
           resolveFile={identityFile}
           ffmpeg={ffmpeg}
           onRecheckFfmpeg={probeFfmpeg === undefined ? undefined : recheckFfmpeg}
@@ -436,6 +472,8 @@ export function Shell({
       screen = (
         <Settings
           {...common}
+          {...(offer?.settingsSections === undefined ? {} : { sections: offer.settingsSections })}
+          {...(offer?.nfxParts === undefined ? {} : { nfxParts: offer.nfxParts })}
           onSettingsChange={onSettingsChange}
           onToast={pushToast}
           {...(flowOn ? { onChangeSigner, recovery } : {})}
@@ -458,9 +496,14 @@ export function Shell({
         balance={balance}
         ratePerMin={play.ratePerMin}
         signer={flowOn ? headerSigner : undefined}
+        {...(offer?.signIn === undefined ? {} : { signIn: offer.signIn })}
       />
       <div className="nf-shell__body">
-        <Sidebar route={route} navigate={navigate} />
+        <Sidebar
+          route={route}
+          navigate={navigate}
+          {...(sections === undefined ? {} : { sections })}
+        />
         <main
           className="nf-shell__main"
           key={route.name === 'settings' ? `${screenKey}:${String(signerGen)}` : screenKey}

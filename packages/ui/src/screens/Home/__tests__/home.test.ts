@@ -615,3 +615,50 @@ describe('Home — the Network feed (contracts v13)', () => {
     expect(r.all('.nf-card:not(.nf-card--skeleton)')).toHaveLength(0);
   });
 });
+
+describe('Home — the feeds a shell offers (ADR 0022)', () => {
+  const labels = (r: Rendered): (string | null)[] =>
+    r.all('[role="tab"]').map((t) => t.textContent);
+  const selected = (r: Rendered): string | null =>
+    r.get('[role="tab"][aria-selected="true"]').textContent;
+  const WEB = ['tags', 'network'] as const;
+
+  it('shows only the feeds offered and lands on the Network feed, never asking for the others', async () => {
+    const adapter = adapterWith({ signedIn: false, nfx: true });
+    const feed = vi.spyOn(adapter, 'feed');
+    const { r } = mount(adapter, { tabs: WEB, showNetwork: true });
+    keep(r);
+    await flush();
+    expect(labels(r)).toEqual(['Your tags', 'Network']);
+    expect(selected(r)).toBe('Network');
+    const sources = feed.mock.calls.map(([q]) => q.source);
+    expect(sources).not.toContain('subscriptions');
+    expect(sources).not.toContain('trending');
+  });
+
+  it('a route to a feed not offered lands on the Network feed; "Explore trending" is not offered', async () => {
+    const asked = mount(adapterWith({ signedIn: false, nfx: true }), {
+      tab: 'subscriptions',
+      tabs: WEB,
+      showNetwork: true,
+    });
+    keep(asked.r);
+    await flush();
+    expect(selected(asked.r)).toBe('Network');
+
+    const empty = withFeed(adapterWith({ nfx: true }), () => Promise.resolve({ items: [] }));
+    const tags = mount(empty, { tab: 'tags', tabs: WEB, showNetwork: true });
+    keep(tags.r);
+    await flush();
+    expect(tags.r.get('[role="tabpanel"]').textContent).toContain('No videos for your tags');
+    expect(tags.r.get('[role="tabpanel"]').textContent).not.toContain('Explore trending');
+  });
+
+  it('without `tabs`, every feed shows as before (the desktop app)', async () => {
+    const { r } = mount(adapterWith({ nfx: true }), { showNetwork: true });
+    keep(r);
+    await flush();
+    expect(labels(r)).toEqual(['Subscriptions', 'Trending', 'Your tags', 'Network']);
+    expect(selected(r)).toBe('Subscriptions');
+  });
+});
