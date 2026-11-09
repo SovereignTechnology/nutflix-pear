@@ -4,16 +4,23 @@
 //! lists. A hostile offer could list loopback, LAN or cloud-metadata addresses and turn the
 //! helper into a prober of the user's network (nfx's M1 audit, finding M3, about the same
 //! library). So the helper keeps only UDP candidates at global unicast addresses, at most
-//! [`MAX_REMOTE`] of them, and drops hostnames (a browser's mDNS `*.local` names) before str0m
-//! sees the SDP. A browser behind a NAT is still reached: its server-reflexive candidate is
-//! global, and a check it sends teaches str0m its peer-reflexive address.
+//! [`MAX_REMOTE`] of them, never its own public address, and drops hostnames (a browser's mDNS
+//! `*.local` names) before str0m sees the SDP. A line is read exactly as str0m reads it: fields
+//! separated by single spaces, and a line with any other whitespace or control character is
+//! dropped, so a field cannot hide an address from this filter that str0m would then use. The
+//! engine also refuses to send to any address this filter would refuse (an egress check), so a
+//! candidate str0m learns another way is held to the same rule. A browser behind a NAT is still
+//! reached: its server-reflexive candidate is global, and a check it sends teaches str0m its
+//! peer-reflexive address.
 //!
 //! **Local:** str0m only answers checks that arrive at a host candidate, so the helper keeps its
 //! socket's address as one, but leaves a private one out of the SDP it hands out: the remote
 //! learns the public mapping (server-reflexive) and never the LAN address, as browsers hide
-//! theirs behind mDNS names.
+//! theirs behind mDNS names. A kept candidate's `raddr` is zeroed and its foundation renumbered:
+//! str0m derives a foundation from the base address, and a hash of a private address is that
+//! address to anyone who hashes the few million private ones.
 //!
-//! `allow_private` (tests and same-LAN runs only) lifts both rules for everything except
+//! `allow_private` (tests and same-LAN runs only) lifts these rules for everything except
 //! unspecified, multicast and broadcast addresses and port 0.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -44,7 +51,8 @@ fn v6_global(ip: Ipv6Addr) -> bool {
     (s[0] & 0xe000) == 0x2000 && !(s[0] == 0x2001 && s[1] == 0x0db8) && (s[0] & 0xfff0) != 0x3ff0
 }
 
-/// Whether the helper may send checks to, or show, `ip`.
+/// Whether the helper may send checks to, or show, `ip`. Global unicast still includes the
+/// user's own public address (see [`may_check`]) and, over IPv6, hosts in the same /64.
 #[must_use]
 pub fn allowed(ip: IpAddr, allow_private: bool) -> bool {
     match ip {
@@ -60,93 +68,99 @@ pub fn allowed(ip: IpAddr, allow_private: bool) -> bool {
     }
 }
 
-/// The address and port of an `a=candidate:` line, if it is a UDP candidate at an IP address.
-fn udp_addr(line: &str) -> Option<(IpAddr, u16)> {
-    let rest = line.strip_prefix("a=candidate:")?;
-    let mut f = rest.split_ascii_whitespace();
-    let (_foundation, _component) = (f.next()?, f.next()?);
-    if !f.next()?.eq_ignore_ascii_case("udp") {
-        return None;
-    }
-    let _priority = f.next()?;
-    let ip: IpAddr = f.next()?.parse().ok()?;
-    let port: u16 = f.next()?.parse().ok()?;
-    Some((ip, port))
+/// Whether the helper may send to `ip:port`: [`allowed`], a port, and not the user's own public
+/// address `own` (a check there would land on the user's router, at a forwarded port).
+#[must_use]
+pub fn may_check(ip: IpAddr, port: u16, allow_private: bool, own: Option<IpAddr>) -> bool {
+    port != 0 && allowed(ip, allow_private) && (allow_private || Some(ip) != own)
 }
 
-/// Rewrite `sdp`, keeping only the candidate lines `keep` accepts (and at most `max`); every
-/// other line is kept as it was. With `scrub`, a kept line's related address (`raddr`, the base
-/// of a server-reflexive candidate) is replaced by `0.0.0.0 rport 0` unless `keep` would show
-/// it, as RFC 8839 §5.1 allows. Returns the SDP and how many candidates it kept.
-fn rewrite(
-    sdp: &str,
-    max: usize,
-    scrub: bool,
-    keep: impl Fn(IpAddr, u16) -> bool,
-) -> (String, usize) {
+/// The fields of an `a=candidate:` line split as str0m splits them (single spaces), if the
+/// line holds nothing but printable ASCII and spaces and is a UDP candidate at an IP address:
+/// the fields, the address and the port.
+fn fields(line: &str) -> Option<(Vec<&str>, IpAddr, u16)> {
+    let rest = line.strip_prefix("a=candidate:")?;
+    if !rest.bytes().all(|c| (0x20..=0x7e).contains(&c)) {
+        return None;
+    }
+    let f: Vec<&str> = rest.split(' ').collect();
+    // foundation component transport priority address port "typ" type ...
+    if f.len() < 8 || f.iter().any(|w| w.is_empty()) || f[6] != "typ" {
+        return None;
+    }
+    if !f[2].eq_ignore_ascii_case("udp") {
+        return None;
+    }
+    let ip: IpAddr = f[4].parse().ok()?;
+    let port: u16 = f[5].parse().ok()?;
+    Some((f, ip, port))
+}
+
+/// A remote offer or answer with only the candidates the helper may check ([`may_check`]), at
+/// most [`MAX_REMOTE`]; every other line is kept as it was. Returns the SDP and how many
+/// candidates it kept.
+#[must_use]
+pub fn remote(sdp: &str, allow_private: bool, own: Option<IpAddr>) -> (String, usize) {
     let mut out = String::with_capacity(sdp.len());
     let mut kept = 0;
     for line in sdp.split_inclusive('\n') {
         let bare = line.trim_end_matches(['\r', '\n']);
         if bare.starts_with("a=candidate:") {
-            let ok = kept < max && udp_addr(bare).is_some_and(|(ip, port)| keep(ip, port));
+            let ok = kept < MAX_REMOTE
+                && fields(bare)
+                    .is_some_and(|(_, ip, port)| may_check(ip, port, allow_private, own));
             if !ok {
                 continue;
             }
             kept += 1;
-            if scrub {
-                out.push_str(&scrubbed(bare, &keep));
-                out.push_str(&line[bare.len()..]);
-                continue;
-            }
         }
         out.push_str(line);
     }
     (out, kept)
 }
 
-/// `line` with its `raddr <ip> rport <port>` pair zeroed unless `keep` accepts it.
-fn scrubbed(line: &str, keep: &impl Fn(IpAddr, u16) -> bool) -> String {
-    let words: Vec<&str> = line.split(' ').collect();
-    let mut out: Vec<&str> = Vec::with_capacity(words.len());
-    let mut i = 0;
-    while i < words.len() {
-        if words[i] == "raddr" && i + 3 < words.len() && words[i + 2] == "rport" {
-            let shown = words[i + 1]
-                .parse::<IpAddr>()
-                .ok()
-                .zip(words[i + 3].parse::<u16>().ok())
-                .is_some_and(|(ip, port)| keep(ip, port));
-            if shown {
-                out.extend_from_slice(&words[i..i + 4]);
-            } else {
-                out.extend_from_slice(&["raddr", "0.0.0.0", "rport", "0"]);
-            }
-            i += 4;
-            continue;
-        }
-        out.push(words[i]);
-        i += 1;
-    }
-    out.join(" ")
-}
-
-/// A remote offer or answer with only the candidates the helper may check: global unicast UDP
-/// (any unicast with `allow_private`), port not 0, at most [`MAX_REMOTE`].
-#[must_use]
-pub fn remote(sdp: &str, allow_private: bool) -> (String, usize) {
-    rewrite(sdp, MAX_REMOTE, false, |ip, port| {
-        port != 0 && allowed(ip, allow_private)
-    })
-}
-
 /// The helper's own offer or answer without what it must not show: a candidate at a private
-/// address, or a private base address in a kept one's `raddr` (unless `allow_private`).
+/// address, a private base address in a kept one's `raddr`, or a foundation derived from one
+/// (unless `allow_private`). Kept candidates are renumbered `1`, `2`, ... Returns the SDP and how
+/// many candidates it shows.
 #[must_use]
 pub fn local(sdp: &str, allow_private: bool) -> (String, usize) {
-    rewrite(sdp, usize::MAX, true, |ip, port| {
-        port != 0 && allowed(ip, allow_private)
-    })
+    let mut out = String::with_capacity(sdp.len());
+    let mut kept = 0usize;
+    for line in sdp.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\r', '\n']);
+        if !bare.starts_with("a=candidate:") {
+            out.push_str(line);
+            continue;
+        }
+        let foundation = (kept + 1).to_string();
+        let Some((mut f, ip, port)) = fields(bare) else {
+            continue;
+        };
+        if port == 0 || !allowed(ip, allow_private) {
+            continue;
+        }
+        kept += 1;
+        if !allow_private {
+            f[0] = &foundation;
+            if let Some(i) = f.iter().position(|w| *w == "raddr")
+                && i + 3 < f.len()
+                && f[i + 2] == "rport"
+            {
+                let shown = f[i + 1]
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| allowed(ip, false));
+                if !shown {
+                    f[i + 1] = "0.0.0.0";
+                    f[i + 3] = "0";
+                }
+            }
+        }
+        out.push_str("a=candidate:");
+        out.push_str(&f.join(" "));
+        out.push_str(&line[bare.len()..]);
+    }
+    (out, kept)
 }
 
 #[cfg(test)]
@@ -212,7 +226,7 @@ a=end-of-candidates\r\n";
 
     #[test]
     fn remote_candidates_are_filtered() {
-        let (sdp, kept) = remote(OFFER, false);
+        let (sdp, kept) = remote(OFFER, false, None);
         assert_eq!(kept, 1);
         assert!(sdp.contains("8.8.4.4 31267 typ srflx"));
         assert!(!sdp.contains(".local"));
@@ -223,9 +237,38 @@ a=end-of-candidates\r\n";
         assert!(sdp.contains("m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n"));
         assert!(sdp.ends_with("a=end-of-candidates\r\n"));
         // With allow_private the LAN host passes too (UDP is case-insensitive).
-        let (sdp, kept) = remote(OFFER, true);
+        let (sdp, kept) = remote(OFFER, true, None);
         assert_eq!(kept, 3);
         assert!(sdp.contains("192.168.1.20 5000"));
+        // The user's own public address is never a target.
+        let own = Some("8.8.4.4".parse().unwrap());
+        assert_eq!(remote(OFFER, false, own).1, 0);
+    }
+
+    #[test]
+    fn a_candidate_cannot_hide_its_address() {
+        // str0m splits on single spaces and takes a tab as part of a field: a foundation of
+        // tabs would show this filter a decoy where str0m reads 192.168.1.1:5000.
+        let tabs = "a=candidate:x\tx\tudp\tx\t8.8.8.8 1 udp 1 192.168.1.1 5000 typ host\r\n";
+        assert_eq!(remote(tabs, false, None).1, 0);
+        // Double spaces, a trailing space and other control characters are refused too.
+        for line in [
+            "a=candidate:1 1 udp 1  8.8.8.8 5000 typ host\r\n",
+            "a=candidate:1 1 udp 1 8.8.8.8 5000 typ host \r\n",
+            "a=candidate:1 1 udp 1 8.8.8.8 5000 typ\x0bhost\r\n",
+            "a=candidate:1 1 udp 1 8.8.8.8 5000 host\r\n",
+        ] {
+            assert_eq!(remote(line, false, None).1, 0, "{line:?}");
+        }
+        assert_eq!(
+            remote(
+                "a=candidate:1 1 udp 1 8.8.8.8 5000 typ host\r\n",
+                false,
+                None
+            )
+            .1,
+            1
+        );
     }
 
     #[test]
@@ -236,19 +279,21 @@ a=end-of-candidates\r\n";
                 "a=candidate:{i} 1 udp 1 8.8.8.{i} 4000 typ srflx\r\n"
             ));
         }
-        assert_eq!(remote(&sdp, false).1, MAX_REMOTE);
+        assert_eq!(remote(&sdp, false, None).1, MAX_REMOTE);
     }
 
     #[test]
     fn a_private_host_is_not_shown() {
+        // str0m's foundation is a hash of the base address: renumbered, as the raddr is zeroed.
         let ours = "v=0\r\n\
-a=candidate:a 1 udp 2130706431 192.168.1.20 40000 typ host\r\n\
-a=candidate:b 1 udp 1694498815 185.147.157.180 61000 typ srflx raddr 192.168.1.20 rport 40000\r\n";
+a=candidate:2130706431 1 udp 2130706431 192.168.1.20 40000 typ host\r\n\
+a=candidate:9876543210 1 udp 1694498815 185.147.157.180 61000 typ srflx raddr 192.168.1.20 rport 40000\r\n";
         let (sdp, kept) = local(ours, false);
         assert_eq!(kept, 1);
         assert!(!sdp.contains("192.168.1.20"));
+        assert!(!sdp.contains("9876543210"));
         assert!(sdp.contains(
-            "a=candidate:b 1 udp 1694498815 185.147.157.180 61000 typ srflx raddr 0.0.0.0 rport 0\r\n"
+            "a=candidate:1 1 udp 1694498815 185.147.157.180 61000 typ srflx raddr 0.0.0.0 rport 0\r\n"
         ));
         let (sdp, kept) = local(ours, true);
         assert_eq!(kept, 2);

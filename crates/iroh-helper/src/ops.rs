@@ -102,6 +102,9 @@ enum Op {
         /// Tests and same-LAN runs only.
         #[serde(default)]
         allow_private: bool,
+        /// The directory every served file must lie under (the worker's NFX store).
+        #[serde(default)]
+        root: Option<String>,
     },
     RtcStop,
     RtcServe {
@@ -124,9 +127,10 @@ enum Op {
         peer: u32,
         answer: String,
     },
+    /// `segment`, not `id`: the request's own `id` is the field beside it.
     RtcGet {
         peer: u32,
-        id: u64,
+        segment: u64,
         max: u64,
     },
     RtcPoll {
@@ -134,6 +138,9 @@ enum Op {
         wait_ms: u64,
     },
     RtcHangup {
+        peer: u32,
+    },
+    RtcHave {
         peer: u32,
     },
     RtcStatus,
@@ -303,6 +310,7 @@ impl Shared {
                 bind,
                 stun,
                 allow_private,
+                root,
             } => {
                 let bind = match bind {
                     None => None,
@@ -319,6 +327,7 @@ impl Shared {
                     bind,
                     stun,
                     allow_private,
+                    root: root.map(PathBuf::from),
                 })
                 .await
                 .map_err(rtc_err)?;
@@ -333,10 +342,9 @@ impl Shared {
                 let h = self.rtc.lock().await.take();
                 let stopped = h.is_some();
                 if let Some(h) = h {
-                    // A poll in flight holds a reference; the side stops when it returns.
-                    if let Ok(h) = Arc::try_unwrap(h) {
-                        h.stop().await;
-                    }
+                    // Now, even while a poll or a fetch still holds the handle: they fail
+                    // `not-ready` when the task ends.
+                    h.stop().await;
                 }
                 Ok(fields(json!({"stopped": stopped})))
             }
@@ -391,7 +399,7 @@ impl Shared {
                     .map_err(rtc_err)?;
                 Ok(fields(json!({"candidates": kept})))
             }
-            Op::RtcGet { peer, id: seg, max } => {
+            Op::RtcGet { peer, segment, max } => {
                 if max == 0 || max > MAX_GET_BYTES {
                     return Err(err("bad-request", "max must be 1 to 64 MiB"));
                 }
@@ -399,7 +407,7 @@ impl Shared {
                 let bytes = self
                     .rtc()
                     .await?
-                    .get(peer, seg, max)
+                    .get(peer, segment, max)
                     .await
                     .map_err(rtc_err)?;
                 Self::send_data(out, id, &bytes).await?;
@@ -420,6 +428,10 @@ impl Shared {
             Op::RtcHangup { peer } => {
                 let closed = self.rtc().await?.hangup(peer).await.map_err(rtc_err)?;
                 Ok(fields(json!({"closed": closed})))
+            }
+            Op::RtcHave { peer } => {
+                let h = self.rtc().await?.have(peer).await.map_err(rtc_err)?;
+                Ok(fields(h))
             }
             Op::RtcStatus => {
                 let s = self.rtc().await?.status().await.map_err(rtc_err)?;
@@ -610,6 +622,7 @@ impl Shared {
             | Op::RtcGet { .. }
             | Op::RtcPoll { .. }
             | Op::RtcHangup { .. }
+            | Op::RtcHave { .. }
             | Op::RtcStatus) => self.rtc_op(id, op, out).await,
         }
     }
@@ -750,12 +763,66 @@ pub async fn serve(state: &Path) -> u8 {
     if let Some(node) = shared.node.get() {
         let _ = tokio::time::timeout(SHUTDOWN_GRACE, node.close()).await;
     }
-    if let Some(h) = shared.rtc.lock().await.take()
-        && let Ok(h) = Arc::try_unwrap(h)
-    {
+    if let Some(h) = shared.rtc.lock().await.take() {
         h.stop().await;
     }
     drop(tx);
     let _ = tokio::time::timeout(SHUTDOWN_GRACE, writer).await;
     code
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn parse(v: Value) -> Op {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn rtc_get_names_the_segment_apart_from_the_request_id() {
+        // Request 5 asks for segment 0: the two never share a field.
+        let op = parse(json!({"id": 5, "op": "rtc-get", "peer": 2, "segment": 0, "max": 10}));
+        assert!(matches!(
+            op,
+            Op::RtcGet {
+                peer: 2,
+                segment: 0,
+                max: 10
+            }
+        ));
+        // Without `segment` it is refused rather than taking the request id.
+        assert!(
+            serde_json::from_value::<Op>(json!({"id": 5, "op": "rtc-get", "peer": 2, "max": 10}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rtc_requests_parse() {
+        let op = parse(json!({"id": 1, "op": "rtc-init", "stun": ["web.nutflix.xyz:3478"]}));
+        assert!(matches!(
+            op,
+            Op::RtcInit {
+                bind: None,
+                allow_private: false,
+                ..
+            }
+        ));
+        let op = parse(json!({"id": 2, "op": "rtc-serve", "swarm": "s",
+            "segments": [{"id": 0, "path": "/a", "size": 1}], "append": true}));
+        assert!(matches!(op, Op::RtcServe { append: true, .. }));
+        for o in ["rtc-stop", "rtc-status"] {
+            parse(json!({"id": 3, "op": o}));
+        }
+        parse(json!({"id": 4, "op": "rtc-poll"}));
+        parse(json!({"id": 4, "op": "rtc-have", "peer": 1}));
+        parse(json!({"id": 4, "op": "rtc-hangup", "peer": 1}));
+        parse(json!({"id": 4, "op": "rtc-accept", "peer": 1, "answer": "v=0"}));
+        parse(json!({"id": 4, "op": "rtc-answer", "swarm": "s", "offer": "v=0"}));
+        parse(json!({"id": 4, "op": "rtc-offer", "swarm": "s"}));
+        parse(json!({"id": 4, "op": "rtc-unserve", "swarm": "s"}));
+    }
 }

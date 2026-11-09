@@ -17,7 +17,7 @@ pub mod p2pml;
 pub mod stun;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,6 +81,17 @@ const STUN_EVERY: Duration = Duration::from_secs(25);
 const STUN_RETRY: Duration = Duration::from_secs(3);
 /// The longest the task sleeps without looking at its timers.
 const TICK: Duration = Duration::from_millis(250);
+/// The longest `rtc-init` waits for one STUN server's name to resolve.
+const DNS_WAIT: Duration = Duration::from_secs(3);
+/// Remote source addresses a connection may learn (peer-reflexive candidates): str0m pairs each
+/// with every local candidate, so a peer sending checks from many ports would grow that work.
+const MAX_SOURCES: usize = 8;
+/// `have` events one peer may cause: a burst, then a rate. Announcements above it still update
+/// what the peer holds; the event waits for the budget (the newest state wins).
+const HAVE_BURST: f64 = 30.0;
+const HAVE_RATE: f64 = 5.0;
+/// Error messages carrying text from a remote SDP are cut to this.
+const MAX_MSG: usize = 200;
 
 /// A failed request: an error code the worker matches on (README.md) and a message.
 #[derive(Debug)]
@@ -89,11 +100,17 @@ pub struct RtcError {
     pub msg: String,
 }
 
+/// An error; its message is cut to [`MAX_MSG`] bytes, as it may quote a remote SDP.
 fn fail(code: &'static str, msg: impl Into<String>) -> RtcError {
-    RtcError {
-        code,
-        msg: msg.into(),
+    let mut msg = msg.into();
+    if msg.len() > MAX_MSG {
+        let mut cut = MAX_MSG;
+        while !msg.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        msg.truncate(cut);
     }
+    RtcError { code, msg }
 }
 
 /// What `rtc-init` asks for.
@@ -104,6 +121,10 @@ pub struct Config {
     pub stun: Vec<String>,
     /// Tests and same-LAN runs only: private and loopback addresses count as reachable.
     pub allow_private: bool,
+    /// When given, every file `rtc-serve` names must lie under it (after resolving symlinks),
+    /// checked when it is named and again when it is read: the worker's NFX store, so no slip in
+    /// the worker can hand a peer any other file.
+    pub root: Option<PathBuf>,
 }
 
 /// One segment the helper serves: its position in the rendition playlist, the file that holds
@@ -119,6 +140,8 @@ struct Events {
     lost: AtomicBool,
     notify: Notify,
     polling: AtomicBool,
+    /// The task has ended: a waiting poll returns `not-ready`.
+    ended: AtomicBool,
 }
 
 impl Events {
@@ -191,6 +214,21 @@ enum Cmd {
     Status {
         reply: oneshot::Sender<Result<Value, RtcError>>,
     },
+    Have {
+        peer: u32,
+        reply: oneshot::Sender<Result<Value, RtcError>>,
+    },
+    /// Close every connection and end the task now, whoever else holds the handle.
+    Stop {
+        reply: oneshot::Sender<Result<(), RtcError>>,
+    },
+    /// Tests only: queue a raw command on a peer, as a hostile one could send.
+    #[cfg(test)]
+    Raw {
+        peer: u32,
+        cmd: Command,
+        reply: oneshot::Sender<Result<(), RtcError>>,
+    },
 }
 
 /// A new connection's id and the SDP to send to the other side, with how many candidates it
@@ -202,12 +240,13 @@ pub struct Sdp {
     pub candidates: usize,
 }
 
-/// The worker's handle on the running WebRTC side. Dropping it ends the task, which closes every
-/// connection on its way out; [`Self::stop`] also waits for that.
+/// The worker's handle on the running WebRTC side. [`Self::stop`] ends the task, closing every
+/// connection; so does dropping the last handle.
 pub struct RtcHandle {
     tx: mpsc::Sender<Cmd>,
     events: Arc<Events>,
-    task: tokio::task::JoinHandle<()>,
+    /// [`Config::root`], resolved.
+    root: Option<Arc<PathBuf>>,
     pub local: SocketAddr,
     pub mapped: Option<SocketAddr>,
 }
@@ -222,13 +261,24 @@ impl RtcHandle {
         if cfg.stun.len() > MAX_STUN {
             return Err(fail("bad-request", "at most 4 STUN servers"));
         }
+        let root = match &cfg.root {
+            None => None,
+            Some(r) if r.is_absolute() => {
+                Some(Arc::new(tokio::fs::canonicalize(r).await.map_err(
+                    |_| fail("bad-request", "root is not a directory"),
+                )?))
+            }
+            Some(_) => return Err(fail("bad-request", "root must be absolute")),
+        };
         let mut servers = Vec::new();
         for s in &cfg.stun {
             if s.len() > 300 || !s.contains(':') {
                 return Err(fail("bad-request", format!("{s:?} is not host:port")));
             }
-            // A name that does not resolve is skipped: the side still starts, without a mapping.
-            if let Ok(mut addrs) = tokio::net::lookup_host(s.as_str()).await
+            // A name that does not resolve (in time) is skipped: the side still starts, without
+            // a mapping.
+            if let Ok(Ok(mut addrs)) =
+                tokio::time::timeout(DNS_WAIT, tokio::net::lookup_host(s.as_str())).await
                 && let Some(a) = addrs.next()
             {
                 servers.push(a);
@@ -248,6 +298,7 @@ impl RtcHandle {
             lost: AtomicBool::new(false),
             notify: Notify::new(),
             polling: AtomicBool::new(false),
+            ended: AtomicBool::new(false),
         });
         let (tx, rx) = mpsc::channel(64);
         let (done_tx, done_rx) = mpsc::channel(MAX_READS * 2);
@@ -256,6 +307,7 @@ impl RtcHandle {
             socket: Arc::new(socket),
             local,
             allow_private: cfg.allow_private,
+            root: root.clone(),
             servers,
             stun_txs: HashMap::new(),
             mapped,
@@ -275,34 +327,40 @@ impl RtcHandle {
             budget: Bucket::new(GLOBAL_BURST, now),
             events: events.clone(),
         };
-        let task = tokio::spawn(run(engine, rx, done_rx));
+        tokio::spawn(run(engine, rx, done_rx));
         Ok(Self {
             tx,
             events,
-            task,
+            root,
             local,
             mapped,
         })
     }
 
-    /// Close every connection and the socket; waits up to 2 s for the task to finish.
-    pub async fn stop(self) {
-        let Self { tx, task, .. } = self;
-        drop(tx);
-        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    /// Close every connection and the socket now, even while other requests hold the handle
+    /// (they then fail `not-ready`). Returns once the connections are closed.
+    pub async fn stop(&self) {
+        let _ = self.call(|reply| Cmd::Stop { reply }).await;
     }
 
     async fn call<T>(
         &self,
         make: impl FnOnce(oneshot::Sender<Result<T, RtcError>>) -> Cmd,
     ) -> Result<T, RtcError> {
+        let gone = || fail("not-ready", "the WebRTC side was stopped");
         let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(make(reply))
-            .await
-            .map_err(|_| fail("internal", "the WebRTC task is gone"))?;
-        rx.await
-            .map_err(|_| fail("internal", "the WebRTC task is gone"))?
+        self.tx.send(make(reply)).await.map_err(|_| gone())?;
+        rx.await.map_err(|_| gone())?
+    }
+
+    /// What `peer` last announced it holds, as ranges.
+    pub async fn have(&self, peer: u32) -> Result<Value, RtcError> {
+        self.call(|reply| Cmd::Have { peer, reply }).await
+    }
+
+    #[cfg(test)]
+    async fn raw(&self, peer: u32, cmd: Command) -> Result<(), RtcError> {
+        self.call(|reply| Cmd::Raw { peer, cmd, reply }).await
     }
 
     /// Serve `segments` in `swarm` (replacing what it served, unless `append`). Returns how
@@ -325,6 +383,13 @@ impl RtcHandle {
             }
             if s.id > p2pml::MAX_INT {
                 return Err(fail("bad-request", "segment id out of range"));
+            }
+            if let Some(root) = &self.root
+                && !tokio::fs::canonicalize(&s.path)
+                    .await
+                    .is_ok_and(|p| p.starts_with(root.as_path()))
+            {
+                return Err(fail("bad-request", "a path is not a file under root"));
             }
         }
         self.call(|reply| Cmd::Serve {
@@ -419,6 +484,9 @@ impl RtcHandle {
         let _release = Release(&self.events.polling);
         let deadline = tokio::time::Instant::now() + wait;
         loop {
+            if self.events.ended.load(Ordering::Acquire) {
+                return Err(fail("not-ready", "the WebRTC side was stopped"));
+            }
             let (events, lost) = self.events.take(max_bytes);
             if !events.is_empty() || lost {
                 return Ok((events, lost));
@@ -557,12 +625,19 @@ struct Peer {
     queued: usize,
     /// The request the peer last asked us to send (being read, or sent).
     wanted: Option<u64>,
+    /// Counts the peer's requests: a read started for an older one is dropped when it ends,
+    /// even if the peer reused the request number.
+    generation: u64,
     upload: Option<Upload>,
-    /// What the peer last announced it holds.
+    /// What the peer last announced it holds, and whether the worker has yet to hear of it.
     have: BTreeSet<u64>,
+    have_unsent: bool,
+    have_budget: Bucket,
     fetch: Option<Fetch>,
     next_request: u64,
     budget: Bucket,
+    /// Remote addresses this connection has received from (at most [`MAX_SOURCES`]).
+    sources: Vec<SocketAddr>,
     wake: Instant,
     born: Instant,
     active: Instant,
@@ -571,6 +646,7 @@ struct Peer {
 
 struct ReadJob {
     peer: u32,
+    generation: u64,
     request: u64,
     id: u64,
     from: u64,
@@ -580,10 +656,11 @@ struct ReadJob {
 
 struct ReadDone {
     peer: u32,
+    generation: u64,
     request: u64,
     id: u64,
-    from: u64,
-    size: u64,
+    /// The bytes from `from` on, counted in `held` since the read started.
+    held: usize,
     bytes: Option<Vec<u8>>,
 }
 
@@ -591,6 +668,7 @@ struct Engine {
     socket: Arc<UdpSocket>,
     local: SocketAddr,
     allow_private: bool,
+    root: Option<Arc<PathBuf>>,
     servers: Vec<SocketAddr>,
     stun_txs: HashMap<stun::TxId, SocketAddr>,
     mapped: Option<SocketAddr>,
@@ -609,6 +687,7 @@ struct Engine {
 
 async fn run(mut e: Engine, mut rx: mpsc::Receiver<Cmd>, mut done: mpsc::Receiver<ReadDone>) {
     let mut buf = vec![0u8; 65536];
+    let mut stopped = None;
     loop {
         let wake = e.next_wake();
         let socket = e.socket.clone();
@@ -621,6 +700,10 @@ async fn run(mut e: Engine, mut rx: mpsc::Receiver<Cmd>, mut done: mpsc::Receive
             }
             c = rx.recv() => match c {
                 None => break,
+                Some(Cmd::Stop { reply }) => {
+                    stopped = Some(reply);
+                    break;
+                }
                 Some(c) => e.command(c),
             },
             Some(d) = done.recv() => e.read_done(d),
@@ -633,6 +716,12 @@ async fn run(mut e: Engine, mut rx: mpsc::Receiver<Cmd>, mut done: mpsc::Receive
         p.dead = Some("stopped");
     }
     e.pump_all();
+    e.events.ended.store(true, Ordering::Release);
+    e.events.notify.notify_one();
+    if let Some(reply) = stopped {
+        let _ = reply.send(Ok(()));
+    }
+    // Requests already queued get no reply: their senders see `not-ready`.
 }
 
 /// The served ids one announcement can carry: at most 255 blocks of 256.
@@ -704,14 +793,27 @@ fn next_write(p: &Peer) -> Next {
     }
 }
 
-fn read_exact(path: &Path, size: u64) -> Option<Vec<u8>> {
-    let f = std::fs::File::open(path).ok()?;
-    if f.metadata().ok()?.len() != size {
+/// The bytes of the file at `path` from `from` on, if it is a regular file of exactly `size`
+/// bytes (a FIFO or device would block a read slot, or never end) and, with a `root`, lies
+/// under it once symlinks are resolved (checked again here: the file may have changed since it
+/// was named).
+fn read_from(path: &Path, size: u64, from: u64, root: Option<&PathBuf>) -> Option<Vec<u8>> {
+    let path = match root {
+        None => path.to_path_buf(),
+        Some(root) => std::fs::canonicalize(path)
+            .ok()
+            .filter(|p| p.starts_with(root))?,
+    };
+    let mut f = std::fs::File::open(&path).ok()?;
+    let meta = f.metadata().ok()?;
+    if !meta.is_file() || meta.len() != size || from >= size {
         return None;
     }
-    let mut bytes = Vec::with_capacity(usize::try_from(size).ok()?);
-    f.take(size + 1).read_to_end(&mut bytes).ok()?;
-    (bytes.len() as u64 == size).then_some(bytes)
+    let want = size - from;
+    f.seek(SeekFrom::Start(from)).ok()?;
+    let mut bytes = Vec::with_capacity(usize::try_from(want).ok()?);
+    f.take(want + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 == want).then_some(bytes)
 }
 
 fn queue(p: &mut Peer, cmd: &Command) {
@@ -772,6 +874,10 @@ impl Engine {
             }
             return;
         }
+        // Nothing from an address the helper would not send to (the egress rule, below).
+        if !self.may_send(from) {
+            return;
+        }
         let Ok(contents) = bytes.try_into() else {
             return;
         };
@@ -786,11 +892,34 @@ impl Engine {
         );
         for p in self.peers.values_mut() {
             if p.dead.is_none() && p.rtc.accepts(&input) {
+                if !p.sources.contains(&from) {
+                    if p.sources.len() >= MAX_SOURCES {
+                        break;
+                    }
+                    p.sources.push(from);
+                }
                 if p.rtc.handle_input(input).is_err() {
                     p.dead = Some("rtc");
                 }
                 break;
             }
+        }
+    }
+
+    /// The egress rule: the helper sends only to addresses a remote candidate may name
+    /// (`candidates::may_check`), whatever str0m learned, so no SDP trick and no
+    /// peer-reflexive address reaches the user's LAN, loopback or own public address.
+    fn may_send(&self, to: SocketAddr) -> bool {
+        candidates::may_check(to.ip(), to.port(), self.allow_private, self.own())
+    }
+
+    fn own(&self) -> Option<IpAddr> {
+        self.mapped.map(|m| m.ip())
+    }
+
+    fn transmit(&self, t: &str0m::net::Transmit) {
+        if self.may_send(t.destination) {
+            let _ = self.socket.try_send_to(&t.contents, t.destination);
         }
     }
 
@@ -815,10 +944,11 @@ impl Engine {
         if now >= self.stun_next {
             self.stun_round(now);
         }
-        for p in self.peers.values_mut() {
+        for (&id, p) in &mut self.peers {
             if p.dead.is_some() {
                 continue;
             }
+            send_have(&self.events, id, p, now);
             if p.channel.is_none() && now.duration_since(p.born) > OPEN_TIMEOUT {
                 p.dead = Some("open-timeout");
                 continue;
@@ -843,7 +973,9 @@ impl Engine {
     }
 
     fn new_rtc(&self, now: Instant) -> Result<Rtc, RtcError> {
-        let mut rtc = Rtc::builder().build(now);
+        // Data channels only: with no codecs, an offer's audio or video section is refused
+        // rather than reaching str0m's media stack.
+        let mut rtc = Rtc::builder().clear_codecs().build(now);
         let host = Candidate::host(self.local, "udp")
             .map_err(|e| fail("internal", format!("host candidate: {e}")))?;
         rtc.add_local_candidate(host);
@@ -894,11 +1026,15 @@ impl Engine {
                 out: VecDeque::new(),
                 queued: 0,
                 wanted: None,
+                generation: 0,
                 upload: None,
                 have: BTreeSet::new(),
+                have_unsent: false,
+                have_budget: Bucket::new(HAVE_BURST, now),
                 fetch: None,
                 next_request: 0,
                 budget: Bucket::new(PEER_BURST, now),
+                sources: Vec::new(),
                 wake: now,
                 born: now,
                 active: now,
@@ -943,6 +1079,22 @@ impl Engine {
                     let _ = reply.send(Err(fail("busy", "too many swarms")));
                     return;
                 }
+                // Counted before anything changes: a refused request leaves the swarm as it was.
+                let kept = if append {
+                    self.swarms.get(&swarm).map(|s| &s.segments)
+                } else {
+                    None
+                };
+                let new = segments
+                    .iter()
+                    .filter(|seg| kept.is_none_or(|k| !k.contains_key(&seg.id)))
+                    .map(|seg| seg.id)
+                    .collect::<BTreeSet<_>>()
+                    .len();
+                if kept.map_or(0, BTreeMap::len) + new > MAX_SEGMENTS {
+                    let _ = reply.send(Err(fail("bad-request", "over 100000 segments in a swarm")));
+                    return;
+                }
                 let s = self.swarms.entry(swarm.clone()).or_insert_with(|| Swarm {
                     segments: BTreeMap::new(),
                 });
@@ -951,11 +1103,6 @@ impl Engine {
                 }
                 for seg in segments {
                     s.segments.insert(seg.id, (seg.path, seg.size));
-                }
-                if s.segments.len() > MAX_SEGMENTS {
-                    self.swarms.remove(&swarm);
-                    let _ = reply.send(Err(fail("bad-request", "over 100000 segments in a swarm")));
-                    return;
                 }
                 let n = s.segments.len();
                 self.reannounce(&swarm);
@@ -974,7 +1121,7 @@ impl Engine {
                 reply,
             } => {
                 let result = self.room(&swarm).and_then(|()| {
-                    let (sdp, _) = candidates::remote(&offer, self.allow_private);
+                    let (sdp, _) = candidates::remote(&offer, self.allow_private, self.own());
                     let offer = SdpOffer::from_sdp_string(&sdp)
                         .map_err(|e| fail("bad-request", format!("offer: {e}")))?;
                     let mut rtc = self.new_rtc(now)?;
@@ -1018,6 +1165,7 @@ impl Engine {
                 reply,
             } => {
                 let allow_private = self.allow_private;
+                let own = self.own();
                 let result = match self.peers.get_mut(&peer) {
                     None => Err(fail("no-peer", "no such connection")),
                     Some(p) => match p.pending.take() {
@@ -1026,7 +1174,7 @@ impl Engine {
                             "that connection is not waiting for an answer",
                         )),
                         Some(pending) => {
-                            let (sdp, kept) = candidates::remote(&answer, allow_private);
+                            let (sdp, kept) = candidates::remote(&answer, allow_private, own);
                             match SdpAnswer::from_sdp_string(&sdp) {
                                 Err(e) => {
                                     p.dead = Some("bad-answer");
@@ -1097,14 +1245,51 @@ impl Engine {
                 let _ = reply.send(Ok(found));
             }
             Cmd::Status { reply } => {
-                let live = self.peers.values().filter(|p| p.dead.is_none()).count();
+                // The live connections, so a worker that lost events can catch up.
+                let mut peers: Vec<Value> = self
+                    .peers
+                    .iter()
+                    .filter(|(_, p)| p.dead.is_none())
+                    .map(|(id, p)| {
+                        json!({
+                            "peer": id, "swarm": p.swarm, "open": p.channel.is_some(),
+                            "dir": if p.outgoing { "out" } else { "in" },
+                        })
+                    })
+                    .collect();
+                peers.sort_by_key(|v| v["peer"].as_u64());
                 let _ = reply.send(Ok(json!({
                     "local": self.local.to_string(),
                     "mapped": self.mapped.map(|m| m.to_string()),
-                    "peers": live,
+                    "peers": peers,
                     "swarms": self.swarms.len(),
                     "held": self.held,
                 })));
+            }
+            Cmd::Have { peer, reply } => {
+                let result = match self.peers.get(&peer).filter(|p| p.dead.is_none()) {
+                    None => Err(fail("no-peer", "no such connection")),
+                    Some(p) => {
+                        let (ranges, more) = ranges(&p.have);
+                        Ok(json!({"ranges": ranges, "more": more}))
+                    }
+                };
+                let _ = reply.send(result);
+            }
+            // Handled by the task's loop.
+            Cmd::Stop { reply } => {
+                let _ = reply.send(Ok(()));
+            }
+            #[cfg(test)]
+            Cmd::Raw { peer, cmd, reply } => {
+                let result = match self.peers.get_mut(&peer) {
+                    Some(p) if p.channel.is_some() => {
+                        queue(p, &cmd);
+                        Ok(())
+                    }
+                    _ => Err(fail("no-peer", "no open connection")),
+                };
+                let _ = reply.send(result);
             }
         }
     }
@@ -1125,9 +1310,7 @@ impl Engine {
             p.rtc.disconnect();
             while let Ok(out) = p.rtc.poll_output() {
                 match out {
-                    Output::Transmit(t) => {
-                        let _ = self.socket.try_send_to(&t.contents, t.destination);
-                    }
+                    Output::Transmit(t) => self.transmit(&t),
                     Output::Timeout(_) => break,
                     Output::Event(_) => {}
                 }
@@ -1151,9 +1334,7 @@ impl Engine {
                         p.wake = t;
                         break;
                     }
-                    Ok(Output::Transmit(t)) => {
-                        let _ = self.socket.try_send_to(&t.contents, t.destination);
-                    }
+                    Ok(Output::Transmit(t)) => self.transmit(&t),
                     Ok(Output::Event(e)) => self.event(id, p, e, now),
                     Err(_) => {
                         p.dead = Some("rtc");
@@ -1222,8 +1403,10 @@ impl Engine {
 
     fn event(&mut self, id: u32, p: &mut Peer, e: Event, now: Instant) {
         match e {
-            // One data channel per connection: a second is ignored (nfx's audit, M1).
-            Event::ChannelOpen(ch, _) if p.channel.is_none() => {
+            // One data channel per connection (nfx's audit, M1). A peer that opens another is
+            // dropped: str0m would keep each one's state for as long as the connection lives.
+            Event::ChannelOpen(..) if p.channel.is_some() => p.dead = Some("second-channel"),
+            Event::ChannelOpen(ch, _) => {
                 p.channel = Some(ch);
                 p.active = now;
                 self.events.push(json!({
@@ -1261,10 +1444,8 @@ impl Engine {
         match cmd {
             Command::Announcement { loaded, .. } => {
                 p.have = loaded.into_iter().collect();
-                let (ranges, more) = ranges(&p.have);
-                self.events.push(json!({
-                    "t": "have", "peer": id, "ranges": ranges, "more": more,
-                }));
+                p.have_unsent = true;
+                send_have(&self.events, id, p, now);
             }
             Command::Request {
                 id: seg,
@@ -1275,8 +1456,11 @@ impl Engine {
                     p.dead = Some("flood");
                     return;
                 }
-                // One upload per peer: a new request replaces the one in progress.
+                // One upload per peer: a new request replaces the one in progress, and any read
+                // still waiting for it (even one with the same request number).
                 cancel_upload(p, &mut self.held);
+                self.waiting.retain(|j| j.peer != id);
+                p.generation += 1;
                 p.wanted = Some(request);
                 let found = self
                     .swarms
@@ -1289,6 +1473,7 @@ impl Engine {
                     Some((path, size)) if room && from < size => {
                         self.waiting.push_back(ReadJob {
                             peer: id,
+                            generation: p.generation,
                             request,
                             id: seg,
                             from,
@@ -1381,31 +1566,29 @@ impl Engine {
             let Some(job) = self.waiting.front() else {
                 break;
             };
-            let size = usize::try_from(job.size).unwrap_or(usize::MAX);
-            if self.held.saturating_add(size) > MAX_HELD && self.held > 0 {
+            // What the read will hold: the file from `from` on.
+            let held = usize::try_from(job.size.saturating_sub(job.from)).unwrap_or(usize::MAX);
+            if self.held.saturating_add(held) > MAX_HELD && self.held > 0 {
                 break;
             }
             let Some(job) = self.waiting.pop_front() else {
                 break;
             };
-            let wanted = self
-                .peers
-                .get(&job.peer)
-                .is_some_and(|p| p.dead.is_none() && p.wanted == Some(job.request));
-            if !wanted {
+            if !self.peers.get(&job.peer).is_some_and(|p| current(p, &job)) {
                 continue;
             }
-            self.held += size;
+            self.held += held;
             self.reading += 1;
             let done = self.done_tx.clone();
+            let root = self.root.clone();
             tokio::task::spawn_blocking(move || {
-                let bytes = read_exact(&job.path, job.size);
+                let bytes = read_from(&job.path, job.size, job.from, root.as_deref());
                 let _ = done.blocking_send(ReadDone {
                     peer: job.peer,
+                    generation: job.generation,
                     request: job.request,
                     id: job.id,
-                    from: job.from,
-                    size: job.size,
+                    held,
                     bytes,
                 });
             });
@@ -1414,18 +1597,15 @@ impl Engine {
 
     fn read_done(&mut self, d: ReadDone) {
         self.reading = self.reading.saturating_sub(1);
-        let size = usize::try_from(d.size).unwrap_or(usize::MAX);
-        let Some(p) = self
-            .peers
-            .get_mut(&d.peer)
-            .filter(|p| p.dead.is_none() && p.wanted == Some(d.request))
-        else {
-            self.held = self.held.saturating_sub(size);
+        let Some(p) = self.peers.get_mut(&d.peer).filter(|p| {
+            p.dead.is_none() && p.generation == d.generation && p.wanted == Some(d.request)
+        }) else {
+            self.held = self.held.saturating_sub(d.held);
             return;
         };
         let Some(bytes) = d.bytes else {
             // The file is gone or changed size: the worker named one it no longer has.
-            self.held = self.held.saturating_sub(size);
+            self.held = self.held.saturating_sub(d.held);
             p.wanted = None;
             queue(
                 p,
@@ -1436,15 +1616,14 @@ impl Engine {
             );
             return;
         };
-        let from = usize::try_from(d.from)
-            .unwrap_or(usize::MAX)
-            .min(bytes.len());
+        // What `held` counted for this read is what the upload now holds.
+        cancel_upload(p, &mut self.held);
         queue(
             p,
             &Command::Data {
                 id: d.id,
                 request: d.request,
-                size: (bytes.len() - from) as u64,
+                size: bytes.len() as u64,
             },
         );
         let tail = p2pml::encode(&Command::Completed {
@@ -1453,12 +1632,26 @@ impl Engine {
         })
         .map(VecDeque::from)
         .unwrap_or_default();
-        p.upload = Some(Upload {
-            bytes,
-            at: from,
-            tail,
-        });
+        p.upload = Some(Upload { bytes, at: 0, tail });
     }
+}
+
+/// Tell the worker what `p` holds now, if its budget allows; otherwise it stays unsent and the
+/// next tick tries again (only the newest state is ever sent).
+fn send_have(events: &Events, id: u32, p: &mut Peer, now: Instant) {
+    if !p.have_unsent || !p.have_budget.take(now, HAVE_BURST, HAVE_RATE) {
+        return;
+    }
+    p.have_unsent = false;
+    let (ranges, more) = ranges(&p.have);
+    events.push(json!({
+        "t": "have", "peer": id, "ranges": ranges, "more": more,
+    }));
+}
+
+/// Whether a read for `job` is still wanted by `p`.
+fn current(p: &Peer, job: &ReadJob) -> bool {
+    p.dead.is_none() && p.generation == job.generation && p.wanted == Some(job.request)
 }
 
 #[cfg(test)]

@@ -44,22 +44,29 @@ trickle candidates), and both directions.
    (`rtc-serve`, only files the worker's verified hash list includes), reads a file only when asked
    and refuses it if its size changed, and hands fetched bytes back unchecked; the worker checks
    their sha256 (NFX-05 §4). The browser checks every segment it receives anyway (NFX-10 §1).
-5. **It checks only addresses it may reach, and shows none it should not.** A full ICE agent sends
-   checks to every candidate an offer lists; nfx's audit (M1, finding M3) is why nfxd's bridge
-   went ICE lite. The helper keeps only UDP candidates at global unicast addresses from a remote
-   SDP (at most 16; mDNS names dropped), so an offer cannot point it at the user's LAN, loopback or
-   a cloud metadata address. A browser behind a NAT is still reached through its server-reflexive
-   candidate and the peer-reflexive address its checks reveal. The helper's own host candidate is
-   kept for str0m but left out of the SDP when private, and a server-reflexive `raddr` is zeroed,
-   as browsers hide their LAN addresses behind mDNS names. `allow_private` lifts this for tests
-   and same-LAN runs only. **No TURN** (nfx #71): a pair that cannot be punched fails.
+5. **It talks only to addresses it may reach, and shows none it should not.** A full ICE agent
+   sends checks to every candidate an offer lists; nfx's audit (M1, finding M3) is why nfxd's
+   bridge went ICE lite. The helper keeps only UDP candidates at global unicast addresses other
+   than the user's own public one from a remote SDP (at most 16; mDNS names dropped; each line read
+   exactly as str0m reads it), so an offer cannot point it at the user's LAN, loopback, router or
+   a cloud metadata address, and it holds every datagram it sends or accepts to the same rule
+   whatever str0m learned. Global unicast still admits IPv6 hosts in the user's own /64. A browser
+   behind a NAT is still reached through its server-reflexive candidate and the peer-reflexive
+   address its checks reveal (at most 8 per connection). The helper's own host candidate is kept
+   for str0m but left out of the SDP when private; a server-reflexive `raddr` is zeroed and its
+   foundation, which str0m derives from the base address, renumbered, as browsers hide their LAN
+   addresses behind mDNS names. `allow_private` lifts this for tests and same-LAN runs only. Data
+   channels only: no codecs, so an audio or video section is refused. **No TURN** (nfx #71): a
+   pair that cannot be punched fails.
 6. **The protocol is written from the library.** `src/rtc/p2pml.rs` implements p2p-media-loader
    4.0.0's commands from its source, not from another NFX implementation, as ADR 0020 wants for the
    NFX specs: NFX-10 names the library and pins its version, and defines no bytes of its own.
-7. **Bounds** (nfx's audit M2, M5, I1, I2, and more): 32 connections, 8 per swarm, one data channel
-   each; open within 20 s, closed after 60 s idle; per-peer and global request budgets; 4 file
-   reads at once and 256 MiB of segment bytes held; announcements of at most 255 blocks; no message
-   of segment bytes that looks like a command.
+7. **Bounds** (nfx's audit M2, M5, I1, I2, and an adversarial review of this change): 32
+   connections, 8 per swarm, one data channel each (a second drops the peer); open within 20 s,
+   closed after 60 s idle; per-peer and global request budgets, and a newer request voids any read
+   for an older one; 4 file reads at once and 256 MiB of segment bytes held; announcements of at
+   most 255 blocks; a per-peer budget on the events announcements cause; no message of segment
+   bytes that looks like a command.
 
 ## Consequences
 

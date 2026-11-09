@@ -14,6 +14,7 @@ fn loopback() -> Config {
         bind: Some("127.0.0.1:0".parse().unwrap()),
         stun: Vec::new(),
         allow_private: true,
+        root: None,
     }
 }
 
@@ -251,6 +252,7 @@ async fn the_public_mapping_comes_from_stun() {
         bind: Some("127.0.0.1:0".parse().unwrap()),
         stun: vec![at.to_string()],
         allow_private: false,
+        root: None,
     })
     .await
     .unwrap();
@@ -274,6 +276,7 @@ async fn start_needs_an_address() {
         bind: None,
         stun: Vec::new(),
         allow_private: false,
+        root: None,
     })
     .await
     .err()
@@ -284,6 +287,7 @@ async fn start_needs_an_address() {
         bind: Some("127.0.0.1:0".parse().unwrap()),
         stun: five,
         allow_private: true,
+        root: None,
     })
     .await
     .err()
@@ -301,4 +305,162 @@ fn ranges_and_announcements_are_bounded() {
     assert!(more);
     let ids = announceable((0..300 * 256).map(|i| i as u64));
     assert_eq!(ids.len(), 255 * 256);
+}
+
+/// Poll `rtc-status` until `held` is 0 (at most 10 s).
+async fn wait_held_zero(h: &RtcHandle) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let held = h.status().await.unwrap()["held"].as_u64().unwrap();
+        if held == 0 {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "held stuck at {held}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_requests_never_pin_memory() {
+    let dir = Dir::new("dup");
+    let seeder = RtcHandle::start(loopback()).await.unwrap();
+    let viewer = RtcHandle::start(loopback()).await.unwrap();
+    let swarm = "nfx/1/web/x:dup/r";
+    let body = awkward(1024 * 1024);
+    seeder
+        .serve(swarm.into(), vec![dir.file("s0", &body)], false)
+        .await
+        .unwrap();
+    let (v_peer, s_peer) = connect(&viewer, &seeder, swarm).await;
+    wait_for(&viewer, is("have", v_peer)).await;
+
+    // The same request number three times over, as a hostile peer could: each replaces the
+    // last, and no read started for an older one may keep its bytes counted.
+    for _ in 0..3 {
+        viewer
+            .raw(
+                v_peer,
+                Command::Request {
+                    id: 0,
+                    request: 7,
+                    from: 0,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    wait_held_zero(&seeder).await;
+    // The connection still serves, and holds nothing once done.
+    assert!(viewer.get(v_peer, 0, MAX_SEGMENT).await.unwrap() == body);
+    wait_held_zero(&seeder).await;
+
+    // The status lists the connection; `have` repeats what the peer announced.
+    let status = seeder.status().await.unwrap();
+    let peers = status["peers"].as_array().unwrap();
+    assert!(
+        peers
+            .iter()
+            .any(|p| p["peer"] == s_peer && p["open"] == true && p["dir"] == "in")
+    );
+    let have = viewer.have(v_peer).await.unwrap();
+    assert_eq!(have["ranges"], serde_json::json!([[0, 0]]));
+    assert_eq!(viewer.have(999).await.unwrap_err().code, "no-peer");
+
+    viewer.stop().await;
+    seeder.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_ends_a_waiting_poll() {
+    let h = std::sync::Arc::new(RtcHandle::start(loopback()).await.unwrap());
+    let waiting = {
+        let h = h.clone();
+        tokio::spawn(async move { h.poll(Duration::from_secs(20), 1000).await })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    h.stop().await;
+    let r = tokio::time::timeout(Duration::from_secs(3), waiting)
+        .await
+        .expect("the poll returned")
+        .unwrap();
+    assert_eq!(r.unwrap_err().code, "not-ready");
+    assert_eq!(
+        h.offer("nfx/1/web/a:b/c".into()).await.unwrap_err().code,
+        "not-ready"
+    );
+}
+
+#[test]
+fn files_are_read_from_the_asked_offset_only() {
+    let dir = Dir::new("read");
+    let seg = dir.file("f", b"0123456789");
+    assert_eq!(read_from(&seg.path, 10, 0, None).unwrap(), b"0123456789");
+    assert_eq!(read_from(&seg.path, 10, 7, None).unwrap(), b"789");
+    assert!(read_from(&seg.path, 10, 10, None).is_none());
+    assert!(read_from(&seg.path, 11, 0, None).is_none());
+    assert!(read_from(&dir.0, 0, 0, None).is_none());
+    // Under a root only, symlinks resolved.
+    let root = std::fs::canonicalize(&dir.0).unwrap();
+    assert!(read_from(&seg.path, 10, 0, Some(&root)).is_some());
+    let other = Dir::new("read-other");
+    let outside = other.file("g", b"0123456789");
+    assert!(read_from(&outside.path, 10, 0, Some(&root)).is_none());
+    #[cfg(unix)]
+    {
+        let link = dir.0.join("link");
+        std::os::unix::fs::symlink(&outside.path, &link).unwrap();
+        assert!(read_from(&link, 10, 0, Some(&root)).is_none());
+    }
+}
+
+#[test]
+fn messages_quoting_a_remote_are_cut() {
+    let e = fail("bad-request", "é".repeat(MAX_MSG));
+    assert!(e.msg.len() <= MAX_MSG);
+}
+
+#[tokio::test]
+async fn only_files_under_root_are_served() {
+    let store = Dir::new("root");
+    let elsewhere = Dir::new("elsewhere");
+    let h = RtcHandle::start(Config {
+        root: Some(store.0.clone()),
+        ..loopback()
+    })
+    .await
+    .unwrap();
+    let inside = store.file("a", b"aa");
+    assert_eq!(h.serve("s".into(), vec![inside], false).await.unwrap(), 1);
+    let outside = elsewhere.file("b", b"bb");
+    assert_eq!(
+        h.serve("s".into(), vec![outside], true)
+            .await
+            .unwrap_err()
+            .code,
+        "bad-request"
+    );
+    let missing = Segment {
+        id: 1,
+        path: store.0.join("missing"),
+        size: 1,
+    };
+    assert_eq!(
+        h.serve("s".into(), vec![missing], true)
+            .await
+            .unwrap_err()
+            .code,
+        "bad-request"
+    );
+    assert!(
+        RtcHandle::start(Config {
+            root: Some("relative".into()),
+            ..loopback()
+        })
+        .await
+        .is_err()
+    );
+    h.stop().await;
 }
