@@ -152,6 +152,71 @@ describe('WebNfxSession', () => {
     await expect(s.setRendition('l0')).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
+  it('pear #97: a pinned start level that is not the expected rendition moves to the one that is', async () => {
+    const levels = [
+      { index: 0, width: 640, height: 360, bitrate: 950_000 },
+      { index: 1, width: 1280, height: 720, bitrate: 2_800_000 },
+    ];
+    // hls.js dropped a level the start was computed with: index 1 is now 720p, 360p is index 0.
+    const moved = new FakeNfxPlayer();
+    const a = new WebNfxSession({
+      videoId: ADDR,
+      manifestJson: '{}',
+      origins: ['https://o.example/o'],
+      trackers: [],
+      iceServers: [],
+      level: 1,
+      expect: { id: '360p', bandwidth: 950_000, height: 360 },
+      player: () => Promise.resolve(moved),
+    });
+    attach(a, document.createElement('video'));
+    await tick();
+    expect(moved.last.options.level).toBe(1);
+    moved.last.session.parsed(levels);
+    expect(moved.last.session.setLevelCalls).toEqual([0]);
+    expect(a.rendition).toBe('l0');
+    // Told once: a later levels event changes nothing.
+    moved.last.session.parsed(levels);
+    expect(moved.last.session.setLevelCalls).toEqual([0]);
+
+    // The pinned level is the expected one: nothing moves.
+    const kept = new FakeNfxPlayer();
+    kept.levels = levels;
+    const b = new WebNfxSession({
+      videoId: ADDR,
+      manifestJson: '{}',
+      origins: ['https://o.example/o'],
+      trackers: [],
+      iceServers: [],
+      level: 1,
+      expect: { id: '720p', bandwidth: 2_800_000, height: 720 },
+      player: () => Promise.resolve(kept),
+    });
+    attach(b, document.createElement('video'));
+    await tick();
+    expect(kept.last.session.setLevelCalls).toEqual([]);
+    expect(b.rendition).toBe('l1');
+
+    // No level is the expected rendition: back to automatic.
+    const none = new FakeNfxPlayer();
+    const c = new WebNfxSession({
+      videoId: ADDR,
+      manifestJson: '{}',
+      origins: ['https://o.example/o'],
+      trackers: [],
+      iceServers: [],
+      level: 0,
+      expect: { id: '1080p', bandwidth: 5_400_000, height: 1080 },
+      player: () => Promise.resolve(none),
+    });
+    attach(c, document.createElement('video'));
+    await tick();
+    none.last.session.parsed(levels);
+    expect(none.last.session.setLevelCalls).toEqual([-1]);
+    expect(c.rendition).toBe('auto');
+    await Promise.all([a.close(), b.close(), c.close()]);
+  });
+
   it('only a <video> element is taken', () => {
     const { s } = session(new FakeNfxPlayer());
     expect(() => attach(s, { currentTime: 0, paused: true })).toThrow(/^invalid-argument: /);

@@ -9,6 +9,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Changed
 
+- **NFX play picks only renditions seeders hold, the best-seeded first** (issue #97). The
+  beacons say which renditions each seeder holds (an iroh ticket per rendition; a `webrtc` or
+  `https` endpoint's `renditions`, absent meaning all; a HyperDHT seeder holds whole videos).
+  The desktop app never plays a rendition nobody it can reach holds, lists only those in the
+  quality menu, and by default starts on the one most seeders hold (at equal holders, the higher
+  bandwidth, as before). The web client starts its player on that rendition too when its
+  seeders hold different ones (reading the video's hash list from an origin first, checked
+  against the manifest); when every seeder holds every rendition, nothing changes.
 - **NFX's SHA-256 and the NFX-12 `hyperdht` bind check come from `@noble/hashes` and
   `@noble/curves`** instead of libsodium, so that the same code runs in the web client (ADR 0022).
   The digests are the same bytes. The bind check gives libsodium's answers, except for a signature

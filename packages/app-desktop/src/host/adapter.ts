@@ -774,20 +774,17 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     const irohRelays = settings.nfx?.irohRelays ?? [];
     const sourcesOf = (events: readonly NostrEvent[]): ReturnType<typeof beaconPeers> =>
       beaconPeers(video, events, this.now(), irohRelays);
-    // Live beacons (NFX-04: never stored): wait until one names a source, at most one
-    // republish interval.
+    // Live beacons (NFX-04: never stored): wait until one names a source that holds a rendition,
+    // at most one republish interval.
     const events = await this.beaconWatch.wait(
       video,
       scoped,
-      (evs) => {
-        const s = sourcesOf(evs);
-        return s.hyperdht.length + s.iroh.length > 0;
-      },
+      (evs) => sourcesOf(evs).held.seeders > 0,
       this.o.nfxBeaconWaitMs,
     );
     const sources = sourcesOf(events);
-    if (sources.hyperdht.length + sources.iroh.length === 0)
-      fail('no-seeders', 'nobody seeding this NFX video is online');
+    // Pear #97: a source that holds no rendition (an iroh endpoint without one's ticket) is none.
+    if (sources.held.seeders === 0) fail('no-seeders', 'nobody seeding this NFX video is online');
     const sid = this.hex(16) as HostPlaySession['sid'];
     const token = this.hex(32);
     const res = await this.o.worker('nfx.play.open', {
@@ -799,6 +796,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       peers: sources.hyperdht,
       iroh: sources.iroh,
       prefetchSeconds: settings.prefetchSeconds,
+      // Pear #97: the worker plays a rendition someone holds, the most-held one by default.
+      held: sources.held,
     });
     const s = new NfxHostSession({
       sid,

@@ -217,6 +217,57 @@ describe('openNfxSession (contracts v11)', () => {
     expect(validateWorkerArgs['nfx.play.open'](open)).toBe(true);
   });
 
+  it('pear #97: tells the worker which renditions the seeders it names hold', async () => {
+    r = await rig({ nfx: { ...NFX_ON, irohRelays: [IROH_RELAY] } });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-7');
+    const tickets = (...ids: string[]): Map<string, string> =>
+      new Map([['meta', ticket('a')], ...ids.map((id) => [id, ticket('c')] as [string, string])]);
+    // Two nfxd-like seeders with one rendition each (one of them 720p), one with both, and a
+    // HyperDHT seeder (whole videos: every rendition).
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-7', {
+      endpoints: () => [irohEndpoint('a1'.repeat(32), { tickets: tickets('720p') })],
+    });
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-7', {
+      endpoints: () => [irohEndpoint('b2'.repeat(32), { tickets: tickets('1080p') })],
+    });
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-7', {
+      endpoints: () => [irohEndpoint('c3'.repeat(32), { tickets: tickets('720p', '1080p') })],
+    });
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-7');
+    await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-7'));
+    const [open] = r.worker().calls('nfx.play.open');
+    expect(validateWorkerArgs['nfx.play.open'](open)).toBe(true);
+    const held = (open as { held: { seeders: number; all: number; named: { $map: unknown[] } } })
+      .held;
+    expect(held.seeders).toBe(4);
+    expect(held.all).toBe(1);
+    expect(new Map(held.named.$map as [string, number][])).toEqual(
+      new Map([
+        ['720p', 2],
+        ['1080p', 2],
+      ]),
+    );
+  });
+
+  it('pear #97: a seeder whose only endpoint holds no rendition is no seeder', async () => {
+    r = await rig({ nfx: { ...NFX_ON, irohRelays: [IROH_RELAY] } });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-8');
+    // A `meta` ticket and nothing else: the hash list, but no rendition to play.
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-8', {
+      endpoints: () => [
+        irohEndpoint('a1'.repeat(32), { tickets: new Map([['meta', ticket('a')]]) }),
+      ],
+    });
+    await expect(
+      r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-8')),
+    ).rejects.toThrow(/no-seeders/);
+    expect(r.worker().calls('nfx.play.open')).toHaveLength(0);
+  });
+
   it('no live free beacon by a seeder for this manifest means no-seeders', async () => {
     r = await rig({ nfx: NFX_ON });
     await r.ready();

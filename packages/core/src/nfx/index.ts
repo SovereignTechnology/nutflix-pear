@@ -8,6 +8,7 @@
  * Everything here is pure: no I/O, no clock (callers pass `now`), no randomness, no signing.
  * It runs beside the legacy NIP-71 protocol (ADR 0020) and shares nothing with it.
  */
+export * from './availability.js';
 export * from './beacon.js';
 export * from './canon.js';
 export * from './catalog.js';

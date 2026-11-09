@@ -24,6 +24,7 @@ import type {
 } from '@sovit/core';
 
 import { WebAdapterError, rejectWith } from '../errors.js';
+import type { PlayRendition } from './renditions.js';
 import type {
   NfxIceServer,
   NfxLevel,
@@ -113,6 +114,12 @@ export interface WebNfxSessionOptions {
   readonly iceServers: readonly { readonly urls: readonly string[] }[];
   /** A level to start on (`playNfx(addr, 'l<index>')`). */
   readonly level?: number | undefined;
+  /**
+   * Pear #97: the rendition `level` was chosen for (from the hash list). Once hls.js lists its
+   * levels, a pinned level that is not this rendition (by height and bitrate) is moved to the one
+   * that is, or to automatic when none is.
+   */
+  readonly expect?: PlayRendition | undefined;
   /** The player, initialised (`init` done once for the page). */
   readonly player: () => Promise<NfxPlayerLib>;
   /** Told once, when the session closes. */
@@ -141,6 +148,8 @@ export class WebNfxSession implements NfxPlaySession {
   #attached: Attachment | null = null;
   #closed = false;
   #problems: NfxPlayProblem[] = [];
+  /** Pear #97: whether the pinned start level was checked against `expect`. */
+  #checked = false;
   readonly #listeners = new Set<() => void>();
 
   constructor(o: WebNfxSessionOptions) {
@@ -277,6 +286,7 @@ export class WebNfxSession implements NfxPlaySession {
       slot.session = session;
       if (session.levels.length > 0) {
         this.#levels = [...session.levels];
+        this.#checkPinned();
         this.#changed();
       }
     } catch (e) {
@@ -292,11 +302,37 @@ export class WebNfxSession implements NfxPlaySession {
   #hear(e: NfxPlayerEvent): void {
     if (e.type === 'levels') {
       this.#levels = [...e.levels];
+      this.#checkPinned();
       this.#changed();
       return;
     }
     const p = problemOf(e);
     if (p !== null) this.#problem(p);
+  }
+
+  /**
+   * Pear #97: the level pinned for `expect` must be that rendition. hls.js may order or filter its
+   * levels differently from `levelOrder` (a codec the browser cannot play is dropped): then the
+   * level that is it is played, or none is pinned when no level is. Checked once.
+   */
+  #checkPinned(): void {
+    const want = this.#o.expect;
+    const session = this.#attached?.session ?? null;
+    if (want === undefined || this.#checked || session === null || this.#levels.length === 0) {
+      return;
+    }
+    this.#checked = true;
+    const is = (l: NfxLevel): boolean =>
+      l.bitrate === want.bandwidth && (want.height === undefined || l.height === want.height);
+    const pinned = this.#levels.find((l) => l.index === this.#picked);
+    if (pinned !== undefined && is(pinned)) return;
+    const match = this.#levels.find(is);
+    try {
+      session.setLevel(match?.index ?? -1);
+      this.#picked = match?.index ?? null;
+    } catch {
+      // A level the player no longer lists: hls.js keeps what it had.
+    }
   }
 
   #detach(): void {
