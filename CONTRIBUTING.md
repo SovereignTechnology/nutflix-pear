@@ -111,8 +111,8 @@ carry `Co-Authored-By` trailers or tool-attribution lines.
 
 The repository has a bot, `sovtechpro[bot]`. It reviews new pull requests, explains failed CI
 runs, and answers questions when the maintainer mentions it in a thread. Only the maintainer can
-ask it for anything; mentions from other accounts are ignored. When the maintainer asks it for a
-fix, it opens a **draft** pull request on a `bot/...` branch. It never merges, never pushes to
+ask it for anything; mentions from other accounts are ignored. When the maintainer asks it to make
+a change, it opens a **draft** pull request on a `bot/...` branch. It never merges, never pushes to
 `main`, and never edits `.github/`. The maintainer reviews and merges its pull requests like
 anyone else's.
 
