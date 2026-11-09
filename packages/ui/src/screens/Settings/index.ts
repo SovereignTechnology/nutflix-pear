@@ -15,3 +15,4 @@ export type {
 } from './RecoverySection.js';
 export type { TopUpHoldControls, TopUpHoldReason, TopUpHoldView } from './TopUpHolds.js';
 export type { NfxSectionParts } from './NfxSection.js';
+export type { AppearanceSectionParts } from './AppearanceSection.js';

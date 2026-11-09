@@ -1003,3 +1003,29 @@ describe('Settings — NFX trackers (contracts v14)', () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe('Settings — the web client’s parts (ADR 0022)', () => {
+  it('the mesh notice: shown when a shell asks for it, never on the desktop', async () => {
+    const web = await ready(adapterWith(), {
+      sections: ['nfx'],
+      nfxParts: { toggle: false, irohRelays: false, trackers: true, meshNotice: true },
+    });
+    const notice = web.r.get('[id$="-nfx-mesh-notice"]');
+    expect(notice.textContent).toContain('Trackers and the peers you meet see your IP address.');
+    expect(notice.textContent).toContain('other viewers');
+    expect(section(web.r, 'NFX network').contains(notice)).toBe(true);
+    const desktop = await ready(adapterWith());
+    expect(desktop.r.container.querySelector('[id$="-nfx-mesh-notice"]')).toBeNull();
+  });
+
+  it('a shell that never loads unsigned images leaves "Load images from any website" out', async () => {
+    const web = await ready(adapterWith(), {
+      sections: ['appearance'],
+      appearanceParts: { remoteImages: false },
+    });
+    expect(web.r.container.querySelector('[id$="-appearance-remote-images"]')).toBeNull();
+    expect(web.r.container.querySelector('[id$="-appearance-theme-dark"]')).not.toBeNull();
+    const desktop = await ready(adapterWith(), { sections: ['appearance'] });
+    expect(desktop.r.container.querySelector('[id$="-appearance-remote-images"]')).not.toBeNull();
+  });
+});

@@ -909,22 +909,36 @@ describe('SECURITY.md money-path invariants', () => {
   });
 
   it('INV8 no browser persistence of proofs or keys → the runtime-agnostic core and the web shell source never touch Web Storage / IndexedDB', async () => {
-    // The bundle-level grep and the in-memory NIP-60 state are owned by L7 (web shell). At
-    // the source level today: nothing under core/src (which the web shell embeds) or
-    // app-web/src references a browser persistence API outside comments; and the Wallet
+    // At the source level: nothing under core/src (which the web shell embeds) or app-web/src
+    // references a browser persistence API outside comments, with one exception (ADR 0022): the
+    // web client's settings module keeps the viewer's settings, and nothing else, in
+    // `localStorage`. It alone may name `localStorage`, and no other storage API. The Wallet
     // contract states the rule.
     const forbidden =
       /\b(localStorage|sessionStorage|indexedDB|IDBDatabase|openDatabase|document\.cookie)\b/;
+    const settingsModule = 'packages/app-web/src/settings/store.ts';
     const roots = ['packages/core/src/', 'packages/app-web/src/'];
     let scanned = 0;
+    let settingsSeen = false;
     for (const root of roots) {
       for (const f of await listSource(new URL(root, REPO_ROOT))) {
         scanned++;
         const src = stripComments(await readFile(f, 'utf8'));
+        if (f.href === new URL(settingsModule, REPO_ROOT).href) {
+          settingsSeen = true;
+          expect(src, f.pathname).not.toMatch(
+            /\b(sessionStorage|indexedDB|IDBDatabase|openDatabase|document\.cookie)\b/,
+          );
+          // One read of the property, under one key.
+          expect(src.match(/\blocalStorage\b/g), f.pathname).toHaveLength(1);
+          expect(src, f.pathname).toMatch(/WEB_SETTINGS_KEY = 'nutflix\.web\.settings\.v1'/);
+          continue;
+        }
         expect(src, f.pathname).not.toMatch(forbidden);
       }
     }
     expect(scanned).toBeGreaterThan(5);
+    expect(settingsSeen).toBe(true);
     const wallet = await readFile(
       new URL('packages/core/src/contracts/wallet.ts', REPO_ROOT),
       'utf8',

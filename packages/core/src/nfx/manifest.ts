@@ -3,7 +3,7 @@
  * side's tag list. Integer tags are `bigint`: NFX-02 §3 allows up to 2^64 − 1 and the parser
  * keeps every value nfx-proto keeps.
  */
-import { pointFromHex } from '@cashu/cashu-ts';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 import type { NostrEvent } from '../contracts/index.js';
 import { fail, ok, type NfxResult, type Verified } from './errors.js';
@@ -263,11 +263,15 @@ function licenseTerms(event: NostrEvent): NfxResult<LicenseTerms> {
   });
 }
 
-/** 33 bytes in lowercase hex, prefix 02 or 03, and a point on the curve (cashu-ts → noble). */
+/**
+ * 33 bytes in lowercase hex, prefix 02 or 03, and a point on the curve: noble's own
+ * `Point.fromHex`, which cashu-ts's `pointFromHex` wraps. Called directly (ADR 0022), so
+ * `@sovit/core/nfx` loads no Cashu code.
+ */
 function isCompressedPoint(hex: string): boolean {
   if (!isLowerHex(hex, 66) || !(hex.startsWith('02') || hex.startsWith('03'))) return false;
   try {
-    pointFromHex(hex);
+    secp256k1.Point.fromHex(hex);
     return true;
   } catch {
     return false;

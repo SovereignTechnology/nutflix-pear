@@ -654,6 +654,27 @@ describe('Home — the feeds a shell offers (ADR 0022)', () => {
     expect(tags.r.get('[role="tabpanel"]').textContent).not.toContain('Explore trending');
   });
 
+  it('lands on the Network feed when the shell learns NFX is on only after Home rendered', async () => {
+    const adapter = adapterWith({ signedIn: false, nfx: true });
+    const navigate = vi.fn<(to: Route) => void>();
+    const props = { adapter, navigate, now: FIXTURE_NOW, tabs: WEB };
+    const r = render(createElement(Home, { ...props, showNetwork: false }));
+    keep(r);
+    await flush();
+    expect(selected(r)).toBe('Your tags');
+    r.rerender(createElement(Home, { ...props, showNetwork: true }));
+    await flush();
+    expect(selected(r)).toBe('Network');
+    // A feed the visitor picked stays picked.
+    click(r.get('[role="tab"][aria-selected="false"]'));
+    await flush();
+    expect(selected(r)).toBe('Your tags');
+    r.rerender(createElement(Home, { ...props, showNetwork: false }));
+    r.rerender(createElement(Home, { ...props, showNetwork: true }));
+    await flush();
+    expect(selected(r)).toBe('Your tags');
+  });
+
   it('without `tabs`, every feed shows as before (the desktop app)', async () => {
     const { r } = mount(adapterWith({ nfx: true }), { showNetwork: true });
     keep(r);

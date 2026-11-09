@@ -58,6 +58,7 @@ import {
   Watch,
 } from '../screens/index.js';
 import type {
+  AppearanceSectionParts,
   FfmpegStatus,
   HomeTab,
   NfxSectionParts,
@@ -119,6 +120,8 @@ export interface ShellOffer {
   readonly settingsSections?: readonly SettingsSectionId[] | undefined;
   /** The parts of Settings › NFX (`Settings`' `nfxParts`). */
   readonly nfxParts?: NfxSectionParts | undefined;
+  /** The parts of Settings › Appearance (`Settings`' `appearanceParts`). */
+  readonly appearanceParts?: AppearanceSectionParts | undefined;
   /** "Connect signer" in the header while signed out. Default: offered. */
   readonly signIn?: boolean | undefined;
 }
@@ -474,6 +477,9 @@ export function Shell({
           {...common}
           {...(offer?.settingsSections === undefined ? {} : { sections: offer.settingsSections })}
           {...(offer?.nfxParts === undefined ? {} : { nfxParts: offer.nfxParts })}
+          {...(offer?.appearanceParts === undefined
+            ? {}
+            : { appearanceParts: offer.appearanceParts })}
           onSettingsChange={onSettingsChange}
           onToast={pushToast}
           {...(flowOn ? { onChangeSigner, recovery } : {})}

@@ -4,7 +4,8 @@
  * it to the document is the shell's job (it hears the confirmed value via `onSettingsChange`).
  *
  * Also "Load images from any website" (security review F18, default off): off, only images whose
- * hash the publisher signed are shown — an arbitrary image URL is a tracking pixel.
+ * hash the publisher signed are shown — an arbitrary image URL is a tracking pixel. ADR 0022: a
+ * shell that never loads such images (the web client) leaves the switch out (`parts`).
  */
 import type { ReactElement } from 'react';
 import type { Settings } from '@sovit/core';
@@ -20,14 +21,22 @@ export const THEME_OPTIONS: readonly { readonly value: Theme; readonly label: st
   { value: 'light', label: 'Light theme' },
 ];
 
+/** ADR 0022: the parts of the section a shell shows; each absent part takes its default. */
+export interface AppearanceSectionParts {
+  /** "Load images from any website". Default: shown. */
+  readonly remoteImages?: boolean | undefined;
+}
+
 export function AppearanceSection({
   id,
   view,
   pending,
   save,
+  parts,
   headingRef,
 }: SectionProps & {
   readonly id: string;
+  readonly parts?: AppearanceSectionParts | undefined;
   readonly headingRef?: ((el: HTMLHeadingElement | null) => void) | undefined;
 }): ReactElement {
   // Reads `prefers-color-scheme` only — never writes to the document.
@@ -80,20 +89,22 @@ export function AppearanceSection({
         {pending.has('theme') ? <span className="nf-settings__saving">Saving…</span> : null}
       </fieldset>
 
-      <SwitchRow
-        id={`${id}-remote-images`}
-        label="Load images from any website"
-        description="Off: only thumbnails and pictures whose fingerprint the publisher signed are shown; the rest stay as placeholders. On: every image loads, and each website that hosts one sees your IP address."
-        checked={view.loadRemoteImages}
-        busy={pending.has('loadRemoteImages')}
-        onChange={(on) => {
-          void save({
-            field: 'loadRemoteImages',
-            label: 'image loading',
-            patch: () => ({ loadRemoteImages: on }),
-          });
-        }}
-      />
+      {parts?.remoteImages === false ? null : (
+        <SwitchRow
+          id={`${id}-remote-images`}
+          label="Load images from any website"
+          description="Off: only thumbnails and pictures whose fingerprint the publisher signed are shown; the rest stay as placeholders. On: every image loads, and each website that hosts one sees your IP address."
+          checked={view.loadRemoteImages}
+          busy={pending.has('loadRemoteImages')}
+          onChange={(on) => {
+            void save({
+              field: 'loadRemoteImages',
+              label: 'image loading',
+              patch: () => ({ loadRemoteImages: on }),
+            });
+          }}
+        />
+      )}
     </SectionFrame>
   );
 }

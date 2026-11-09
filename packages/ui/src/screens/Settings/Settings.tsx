@@ -29,7 +29,7 @@ import {
   type ToastItem,
 } from '../../components/index.js';
 import type { ScreenProps } from '../shared/route.js';
-import { AppearanceSection } from './AppearanceSection.js';
+import { AppearanceSection, type AppearanceSectionParts } from './AppearanceSection.js';
 import { PlaybackSection } from './PlaybackSection.js';
 import { RecoverySection, type RecoveryControls } from './RecoverySection.js';
 import type { TopUpHoldControls } from './TopUpHolds.js';
@@ -66,6 +66,8 @@ export interface SettingsProps extends ScreenProps {
   readonly sections?: readonly SettingsSectionId[] | undefined;
   /** ADR 0022: which parts of the NFX section to show. Absent: the desktop app's. */
   readonly nfxParts?: NfxSectionParts | undefined;
+  /** ADR 0022: which parts of the Appearance section to show. Absent: all of them. */
+  readonly appearanceParts?: AppearanceSectionParts | undefined;
   /**
    * Shell-owned signer flow (connect / switch), called with the signer type the viewer
    * picked. The v3 contract has no "change signer" method, so without this prop the choice
@@ -106,6 +108,7 @@ export function Settings({
   miniPlayer,
   sections,
   nfxParts,
+  appearanceParts,
   onChangeSigner,
   recovery,
   topUpHolds,
@@ -276,6 +279,7 @@ export function Settings({
           <AppearanceSection
             id={sectionId('appearance')}
             {...common}
+            parts={appearanceParts}
             headingRef={refFor('appearance')}
           />
         ) : null}

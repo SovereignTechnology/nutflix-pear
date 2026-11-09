@@ -8,7 +8,8 @@
  *
  * ADR 0022: a shell picks the parts it shows (`parts`). The web client has no iroh and NFX is
  * always on there, and it lists the network's WebTorrent trackers instead (contracts v14,
- * NFX-10 §1): `wss://`, or `ws://` to this computer only.
+ * NFX-10 §1): `wss://`, or `ws://` to this computer only. It also says, above everything else,
+ * what the browser mesh costs a viewer (`meshNotice`).
  */
 import { useState, type ReactElement, type ReactNode, type SubmitEvent } from 'react';
 import type { IrohRelayUrl, NfxSettings, RelayUrl, Settings, TrackerUrl } from '@sovit/core';
@@ -47,6 +48,11 @@ export interface NfxSectionParts {
   readonly irohRelays?: boolean | undefined;
   /** The WebTorrent trackers (contracts v14). Default: hidden; the desktop app has no use for them. */
   readonly trackers?: boolean | undefined;
+  /**
+   * ADR 0022 item 3: a line saying that trackers and peers see the viewer's IP address and that
+   * the browser uploads what it holds. Default: hidden; the desktop app has no browser mesh.
+   */
+  readonly meshNotice?: boolean | undefined;
 }
 
 /** `base.nfx`, or the network's starting point (off, no scoped relays). */
@@ -233,6 +239,7 @@ export function NfxSection({
     scopedRelays: parts?.scopedRelays ?? true,
     irohRelays: parts?.irohRelays ?? true,
     trackers: parts?.trackers ?? false,
+    meshNotice: parts?.meshNotice ?? false,
   };
 
   const update = (fn: (current: NfxSettings) => NfxSettings): Promise<boolean> =>
@@ -287,6 +294,12 @@ export function NfxSection({
       busy={pending.has('nfx')}
       headingRef={headingRef}
     >
+      {show.meshNotice ? (
+        <Note tone="warning" id={`${id}-mesh-notice`}>
+          Trackers and the peers you meet see your IP address. While a video plays, your browser
+          also sends the parts of it that it holds to other viewers of the same video.
+        </Note>
+      ) : null}
       {show.toggle ? (
         <SwitchRow
           id={`${id}-enabled`}
