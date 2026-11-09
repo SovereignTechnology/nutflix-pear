@@ -380,7 +380,8 @@ describe.skipIf(!EXIT)('slice 5f: the exit run, nutflix-pear ⇄ nfxd over iroh'
     const runner = nodeProcessRunner();
     const binaries = { ffmpeg: BIN.ffmpeg, ffprobe: BIN.ffprobe };
     const pipeline = media.createMediaPipeline({ runner, fs, sha256: nodeSha256, binaries });
-    const plan = pipeline.plan(await pipeline.probe(clip), { codec: 'h264' });
+    // The old ladder (pear #97: `'all'`), so nfxd fetches and checks more than one rendition.
+    const plan = pipeline.plan(await pipeline.probe(clip), { codec: 'h264', sizes: 'all' });
     // The caller makes the work directory, as Studio's upload does (the first run had none).
     await mkdir(join(work, 'transcode-b'), { recursive: true });
     const output = await pipeline.transcode(clip, plan, () => undefined, {

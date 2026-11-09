@@ -108,5 +108,13 @@
  *       stopped; at most `MAX_NFX_PLAY_PROBLEMS` 16) and `NfxPlaySession.onChange?(cb)`, so a watch
  *       page sees renditions an `element` source learns once attached, and says what went wrong.
  *       Every v14 consumer compiles.
+ *  16 — 2026-11-09 (pear #97, the maintainer: one rendition by default, the creator picks the
+ *       sizes, up to 2160p; a size is the short side's lines). Additive: `UploadInput.sizes?`
+ *       (offered sizes only; absent = one, 720p, never upscaled), `Settings.publishSizes?` (the creator's last choice, Studio's next
+ *       default), `studio.probe(file)` → `SourceSizes` (`OfferedSize`s, read before anything is
+ *       uploaded; a shell that cannot probe rejects `unsupported`), `MAX_UPLOAD_SIZES` (7) and
+ *       `MAX_UPLOAD_HEIGHT` (2160); `MediaPipeline.plan`'s `sizes` option. Every v15 consumer
+ *       compiles; an implementer adds `studio.probe`; a caller of `plan` without options now gets
+ *       one rendition instead of the 1080p / 720p / 360p ladder (`sizes: 'all'` keeps it).
  */
-export const CONTRACTS_VERSION = 15 as const;
+export const CONTRACTS_VERSION = 16 as const;

@@ -1,7 +1,7 @@
 import type { LadderPlan, MediaProbe, RenditionSpec } from '../contracts/media.js';
 import { MediaError } from './errors.js';
 import { displayDimensions } from './ffprobe.js';
-import { GOP_SECONDS, fitToHeight } from './ladder.js';
+import { GOP_SECONDS, fitToShortSide } from './ladder.js';
 
 /**
  * ffmpeg argv builders. Every function returns an ARRAY handed to `ProcessRunner.run` —
@@ -28,13 +28,16 @@ export function gopFrames(fps: number): number {
   return Math.max(1, Math.round((fps > 0 ? fps : 30) * GOP_SECONDS));
 }
 
-/** The exact output dimensions a rendition will have (even, aspect-preserving). */
+/**
+ * The exact output dimensions a rendition will have (even, aspect-preserving), its short side
+ * `spec.height` lines (pear #97: a portrait 1080x1920 source's 720p is 720x1280).
+ */
 export function renditionDimensions(
   source: MediaProbe,
   spec: RenditionSpec,
 ): { readonly width: number; readonly height: number } {
   if (!source.video) throw new Error('renditionDimensions: source has no video');
-  return fitToHeight(displayDimensions(source.video), spec.height);
+  return fitToShortSide(displayDimensions(source.video), spec.height);
 }
 
 function videoCodecArgs(spec: RenditionSpec, g: number, preset: string): readonly string[] {

@@ -357,6 +357,33 @@ describe('HostIn → HostOut', () => {
     expect(r.out.filter((o) => o.kind === 'event' && o.wc === 12)).toEqual([]);
   });
 
+  it('contracts v16: studio.probe asks the worker about the file main resolved, and only that', async () => {
+    r = await rig();
+    await r.ready();
+    const token = `nf-file:${'c'.repeat(32)}`;
+    const ok = await reply(
+      r,
+      11,
+      call(r, 11, 'studio.probe', [token], {
+        file: { path: '/home/u/Videos/clip.mp4', name: 'clip.mp4', size: 9 },
+      }),
+    );
+    expect(ok.ok).toBe(true);
+    expect(r.worker().calls('studio.probe')).toEqual([{ path: '/home/u/Videos/clip.mp4' }]);
+    expect(ok.ok ? ok.result : undefined).toMatchObject({ height: 1080 });
+    // Without main's swap there is no file: the renderer's token is never a path.
+    const none = await invoke(r, 11, 'studio.probe', [token]);
+    expect(none.ok ? undefined : none.error.code).toBe('file-token-invalid');
+    // A file on any other call is refused.
+    const other = await reply(
+      r,
+      11,
+      call(r, 11, 'settings', [], { file: { path: '/tmp/x.mp4', name: 'x.mp4', size: 1 } }),
+    );
+    expect(other.ok ? undefined : other.error.code).toBe('invalid-argument');
+    expect(r.worker().calls('studio.probe')).toHaveLength(1);
+  });
+
   it('wc-gone closes that webContents’ sessions and subscriptions, and nothing else', async () => {
     r = await rig({ flags: { devMocks: true } });
     await r.ready();

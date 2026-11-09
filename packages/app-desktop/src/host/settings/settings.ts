@@ -66,6 +66,7 @@ const SETTINGS_KEYS: readonly (keyof Settings)[] = [
   'theme',
   'autoTopUp',
   'nfx',
+  'publishSizes',
 ];
 
 /** True when `patch` is a valid `Partial<Settings>` — the same guard main and the host run on IPC. */
@@ -80,6 +81,8 @@ export function isSettingsPatch(patch: unknown): patch is Partial<Settings> {
  * newer build added, or a bad v12 `irohRelays`) is replaced by the defaults switched OFF, never by
  * the default ON (`DEFAULT_NFX`), and leaves the rest of the file standing. An absent one is the
  * default: on (ADR 0020's 2026-11-08 amendment). A v10/v11 `nfx` (no `irohRelays`) is still valid.
+ * `publishSizes` (contracts v16) is checked on its own too: an invalid one is dropped (Studio then
+ * pre-selects 720p) and leaves the rest of the file standing.
  */
 export function parseStoredSettings(raw: unknown): StoredSettings | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
@@ -90,12 +93,16 @@ export function parseStoredSettings(raw: unknown): StoredSettings | null {
   const picked: Record<string, unknown> = {};
   for (const k of SETTINGS_KEYS)
     if (Object.prototype.hasOwnProperty.call(s, k)) picked[k] = (s as Record<string, unknown>)[k];
-  const { nfx, ...rest } = picked;
+  const { nfx, publishSizes, ...rest } = picked;
   if (!isSettingsPatch(rest)) return null;
+  const sizes: unknown = publishSizes === undefined ? {} : { publishSizes };
   const nfxPatch: unknown = nfx === undefined ? {} : { nfx };
   // A stored `nfx` this build cannot read never becomes "on": it falls back to the defaults, off.
   const kept = isSettingsPatch(nfxPatch) ? nfxPatch : { nfx: { ...DEFAULT_NFX, enabled: false } };
-  return { v: FILE_V, settings: { ...DEFAULT_SETTINGS, ...rest, ...kept } };
+  return {
+    v: FILE_V,
+    settings: { ...DEFAULT_SETTINGS, ...rest, ...kept, ...(isSettingsPatch(sizes) ? sizes : {}) },
+  };
 }
 
 /** What `settings.json` holds. */

@@ -31,6 +31,7 @@ import type {
   Rendition,
   Sats,
   Sha256Hex,
+  SourceSizes,
   TrackerUrl,
   UnixSeconds,
   VideoManifest,
@@ -484,8 +485,31 @@ export const uploadMetaGuards = {
   split: isSplit,
 } as const;
 
-/** Optional upload-meta fields. v8 (ADR 0020): `nfx`, also package the video for NFX. */
-export const uploadMetaOptGuards = { nfx: bool } as const;
+/**
+ * Contracts v16 (pear #97): rendition heights, `UploadInput.sizes` and `Settings.publishSizes`:
+ * whole numbers from 2 to `maxUploadHeight`, unique, at most `maxUploadSizes`.
+ */
+export const isUploadSizes: Guard<readonly number[]> = (x): x is readonly number[] =>
+  arrayOf(int(2, LIMITS.maxUploadHeight), LIMITS.maxUploadSizes)(x) && new Set(x).size === x.length;
+
+/** Contracts v16: `studio.probe`'s answer, as the worker sends it to the host. */
+export const isSourceSizes: Guard<SourceSizes> = obj(
+  {
+    height: int(2, LIMITS.maxUploadHeight),
+    sizes: arrayOf(
+      obj({ height: int(2, LIMITS.maxUploadHeight), original: bool, kbps: int(1, 1_000_000) }),
+      LIMITS.maxUploadSizes,
+      1,
+    ),
+  },
+  { durationSec: num(0, 1e7) },
+);
+
+/**
+ * Optional upload-meta fields. v8 (ADR 0020): `nfx`, also package the video for NFX. v16: `sizes`,
+ * the rendition heights.
+ */
+export const uploadMetaOptGuards = { nfx: bool, sizes: isUploadSizes } as const;
 
 /**
  * Contracts v8: `nfx` only on a free video (`satsPerBlock` 0, issue #15) — the free NFX path
@@ -530,6 +554,8 @@ const isSettingsPatch = obj(
       { enabled: bool, network: oneOf(NFX_NETWORK_IDS), scopedRelays: isScopedRelays },
       { irohRelays: isIrohRelays, trackers: isTrackers },
     ),
+    // Contracts v16: Studio's next default sizes; at least one (absent = 720p).
+    publishSizes: (x: unknown): x is readonly number[] => isUploadSizes(x) && x.length > 0,
     // SE-4: `belowSats: 0` is the v4 "off" sentinel; the host treats `<= 0` as disabled.
     // Issue #2: `amountSats` is a whole number of sats in 1 … `AUTO_TOP_UP_MAX_SATS` (absent =
     // the max) — anything else refuses the whole patch (and a stored file, which then reads as
@@ -600,6 +626,7 @@ export const validateArgs: { readonly [M in Method]: Guard<MethodTable[M][0]> } 
   'wallet.melt': tuple([isMeltQuote]),
   'wallet.history': tuple([], [isHistoryOpts]),
   'studio.upload': tuple([isUploadInputWire]),
+  'studio.probe': tuple([isFileToken]),
   'studio.myVideos': tuple([], [isCursor]),
   'studio.analytics': tuple([isEventId]),
   'seeder.status': tuple([]),

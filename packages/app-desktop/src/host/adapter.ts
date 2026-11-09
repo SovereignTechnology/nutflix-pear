@@ -26,6 +26,7 @@ import type {
   CatalogVideo,
   Comment,
   FeedQuery,
+  FileLike,
   MintUrl,
   NetworkAdapter,
   NfxAddress,
@@ -46,6 +47,7 @@ import type {
   SeederStatus,
   Settings,
   Sha256Hex,
+  SourceSizes,
   SignerStatus,
   UnixSeconds,
   Unsubscribe,
@@ -974,6 +976,11 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   // ---- studio ----------------------------------------------------------------------------
 
   readonly studio: NetworkAdapter['studio'] = {
+    // Contracts v16: an in-process caller names the file by its path.
+    probe: (file: string | FileLike): Promise<SourceSizes> => {
+      if (typeof file !== 'string') fail('invalid-argument', 'desktop probes take a file path');
+      return this.probe(file);
+    },
     upload: async (
       input: UploadInput,
       onProgress: (p: UploadProgress) => void,
@@ -1048,6 +1055,14 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     } finally {
       this.uploads.delete(input.uploadId);
     }
+  }
+
+  /**
+   * Contracts v16 (pear #97): the sizes the file at `path` may be published in (the worker's
+   * ffprobe). The path is main's resolution of a renderer's token, or an in-process caller's.
+   */
+  probe(path: string): Promise<SourceSizes> {
+    return this.o.worker('studio.probe', { path });
   }
 
   /** Progress for `uploadId` as started by `owner` (may be subscribed before it starts). */

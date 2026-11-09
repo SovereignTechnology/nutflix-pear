@@ -47,7 +47,8 @@ export interface StudioUploadDeps {
   readonly workDir?: string;
   /** Remove the work directory after a successful publish. Default false. */
   readonly removeWorkDir?: boolean;
-  readonly planOpts?: { readonly maxHeight?: number; readonly codec?: RenditionSpec['codec'] };
+  /** `MediaPipeline.plan`'s options; `sizes` absent = `input.sizes` (contracts v16). */
+  readonly planOpts?: Parameters<MediaPipeline['plan']>[1];
 }
 
 const mimeFor = (c: RenditionSpec['container']): Rendition['mime'] =>
@@ -87,7 +88,11 @@ export async function runStudioUpload(
 
     onProgress({ stage: 'probing' });
     const probe = await pipeline.probe(path);
-    const plan = pipeline.plan(probe, deps.planOpts);
+    // Contracts v16: the creator's sizes, unless the caller fixed them.
+    const plan = pipeline.plan(probe, {
+      ...(input.sizes === undefined ? {} : { sizes: input.sizes }),
+      ...deps.planOpts,
+    });
     const workDir = deps.workDir ?? (await fs.mkdtemp('nutflix-upload-'));
 
     const output = await pipeline.transcode(

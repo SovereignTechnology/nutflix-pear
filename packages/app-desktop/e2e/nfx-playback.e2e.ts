@@ -152,7 +152,8 @@ void describe(
         step('source encoded');
         const encoded = await pipeline.transcode(
           source,
-          pipeline.plan(await pipeline.probe(source)),
+          // The old ladder (pear #97: `'all'`): the quality switch needs more than one rendition.
+          pipeline.plan(await pipeline.probe(source), { sizes: 'all' }),
           () => undefined,
         );
         const addr = nfx.VideoAddr.parse('nfx:regtest:1:s-e-clip');

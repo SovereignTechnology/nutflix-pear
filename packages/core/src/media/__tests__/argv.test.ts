@@ -10,6 +10,7 @@ import {
   storyboardArgv,
   thumbnailArgv,
 } from '../argv.js';
+import { sizeSpec } from '../ladder.js';
 
 const source: MediaProbe = {
   container: 'mov,mp4,m4a,3gp,3g2,mj2',
@@ -114,6 +115,57 @@ describe('renditionArgv (h264/mp4)', () => {
     expect(gopFrames(0)).toBe(60);
     expect(gopFrames(24)).toBe(48);
     expect(gopFrames(0.2)).toBe(1);
+  });
+});
+
+describe('renditionArgv at 2160p (pear #97: sizes up to 4K)', () => {
+  const uhd: MediaProbe = {
+    ...source,
+    video: { codec: 'hevc', width: 3840, height: 2160, fps: 59.94 },
+  };
+  const spec = sizeSpec(2160);
+  const argv = renditionArgv('/in/4k.mov', '/out/2160p.mp4', uhd, spec, {
+    fps: 59.94,
+    preset: 'medium',
+  });
+
+  it('scales to 3840x2160 at the 2160p tier rates, H.264 High in faststart MP4', () => {
+    expect(spec).toEqual({
+      label: '2160p',
+      height: 2160,
+      videoBitrateKbps: 16000,
+      audioBitrateKbps: 128,
+      codec: 'h264',
+      container: 'mp4',
+    });
+    expect(opt(argv, '-vf')).toBe('scale=3840:2160');
+    expect(opt(argv, '-c:v')).toBe('libx264');
+    expect(opt(argv, '-profile:v')).toBe('high');
+    expect(opt(argv, '-b:v')).toBe('16000k');
+    expect(opt(argv, '-maxrate')).toBe('24000k');
+    expect(opt(argv, '-bufsize')).toBe('32000k');
+    expect(opt(argv, '-b:a')).toBe('128k');
+    expect(opt(argv, '-g')).toBe(String(gopFrames(59.94)));
+    expect(argv.join(' ')).toContain('-movflags +faststart');
+    expect(argv.at(-1)).toBe('/out/2160p.mp4');
+  });
+
+  it('pins no H.264 level: x264 picks the one 2160p needs from size and rate, as nfx-media does', () => {
+    expect(argv).not.toContain('-level');
+    expect(argv).not.toContain('-level:v');
+    expect(argv.some((a) => a.startsWith('level='))).toBe(false);
+  });
+
+  it('a portrait 4K phone video: 2160p is its short side, 2160x3840', () => {
+    const portrait: MediaProbe = {
+      ...source,
+      video: { codec: 'h264', width: 3840, height: 2160, fps: 30, rotation: 90 },
+    };
+    const p = renditionArgv('/in/p.mp4', '/out/p.mp4', portrait, sizeSpec(2160), { fps: 30 });
+    expect(opt(p, '-vf')).toBe('scale=2160:3840');
+    // and its 720p is 720x1280
+    const q = renditionArgv('/in/p.mp4', '/out/q.mp4', portrait, sizeSpec(720), { fps: 30 });
+    expect(opt(q, '-vf')).toBe('scale=720:1280');
   });
 });
 

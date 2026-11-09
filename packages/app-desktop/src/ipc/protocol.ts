@@ -20,6 +20,8 @@ import type {
   MAX_NFX_IROH_RELAYS,
   MAX_NFX_SCOPED_RELAYS,
   MAX_NFX_TRACKERS,
+  MAX_UPLOAD_HEIGHT,
+  MAX_UPLOAD_SIZES,
   CatalogVideo,
   Comment,
   FeedQuery,
@@ -45,6 +47,7 @@ import type {
   Settings,
   Sha256Hex,
   SignerStatus,
+  SourceSizes,
   UnixSeconds,
   UploadInput,
   UploadProgress,
@@ -135,6 +138,10 @@ export const LIMITS = {
   maxNfxIrohRelays: 4,
   /** Contracts v14: `NfxSettings.trackers` — core's `MAX_NFX_TRACKERS`. */
   maxNfxTrackers: 4,
+  /** Contracts v16: `UploadInput.sizes` / `Settings.publishSizes` — core's `MAX_UPLOAD_SIZES`. */
+  maxUploadSizes: 7,
+  /** Contracts v16: the tallest rendition height — core's `MAX_UPLOAD_HEIGHT`. */
+  maxUploadHeight: 2160,
   /** `PricePolicy.minPaySats` ceiling — core's `MAX_MIN_PAY_SATS` (the manifest parser's bound). */
   maxMinPaySats: 1_000_000,
   /** A custom thumbnail's bytes (same cap as host-fetched images, design §3). */
@@ -163,7 +170,7 @@ export type UploadId = IpcBrand<string, 'UploadId'>;
 /**
  * SE-1: main-minted opaque token standing for one user-chosen file — `nf-file:` + 32 lower-case
  * hex. Single-use, per webContents, 10-minute TTL. Main swaps it for the path only when relaying
- * `studio.upload`; any other string in `UploadInputWire.file` is `file-token-invalid`.
+ * `studio.upload` or `studio.probe` (v16); any other string there is `file-token-invalid`.
  */
 export type FileToken = `nf-file:${string}`;
 /** What the renderer plays: main's `nf-media:` proxy in front of the worker's blob server. */
@@ -636,6 +643,11 @@ export interface MethodTable {
   // studio
   /** Progress arrives on topic `{ t: 'upload.progress', uploadId }`. */
   'studio.upload': [args: [input: UploadInputWire], result: VideoManifest];
+  /**
+   * Contracts v16 (pear #97): ffprobe a file the user chose, before anything is uploaded. The file
+   * is a single-use `FileToken`, as for `studio.upload` (SE-1); nothing is published.
+   */
+  'studio.probe': [args: [file: FileToken], result: SourceSizes];
   'studio.myVideos': [args: [cursor?: string | undefined], result: Page<VideoManifest>];
   'studio.analytics': [args: [videoId: NostrEventId], result: AnalyticsWire];
   // seeder
@@ -841,7 +853,7 @@ export type HostIn =
       readonly kind: 'call';
       readonly wc: number;
       readonly msg: AnyCallMsg;
-      /** Only on `studio.upload`: main's resolution of `msg.args[0].file` (SE-1). */
+      /** Only on `studio.upload` and `studio.probe` (v16): main's resolution of their token (SE-1). */
       readonly file?: { readonly path: string; readonly name: string; readonly size: number };
     }
   | { readonly kind: 'sub'; readonly wc: number; readonly msg: SubMsg }
@@ -966,7 +978,10 @@ export type Rehydrated<T> =
           ? { [P in keyof T]: Rehydrated<T[P]> }
           : T;
 
-type AdapterArgChecked = Extract<Exclude<Method, ShellMethod | 'studio.upload'>, AdapterMethod>;
+type AdapterArgChecked = Extract<
+  Exclude<Method, ShellMethod | 'studio.upload' | 'studio.probe'>,
+  AdapterMethod
+>;
 type AdapterResultChecked = Extract<
   Exclude<Method, ShellMethod | 'play' | 'playNfx' | 'image'>,
   AdapterMethod
@@ -1031,6 +1046,9 @@ interface Checks {
   nfxIrohRelays: Mutual<(typeof LIMITS)['maxNfxIrohRelays'], typeof MAX_NFX_IROH_RELAYS>;
   /** Contracts v14: the tracker cap is core's too. */
   nfxTrackers: Mutual<(typeof LIMITS)['maxNfxTrackers'], typeof MAX_NFX_TRACKERS>;
+  /** Contracts v16: the upload size caps are core's too. */
+  uploadSizes: Mutual<(typeof LIMITS)['maxUploadSizes'], typeof MAX_UPLOAD_SIZES>;
+  uploadHeight: Mutual<(typeof LIMITS)['maxUploadHeight'], typeof MAX_UPLOAD_HEIGHT>;
   nfxNetworks: Mutual<(typeof NFX_NETWORK_IDS)[number], NfxNetwork>;
   topUpPerDay: Mutual<
     (typeof LIMITS)['maxAutoTopUpSatsPerDay'],
@@ -1045,7 +1063,7 @@ interface Checks {
     walletTypes.RestoreProgress
   >;
 }
-/** Arguments: identical to the contract's parameters (except `studio.upload`, SE-1). */
+/** Arguments: identical to the contract's parameters (except `studio.upload`/`probe`, SE-1). */
 type ArgChecks = { [M in AdapterArgChecked]: Mutual<MethodTable[M][0], ContractArgs<M>> };
 /** Results: a rehydrated wire result IS the contract result, both ways. */
 type ResultChecks = {

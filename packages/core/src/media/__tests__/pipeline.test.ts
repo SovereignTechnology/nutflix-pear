@@ -185,7 +185,8 @@ describe('MediaPipeline.transcode', () => {
     const runner = fakeTools(fs, behaviour);
     const p = build(fs, runner);
     const probe = await p.probe(INPUT);
-    const plan = p.plan(probe);
+    // The old three-rendition ladder, so every rendition path is exercised (pear #97: 'all').
+    const plan = p.plan(probe, { sizes: 'all' });
     const progress: TranscodeProgress[] = [];
     const out = await p.transcode(INPUT, plan, (e) => progress.push(e));
     return { fs, runner, p, plan, progress, out };
@@ -272,7 +273,9 @@ describe('MediaPipeline.transcode', () => {
     const p = build(fs, fakeTools(fs));
     const plan = p.plan(await p.probe(INPUT));
     const out = await p.transcode(INPUT, plan, () => undefined, { workDir: '/work/x' });
-    expect(out.renditions[0]?.path).toBe('/work/x/1080p.mp4');
+    // Pear #97: by default one rendition, 720p for this 1080p source.
+    expect(out.renditions.map((r) => r.path)).toEqual(['/work/x/720p.mp4']);
+    expect(out.renditions.map((r) => [r.width, r.height])).toEqual([[1280, 720]]);
     await expect(
       p.transcode(
         INPUT,

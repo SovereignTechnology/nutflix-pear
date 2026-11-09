@@ -15,6 +15,10 @@ export function ffprobeArgv(path: string): readonly string[] {
     '-hide_banner',
     '-v',
     'error',
+    // Local files only (pear #97: Studio probes a chosen file before anything is confirmed): a
+    // playlist-like input never makes ffprobe open a network URL.
+    '-protocol_whitelist',
+    'file',
     '-print_format',
     'json',
     '-show_format',

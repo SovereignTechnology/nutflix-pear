@@ -37,6 +37,7 @@ import {
   isSessionId,
   isSha256,
   isUnixSeconds,
+  isSourceSizes,
   isUploadId,
   isVideoManifest,
   isWireError,
@@ -268,6 +269,7 @@ export const validateWorkerArgs: {
   'nfx.play.close': safe(isSid),
   'studio.ffmpeg': safe(obj({ recheck: bool }, { path: isAbsolutePath })),
   'studio.upload': safe(isStudioUpload),
+  'studio.probe': safe(obj({ path: isAbsolutePath })),
   'image.fetch': safe(obj({ url: isHyperImageUrl, sha256: isSha256, size: isImageSize })),
   'profile.putImage': safe(obj({ hex: isImageHex })),
 };
@@ -350,6 +352,7 @@ export const validateWorkerResult: {
   'nfx.play.close': isVoid,
   'studio.ffmpeg': safe(isFfmpegStatus),
   'studio.upload': safe(isVideoManifest),
+  'studio.probe': safe(isSourceSizes),
   // At most the image cap as hex (two characters a byte).
   'image.fetch': safe(obj({ hex: isImageHex })),
   'profile.putImage': safe(obj({ url: isHyperImageUrl, sha256: isSha256, size: isImageSize })),

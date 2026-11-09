@@ -17,6 +17,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -40,9 +41,12 @@ import {
   describeStudioError,
   errorMessage,
   failProgress,
+  initialSizes,
   reduceUploadProgress,
+  sameSizes,
   titleFromFileName,
   toUploadInput,
+  type SourceState,
   type StudioDraft,
   type StudioFile,
   type UploadRun,
@@ -88,6 +92,8 @@ export interface StudioProps extends ScreenProps {
   readonly inlineSheet?: boolean | undefined;
   readonly className?: string | undefined;
 }
+
+const NO_SOURCE: SourceState = { status: 'none' };
 
 /** `'pending'` until `adapter.me()` answers; `null` = signed out. */
 type Me = 'pending' | NostrPubkey | null;
@@ -160,8 +166,11 @@ export function Studio({
   // ---- upload form ------------------------------------------------------------------
   const [draft, setDraft] = useState<StudioDraft>(() => draftFor(pendingFile));
   const mintsTouched = useRef(false);
+  // Pear #97: the sizes are the creator's once they touch them; until then Studio derives them.
+  const sizesTouched = useRef(false);
   const onDraft = useCallback((patch: Partial<StudioDraft>): void => {
     if (patch.mints !== undefined) mintsTouched.current = true;
+    if (patch.sizes !== undefined) sizesTouched.current = true;
     setDraft((d) => ({ ...d, ...patch }));
   }, []);
   const onChooseFile = useCallback((file: StudioFile): void => {
@@ -186,6 +195,8 @@ export function Studio({
   const [defaultMints, setDefaultMints] = useState<readonly MintUrl[]>([]);
   // Slice 5d-4: a free video (price 0) only while NFX is on.
   const [nfxOn, setNfxOn] = useState(false);
+  // Contracts v16 (pear #97): the creator's last sizes (`Settings.publishSizes`), pre-selected.
+  const [rememberedSizes, setRememberedSizes] = useState<readonly number[] | undefined>(undefined);
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
@@ -195,6 +206,7 @@ export function Studio({
         const defaults = settings.status === 'fulfilled' ? settings.value.defaultMints : [];
         const held = wallet.status === 'fulfilled' ? wallet.value : [];
         setNfxOn(settings.status === 'fulfilled' && settings.value.nfx?.enabled === true);
+        if (settings.status === 'fulfilled') setRememberedSizes(settings.value.publishSizes);
         setDefaultMints(defaults);
         setKnownMints((prev) => [...new Set([...defaults, ...held, ...prev])]);
         if (!mintsTouched.current)
@@ -205,6 +217,52 @@ export function Studio({
       cancelled = true;
     };
   }, [adapter, signedIn]);
+  // Contracts v16 (pear #97): the chosen file's sizes, read by the shell (`studio.probe`) before
+  // anything is uploaded; one that cannot be read offers every size (never upscaled anyway).
+  const chosenSource = draft.file?.source;
+  const [source, setSource] = useState<{
+    readonly for: StudioFile['source'] | undefined;
+    readonly state: SourceState;
+  }>({ for: undefined, state: { status: 'none' } });
+  useEffect(() => {
+    if (chosenSource === undefined) return;
+    const ac = new AbortController();
+    setSource({ for: chosenSource, state: { status: 'probing' } });
+    let probing: Promise<SourceState>;
+    try {
+      probing = adapter.studio
+        .probe(chosenSource)
+        .then((s): SourceState => ({ status: 'ready', source: s }));
+    } catch {
+      probing = Promise.resolve({ status: 'unknown' });
+    }
+    void probing
+      .catch((): SourceState => ({ status: 'unknown' }))
+      .then((state) => {
+        if (!ac.signal.aborted) setSource({ for: chosenSource, state });
+      });
+    return () => {
+      ac.abort();
+    };
+  }, [adapter, chosenSource]);
+  const sourceState = useMemo(
+    (): SourceState =>
+      chosenSource !== undefined && source.for === chosenSource ? source.state : NO_SOURCE,
+    [chosenSource, source],
+  );
+  // The sizes follow the file: the creator's pick once they made one (mapped onto what this file
+  // offers), else their remembered choice, else 720p (`initialSizes`).
+  const draftSizes = useRef(draft.sizes);
+  draftSizes.current = draft.sizes;
+  useEffect(() => {
+    if (sourceState.status !== 'ready' && sourceState.status !== 'unknown') return;
+    const base = sizesTouched.current ? draftSizes.current : rememberedSizes;
+    const sizes = initialSizes(sourceState, base);
+    setDraft((d) => (sameSizes(sizes, d.sizes) ? d : { ...d, sizes }));
+    // A file whose sizes are unknown names none: the upload makes the default.
+    if (sizes === undefined) sizesTouched.current = false;
+  }, [sourceState, rememberedSizes]);
+
   const onAddMint = useCallback((mint: MintUrl): void => {
     setKnownMints((prev) => (prev.includes(mint) ? prev : [...prev, mint]));
   }, []);
@@ -336,7 +394,13 @@ export function Studio({
     const input = toUploadInput(draft, { nfxOn });
     if (input === undefined || draft.file === undefined) return;
     startUpload(input, draft.file);
-  }, [draft, nfxOn, startUpload]);
+    // Pear #97: the sizes the creator picked become their default for the next upload.
+    const sizes = input.sizes;
+    if (sizesTouched.current && sizes !== undefined && !sameSizes(sizes, rememberedSizes)) {
+      setRememberedSizes(sizes);
+      adapter.updateSettings({ publishSizes: sizes }).catch(() => undefined);
+    }
+  }, [adapter, draft, nfxOn, rememberedSizes, startUpload]);
   const retry = useCallback((): void => {
     if (run.phase !== 'idle') startUpload(run.input, run.file);
   }, [run, startUpload]);
@@ -348,6 +412,7 @@ export function Studio({
     runSeq.current++;
     setRun(IDLE_RUN);
     mintsTouched.current = false;
+    sizesTouched.current = false;
     setDraft({ ...draftFor(undefined), mints: defaultMints });
   }, [defaultMints]);
 
@@ -392,6 +457,7 @@ export function Studio({
             draft={draft}
             onDraft={onDraft}
             onChooseFile={onChooseFile}
+            source={sourceState}
             knownMints={knownMints}
             onAddMint={onAddMint}
             nfxOn={nfxOn}

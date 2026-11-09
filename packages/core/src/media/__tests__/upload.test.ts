@@ -108,6 +108,36 @@ function scriptedPipeline(fs: MemoryFs, opts: { failTranscode?: boolean } = {}):
 }
 
 describe('runStudioUpload', () => {
+  it("contracts v16: plans the input's sizes; planOpts, when set, win", async () => {
+    const seen: unknown[] = [];
+    const run = async (
+      sizes: readonly number[] | undefined,
+      planOpts?: { readonly sizes: 'all' },
+    ): Promise<void> => {
+      const fs = new MemoryFs();
+      const base = scriptedPipeline(fs);
+      await runStudioUpload(sizes === undefined ? input : { ...input, sizes }, () => undefined, {
+        pipeline: {
+          ...base,
+          plan: (probe, opts) => {
+            seen.push(opts);
+            return base.plan(probe, opts);
+          },
+        },
+        sink: new MemorySink(),
+        publish: () => Promise.resolve(VIDEOS[0]!),
+        sha256: nodeSha256,
+        fs,
+        workDir: '/work',
+        ...(planOpts === undefined ? {} : { planOpts }),
+      });
+    };
+    await run(undefined);
+    await run([1080, 360]);
+    await run([1080], { sizes: 'all' });
+    expect(seen).toEqual([{}, { sizes: [1080, 360] }, { sizes: 'all' }]);
+  });
+
   it('drives probe → transcode → write → publish and maps progress to UploadProgress', async () => {
     const fs = new MemoryFs();
     const progress: UploadProgress[] = [];

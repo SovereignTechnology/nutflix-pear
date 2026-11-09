@@ -9,6 +9,7 @@ import type {
   CatalogVideo,
   Comment,
   FeedQuery,
+  FileLike,
   MintUrl,
   NetworkAdapter,
   NfxAddress,
@@ -29,6 +30,7 @@ import type {
   Settings,
   Sha256Hex,
   SignerStatus,
+  SourceSizes,
   UnixSeconds,
   Unsubscribe,
   UploadInput,
@@ -53,6 +55,7 @@ import {
   sats,
   unix,
 } from './fixtures.js';
+import { sourceSizes } from '../media/ladder.js';
 import { MockWallet } from './mock-wallet.js';
 
 export type MockFailure = 'no-seeders' | 'no-signer' | 'no-balance' | 'relay-down';
@@ -74,6 +77,11 @@ export interface MockNetworkAdapterOptions {
    * default, so screens see only NIP-71 videos unless a story or test asks.
    */
   readonly nfx?: boolean;
+  /**
+   * v16: the display height `studio.probe` reads from any file (default 1080), or `null` for a
+   * file with no video stream (`no-video-stream`).
+   */
+  readonly sourceHeight?: number | null;
 }
 
 export class MockNetworkAdapter implements NetworkAdapter {
@@ -509,12 +517,33 @@ export class MockNetworkAdapter implements NetworkAdapter {
 
   // ---- studio
   studio = {
+    probe: (_file: string | FileLike): Promise<SourceSizes> => {
+      const height = this.opts.sourceHeight === undefined ? 1080 : this.opts.sourceHeight;
+      if (height === null) {
+        return this.delay(null).then(() => {
+          throw Object.assign(new Error('no-video-stream: that file has no video'), {
+            code: 'no-video-stream',
+          });
+        });
+      }
+      return this.delay(
+        sourceSizes({
+          container: 'mov,mp4,m4a,3gp,3g2,mj2',
+          durationSec: 600,
+          video: { codec: 'h264', width: Math.round((height * 16) / 9), height, fps: 30 },
+        }),
+      );
+    },
     upload: async (
       input: UploadInput,
       onProgress: (p: UploadProgress) => void,
     ): Promise<VideoManifest> => {
       onProgress({ stage: 'probing' });
-      for (const r of ['1080p', '720p', '360p'])
+      // Contracts v16: the sizes asked for, else the default (one rendition).
+      const labels = (
+        input.sizes !== undefined && input.sizes.length > 0 ? input.sizes : [720]
+      ).map((h) => `${String(h)}p`);
+      for (const r of labels)
         for (const pct of [25, 50, 75, 100])
           onProgress({ stage: 'transcoding', rendition: r, percent: pct });
       onProgress({
@@ -525,8 +554,7 @@ export class MockNetworkAdapter implements NetworkAdapter {
           'https://fixture.example/thumbs/new-3.jpg',
         ],
       });
-      for (const r of ['1080p', '720p', '360p'])
-        onProgress({ stage: 'writing', rendition: r, percent: 100 });
+      for (const r of labels) onProgress({ stage: 'writing', rendition: r, percent: 100 });
       onProgress({ stage: 'publishing' });
       const base = VIDEOS[0];
       if (!base) throw new Error('no fixture');
