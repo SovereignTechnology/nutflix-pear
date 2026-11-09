@@ -52,13 +52,13 @@ export function hostRelayInfoFetch(opts: HostRelayInfoOptions = {}): nostr.Relay
         headers: { accept: 'application/nostr+json', 'accept-encoding': 'identity' },
         timeout: timeoutMs,
       });
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      // `fail` runs only from the events below, all after `timer` is set.
       const fail = (e: Error): void => {
         clearTimeout(timer);
         req.destroy();
         reject(e);
       };
-      timer = setTimeout(() => {
+      const timer = setTimeout(() => {
         fail(new Error('NIP-11: timed out'));
       }, timeoutMs);
       req.on('timeout', () => {
