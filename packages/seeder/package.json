@@ -28,14 +28,14 @@
     "corestore": "7.12.2",
     "hyperblobs": "2.12.1",
     "hypercore": "11.35.3",
-    "hyperswarm": "4.17.0",
-    "nostr-tools": "2.25.2",
+    "hyperswarm": "4.17.2",
+    "nostr-tools": "2.25.4",
     "protomux": "3.11.0",
     "sodium-universal": "5.0.1",
     "ws": "8.21.3"
   },
   "devDependencies": {
-    "@hyperswarm/secret-stream": "6.9.1",
+    "@hyperswarm/secret-stream": "6.9.2",
     "@types/ws": "8.18.1",
     "hyperdht": "6.34.0"
   }
