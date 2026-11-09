@@ -93,13 +93,15 @@ describe('core entry points (ADR 0022)', () => {
           f,
         ).toBe(false);
       }
-      // Cashu's library is reached for one curve-point check in NFX manifests, and nowhere else.
-      const cashu = [...(packages.get('@cashu/cashu-ts') ?? [])];
+      // No cashu code at all (M3 moved the one curve-point check in NFX manifests to @noble/curves), and
+      // @noble/curves is reached for that check only.
+      expect(packages.has('@cashu/cashu-ts')).toBe(false);
+      const curves = [...(packages.get('@noble/curves') ?? [])];
       expect(
-        cashu.every((f) => f === 'nfx/manifest.ts'),
-        cashu.join(', '),
+        curves.every((f) => f === 'nfx/manifest.ts'),
+        curves.join(', '),
       ).toBe(true);
-      const allowed = ['nostr-tools', '@cashu/cashu-ts', 'sodium-universal'];
+      const allowed = ['nostr-tools', '@noble/curves', 'sodium-universal'];
       expect([...packages.keys()].filter((p) => !allowed.includes(p))).toEqual([]);
     });
   }

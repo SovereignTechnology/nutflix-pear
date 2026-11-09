@@ -298,6 +298,12 @@ export function Home({
       cancelled = true;
     };
   }, [adapter, identityGen]);
+  // ADR 0022: the feeds offered can change after that (the shell learns from Settings that NFX is
+  // on, which offers the Network feed, after Home first renders). A signed-out visitor who has not
+  // picked a feed keeps landing where the fallback is now: on the web, the Network feed.
+  useEffect(() => {
+    if (me === null && !userChoseTab.current) setActiveTab(fallbackTab);
+  }, [me, fallbackTab]);
 
   // ---- feeds -----------------------------------------------------------------------
   const [feeds, setFeeds] = useState<Feeds>(INITIAL_FEEDS);

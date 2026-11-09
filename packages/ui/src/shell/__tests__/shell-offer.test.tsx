@@ -45,7 +45,8 @@ const WEB: ShellOffer = {
   sections: ['home', 'settings'],
   homeTabs: ['network', 'tags'],
   settingsSections: ['appearance', 'playback', 'relays', 'nfx'],
-  nfxParts: { toggle: false, irohRelays: false, trackers: true },
+  nfxParts: { toggle: false, irohRelays: false, trackers: true, meshNotice: true },
+  appearanceParts: { remoteImages: false },
   signIn: false,
 };
 
@@ -130,6 +131,7 @@ describe('ShellOffer (ADR 0022)', () => {
     await go(m, { name: 'settings' });
     expect(seen.props.get('Settings')?.['sections']).toBeUndefined();
     expect(seen.props.get('Settings')?.['nfxParts']).toBeUndefined();
+    expect(seen.props.get('Settings')?.['appearanceParts']).toBeUndefined();
     expect(m.container.textContent).toContain('Connect signer');
   });
 
@@ -141,6 +143,7 @@ describe('ShellOffer (ADR 0022)', () => {
     await go(m, { name: 'settings' });
     expect(seen.props.get('Settings')?.['sections']).toEqual(WEB.settingsSections);
     expect(seen.props.get('Settings')?.['nfxParts']).toEqual(WEB.nfxParts);
+    expect(seen.props.get('Settings')?.['appearanceParts']).toEqual(WEB.appearanceParts);
     await go(m, { name: 'search', q: 'orbits' });
     expect(m.container.querySelector('[data-screen]')?.getAttribute('data-screen')).toBe('Search');
   });

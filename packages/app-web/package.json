@@ -25,9 +25,13 @@
     "@noble/curves": "1.9.7",
     "@sovit/core": "0.0.0",
     "@sovit/ui": "0.0.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "sodium-javascript": "0.8.0"
   },
   "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
     "esbuild": "0.28.2",
     "jsdom": "29.1.1"
   }
