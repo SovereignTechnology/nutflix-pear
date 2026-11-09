@@ -107,6 +107,15 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, `ci`, `chore`
 Subject line: imperative mood, no trailing full stop, ideally under 72 characters. Commits do not
 carry `Co-Authored-By` trailers or tool-attribution lines.
 
+## The project bot
+
+The repository has a bot, `sovtechpro[bot]`. It reviews new pull requests, explains failed CI
+runs, and answers questions when the maintainer mentions it in a thread. Only the maintainer can
+ask it for anything; mentions from other accounts are ignored. When the maintainer asks it for a
+fix, it opens a **draft** pull request on a `bot/...` branch. It never merges, never pushes to
+`main`, and never edits `.github/`. The maintainer reviews and merges its pull requests like
+anyone else's.
+
 ## How this project is built
 
 Much of the code, the tests and the documentation here was written with AI assistance: AI coding
