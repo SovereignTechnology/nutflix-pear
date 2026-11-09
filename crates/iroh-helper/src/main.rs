@@ -1,11 +1,13 @@
 //! `nutflix-iroh-helper --state <dir>`: the thin iroh process the desktop worker spawns
 //! (ADR 0021; nfx ADR 0103 §2). It speaks framed messages on stdin/stdout and opens no socket
-//! besides iroh's own. It moves bytes and decides nothing: README.md has the protocol and the
-//! rules it keeps.
+//! besides iroh's own and, once asked (`rtc-init`), one UDP socket for WebRTC with browsers
+//! (ADR 0023). It moves bytes and decides nothing: README.md has the protocol and the rules it
+//! keeps.
 
 mod frames;
 mod node;
 mod ops;
+mod rtc;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
