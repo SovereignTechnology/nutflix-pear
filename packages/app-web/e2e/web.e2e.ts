@@ -95,6 +95,7 @@ const SITE_HEADERS = resolve(env('SITE_HEADERS') ?? join(pkg, 'dist', 'site-head
 const FFMPEG = env('FFMPEG') ?? 'ffmpeg';
 const OPENSSL = env('OPENSSL') ?? 'openssl';
 const OUT = env('E2E_OUT');
+const CHROMIUM = env('CHROMIUM');
 const NS = 'nfx:testnet:1';
 const SETTINGS_KEY = 'nutflix.web.settings.v1';
 
@@ -132,7 +133,7 @@ function start(
   const child = spawn(cmd, args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
   children.push(child);
   let text = '';
-  child.stderr?.on('data', (chunk: Buffer) => {
+  child.stderr.on('data', (chunk: Buffer) => {
     text += chunk.toString();
   });
   return new Promise((ok, fail) => {
@@ -141,7 +142,7 @@ function start(
       if (matches.every((m) => m !== null)) {
         clearInterval(timer);
         clearTimeout(limit);
-        ok({ child, matches: matches as RegExpExecArray[], text: () => text });
+        ok({ child, matches, text: () => text });
       }
     }, 100);
     const limit = setTimeout(() => {
@@ -718,7 +719,7 @@ async function main(): Promise<void> {
     // Chromium's own sandbox, as pear's other browser runs keep it (E2E_NO_SANDBOX=1 drops it, for
     // a host whose kernel refuses its user namespaces).
     chromiumSandbox: env('E2E_NO_SANDBOX') === undefined,
-    ...(env('CHROMIUM') === undefined ? {} : { executablePath: env('CHROMIUM') }),
+    ...(CHROMIUM === undefined ? {} : { executablePath: CHROMIUM }),
     args: [
       // *.e2e.test is this machine; every other name fails, so the page reaches nobody else.
       '--host-resolver-rules=MAP *.e2e.test 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',

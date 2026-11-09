@@ -83,10 +83,10 @@ function args(argv: readonly string[]): {
   let pearCommit: string | null = null;
   let allowDirty = false;
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+    const a = argv[i] ?? '';
     const value = (): string => {
       const v = argv[++i];
-      if (v === undefined) fail(`${String(a)} needs a value`);
+      if (v === undefined) fail(`${a} needs a value`);
       return v;
     };
     switch (a) {
@@ -103,7 +103,7 @@ function args(argv: readonly string[]): {
         allowDirty = true;
         break;
       default:
-        fail(`unknown argument ${String(a)}`);
+        fail(`unknown argument ${a}`);
     }
   }
   // `out` is emptied first: never the checkout, the package, or a directory holding either.

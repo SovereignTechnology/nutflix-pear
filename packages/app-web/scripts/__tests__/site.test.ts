@@ -183,7 +183,7 @@ describe('the tree hash and source.json', () => {
       pear: { commit: string; tree: string };
       nfx: { commit: string; source: { url: string; sha256: string }; library: { sha256: string } };
     };
-    expect(j.license).toBe('AGPL-3.0-or-later');
+    expect(j['license']).toBe('AGPL-3.0-or-later');
     expect(j.pear).toMatchObject({ commit: 'd'.repeat(40), tree: 'clean' });
     expect(j.nfx.commit).toBe(C);
     expect(j.nfx.source).toEqual({
