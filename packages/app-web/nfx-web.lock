@@ -28,12 +28,12 @@
 # pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
 # web/player/package-lock.json. Node 22.
 #
-# ffef793 is nfx #73 (the player as a library). The pin is the canonical build's: GitHub's
-# ubuntu-24.04 runner, with the tools above, by the web-site workflow (.github/workflows/web-site.yml),
-# which builds it again on every run and fails unless it matches. Two runs gave these bytes. A Kata VM
-# build of the same commit gave other bytes (b3b0bad2…), so lib-tar.sh is not yet host-independent
-# at this commit; the wasm is the same in both.
-nfx ffef7935388bd73bd1d6bcd964f325920794adc3 4705f52f9d4c1c00880928821eb6849f4d230278eccd3d3f48cc0288a08e236c 18a849a8d0f5632ab36eab7e44382f57bfe81dea1911b4996856dada94a5b404
+# 6465cb5 is nfx #74 (nfxd --stun, the `stun` beacon endpoint, and STUN servers from beacons in the
+# library's watchEndpoints, which this site does not use). From #74 on, lib-tar.sh writes the ustar
+# itself (web/player/lib-tar.mjs) instead of calling GNU tar, whose bytes differ between 1.34 and 1.35:
+# GitHub's ubuntu-24.04 runner and a Kata VM give the same tar, 837852ba…. The web-site workflow
+# (.github/workflows/web-site.yml) builds it again on every run and fails unless it matches.
+nfx 6465cb584fbe2026d90e1d6f89708604c1b7b24d b5146baa9cdfd75942a62461738dc8c7ffd30d15909996e05624b52f6393f8f4 837852ba6647563f0de679cb0dbf29a7cc77ff2f7967d134d8f08222b0550ebe
 tool rust 1.98.0
 tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
 tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f
