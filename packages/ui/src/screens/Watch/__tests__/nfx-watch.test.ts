@@ -6,7 +6,7 @@
 import { act, createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
-import type { NfxAddress } from '@sovit/core';
+import type { MediaElementLike, NfxAddress, NfxPlaySession } from '@sovit/core';
 import { click, render, type Rendered } from '../../../components/testing/render.js';
 import type { Route } from '../../shared/route.js';
 import { NfxWatch } from '../NfxWatch.js';
@@ -136,6 +136,84 @@ describe('NfxWatch', () => {
     mounted = undefined;
     await flush();
     expect(closes).toEqual(['720p', '360p']);
+  });
+
+  it("v14: an element source is attached to the page's <video>, with no src, and detached when the page goes", async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true });
+    const real = adapter.playNfx.bind(adapter);
+    const attached: MediaElementLike[] = [];
+    let detached = 0;
+    vi.spyOn(adapter, 'playNfx').mockImplementation(async (addr, rendition) => {
+      const s = await real(addr, rendition);
+      return {
+        ...s,
+        source: {
+          kind: 'element',
+          attach: (el) => {
+            attached.push(el);
+            return () => {
+              detached++;
+            };
+          },
+        },
+      };
+    });
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    const video = r.get('video.nf-nfxwatch__video');
+    expect(attached).toEqual([video]);
+    expect(video.hasAttribute('src')).toBe(false);
+    expect(detached).toBe(0);
+    r.unmount();
+    mounted = undefined;
+    await flush();
+    expect(detached).toBe(1);
+  });
+
+  it('v14: a session with setRendition switches quality in place; one that fails is reopened', async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true });
+    const real = adapter.playNfx.bind(adapter);
+    const asked: string[] = [];
+    let fail = false;
+    const opened: NfxPlaySession[] = [];
+    const playNfx = vi.spyOn(adapter, 'playNfx').mockImplementation(async (addr, rendition) => {
+      const s = await real(addr, rendition);
+      const session: NfxPlaySession = {
+        ...s,
+        setRendition: (id) => {
+          asked.push(id);
+          return fail ? Promise.reject(new Error('relay-down: gone')) : Promise.resolve();
+        },
+      };
+      opened.push(session);
+      return session;
+    });
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    const choose = (id: string): void => {
+      const select = r.get('.nf-nfxwatch__quality select') as HTMLSelectElement;
+      act(() => {
+        select.value = id;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    };
+    choose('360p');
+    await flush();
+    expect(asked).toEqual(['360p']);
+    expect(playNfx).toHaveBeenCalledTimes(1);
+    expect((r.get('.nf-nfxwatch__quality select') as HTMLSelectElement).value).toBe('360p');
+
+    fail = true;
+    choose('720p');
+    await flush();
+    expect(asked).toEqual(['360p', '720p']);
+    expect(playNfx).toHaveBeenCalledTimes(2);
+    expect(playNfx).toHaveBeenLastCalledWith(NFX.id, '720p');
+    expect(opened).toHaveLength(2);
   });
 
   it('nobody seeding: says so, and Retry asks again', async () => {

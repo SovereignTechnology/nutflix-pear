@@ -926,3 +926,80 @@ describe('Settings — NFX iroh relays (contracts v12)', () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe('Settings — the sections a shell offers (ADR 0022)', () => {
+  it('shows only the sections offered, in the usual order, and never asks the wallet or seeder', async () => {
+    const adapter = adapterWith();
+    const mints = vi.spyOn(adapter.wallet, 'mints');
+    const balances = vi.spyOn(adapter.wallet, 'balances');
+    const status = vi.spyOn(adapter.seeder, 'status');
+    const onStatus = vi.spyOn(adapter.seeder, 'onStatus');
+    const offered = ['nfx', 'appearance', 'relays', 'playback'] as const;
+    const { r } = await ready(adapter, { sections: offered });
+    const expected = SETTINGS_SECTIONS.filter((s) => (offered as readonly string[]).includes(s.id));
+    expect(expected.map((s) => s.id)).toEqual(['appearance', 'playback', 'relays', 'nfx']);
+    const nav = r.get('nav[aria-label="Settings sections"]');
+    expect(Array.from(nav.querySelectorAll('button')).map((b) => b.textContent)).toEqual(
+      expected.map((s) => s.label),
+    );
+    expect(r.all('h2').map((h) => h.textContent)).toEqual(expected.map((s) => s.label));
+    expect(nav.querySelector('[aria-current="true"]')?.textContent).toBe('Appearance');
+    for (const spy of [mints, balances, status, onStatus]) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('without `sections`, every section shows and the wallet and seeder are asked (the desktop app)', async () => {
+    const adapter = adapterWith();
+    const mints = vi.spyOn(adapter.wallet, 'mints');
+    const status = vi.spyOn(adapter.seeder, 'status');
+    const { r } = await ready(adapter);
+    expect(r.all('h2').map((h) => h.textContent)).toEqual(SETTINGS_SECTIONS.map((s) => s.label));
+    expect(mints).toHaveBeenCalled();
+    expect(status).toHaveBeenCalled();
+    expect(r.container.querySelector('[id$="-nfx-tracker-add"]')).toBeNull();
+  });
+});
+
+describe('Settings — NFX trackers (contracts v14)', () => {
+  const OFF = { enabled: false, network: 'nfx:testnet:1', scopedRelays: [] } as const;
+  const WEB = { toggle: false, irohRelays: false, trackers: true } as const;
+
+  it("the web's parts: no switch and no iroh relays; trackers in the player's form, ws:// only to this computer", async () => {
+    const adapter = adapterWith();
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter, { sections: ['nfx'], nfxParts: WEB });
+    const nfx = section(r, 'NFX network');
+    expect(nfx.querySelector('[id$="-nfx-enabled"]')).toBeNull();
+    expect(nfx.querySelector('[id$="-nfx-iroh-add"]')).toBeNull();
+    expect(nfx.querySelector('[id$="-nfx-add"]')).not.toBeNull();
+    expect(nfx.textContent).toContain('see your IP address');
+    const field = input(r, '-nfx-tracker-add');
+    expect(field.placeholder).toBe('wss://tracker.example');
+    type(field, 'ws://tracker.example');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(update).not.toHaveBeenCalled();
+    type(field, 'WSS://Tracker.Example/announce');
+    submit(field);
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({
+      nfx: { ...OFF, trackers: ['wss://tracker.example/announce'] },
+    });
+    expect(field.value).toBe('');
+    click(r.get('[aria-label="Remove wss://tracker.example/announce"]'));
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: { ...OFF, trackers: [] } });
+  });
+
+  it('stops at four trackers', async () => {
+    const four = Array.from({ length: 4 }, (_, i) => `wss://t${String(i)}.example`);
+    const adapter = adapterWith({}, { nfx: { ...OFF, trackers: four } } as never);
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter, { nfxParts: WEB });
+    const field = input(r, '-nfx-tracker-add');
+    type(field, 'wss://t9.example');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(r.get('[id$="-nfx-tracker-add-error"]').textContent).toContain('At most 4 trackers.');
+    expect(update).not.toHaveBeenCalled();
+  });
+});

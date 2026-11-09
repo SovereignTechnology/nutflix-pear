@@ -33,13 +33,15 @@ export interface SeederState {
 }
 
 /** `seeder.status()` once, then live `seeder.onStatus` updates until unmount. */
-export function useSeederStatus(adapter: NetworkAdapter): SeederState {
+/** `enabled: false` (a shell without the Seeding section, ADR 0022): the seeder is never asked. */
+export function useSeederStatus(adapter: NetworkAdapter, enabled = true): SeederState {
   const [state, setState] = useState<SeederState>({
     status: 'loading',
     value: undefined,
     error: undefined,
   });
   useEffect(() => {
+    if (!enabled) return undefined;
     let cancelled = false;
     const off = adapter.seeder.onStatus((s) => {
       if (!cancelled) setState({ status: 'ready', value: s, error: undefined });
@@ -59,7 +61,7 @@ export function useSeederStatus(adapter: NetworkAdapter): SeederState {
       cancelled = true;
       off();
     };
-  }, [adapter]);
+  }, [adapter, enabled]);
   return state;
 }
 

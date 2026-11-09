@@ -31,6 +31,7 @@ import type {
   Rendition,
   Sats,
   Sha256Hex,
+  TrackerUrl,
   UnixSeconds,
   VideoManifest,
 } from '@sovit/core';
@@ -370,6 +371,24 @@ export const isIrohRelayUrl = safe(
  */
 export const isIrohRelays: Guard<readonly IrohRelayUrl[]> = (x): x is readonly IrohRelayUrl[] =>
   arrayOf(isIrohRelayUrl, LIMITS.maxNfxIrohRelays)(x) && new Set(x).size === x.length;
+
+/**
+ * Contracts v14 (NFX-10 §1, ADR 0022): a WebTorrent tracker of the network's browser mesh, in the
+ * form nfx's web player reduces one to (its `trackerUrl`) and Settings' `validateTrackerUrl`
+ * writes: lower-case `wss://`, a lower-case host (DNS labels or a bracketed IPv6 literal), an
+ * optional port, and a path other than a bare `/`. No user-info, query or fragment. `ws://` only to
+ * a loopback address (`127.0.0.1`, `[::1]`, `localhost`): a local tracker (tests). A tracker learns
+ * which peers watch what, so a cleartext one elsewhere would show that to the path. The desktop
+ * app has no browser mesh and never dials one; the guard keeps a stored value well formed.
+ */
+const TRACKER_PATH = "(?:/[A-Za-z0-9\\-._~!$&'()*+,;=:@%/]+)?";
+const TRACKER_RE = new RegExp(
+  `^(?:wss://${IROH_HOST}${IROH_PORT}|ws://(?:127\\.0\\.0\\.1|\\[::1\\]|localhost)${IROH_PORT})${TRACKER_PATH}$`,
+);
+export const isTrackerUrl = safe(branded<TrackerUrl>(matches(TRACKER_RE, LIMITS.maxServerUrl)));
+/** Contracts v14: unique trackers, at most `LIMITS.maxNfxTrackers`. */
+export const isTrackers: Guard<readonly TrackerUrl[]> = (x): x is readonly TrackerUrl[] =>
+  arrayOf(isTrackerUrl, LIMITS.maxNfxTrackers)(x) && new Set(x).size === x.length;
 export const isMintUrl = safe(branded<MintUrl>(matches(HTTPS_SERVER_RE, LIMITS.maxServerUrl)));
 export const isNfMediaImgUrl = matches(NF_IMG_RE, 150) as Guard<NfMediaImgUrl>;
 export const isImageSource: Guard<string> = safe(
@@ -506,9 +525,10 @@ const isSettingsPatch = obj(
     theme: oneOf(['dark', 'light', 'system'] as const),
     // Contracts v10 (ADR 0020): one network, its scoped relays; `enabled: false` is "off".
     // v12 (ADR 0021): its iroh relays, optional so a stored v10/v11 value stays valid.
+    // v14 (ADR 0022): its WebTorrent trackers, optional too (a v10 to v13 value stays valid).
     nfx: obj(
       { enabled: bool, network: oneOf(NFX_NETWORK_IDS), scopedRelays: isScopedRelays },
-      { irohRelays: isIrohRelays },
+      { irohRelays: isIrohRelays, trackers: isTrackers },
     ),
     // SE-4: `belowSats: 0` is the v4 "off" sentinel; the host treats `<= 0` as disabled.
     // Issue #2: `amountSats` is a whole number of sats in 1 … `AUTO_TOP_UP_MAX_SATS` (absent =

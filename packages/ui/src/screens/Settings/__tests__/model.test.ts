@@ -5,6 +5,7 @@ import {
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
   MAX_NFX_IROH_RELAYS,
   MAX_NFX_SCOPED_RELAYS,
+  MAX_NFX_TRACKERS,
   NFX_NETWORKS,
 } from '@sovit/core';
 import {
@@ -25,8 +26,10 @@ import {
   validateMintUrl,
   UI_MAX_NFX_IROH_RELAYS,
   UI_MAX_NFX_SCOPED_RELAYS,
+  UI_MAX_NFX_TRACKERS,
   UI_NFX_NETWORK,
   validateIrohRelayUrl,
+  validateTrackerUrl,
   validateRelayUrl,
   validateScopedRelayUrl,
 } from '../model.js';
@@ -116,6 +119,57 @@ describe('validateIrohRelayUrl (contracts v12)', () => {
       'That relay is already in the list.',
     );
     expect(validateIrohRelayUrl('https://other.example', ['https://relay.example/']).ok).toBe(true);
+  });
+});
+
+describe('validateTrackerUrl (contracts v14)', () => {
+  const err = (s: string, existing: readonly string[] = []): string => {
+    const r = validateTrackerUrl(s, existing);
+    if (r.ok) throw new Error(`expected ${s} to be rejected`);
+    return r.error;
+  };
+
+  it('mirrors core: the same tracker cap', () => {
+    expect(UI_MAX_NFX_TRACKERS).toBe(MAX_NFX_TRACKERS);
+  });
+
+  it("writes nfx's player's form: lower case, default port and a bare / dropped, the path kept", () => {
+    for (const [raw, value] of [
+      ['WSS://Tracker.Example', 'wss://tracker.example'],
+      [' wss://tracker.example/ ', 'wss://tracker.example'],
+      ['wss://tracker.example:443/announce', 'wss://tracker.example/announce'],
+      ['wss://Tracker.Example:8443/Announce/', 'wss://tracker.example:8443/Announce/'],
+      ['wss://[2001:DB8::1]/', 'wss://[2001:db8::1]'],
+      ['ws://127.0.0.1:8000', 'ws://127.0.0.1:8000'],
+      ['WS://LocalHost:8000/tracker', 'ws://localhost:8000/tracker'],
+      ['ws://[::1]:8000', 'ws://[::1]:8000'],
+    ] as const) {
+      expect(validateTrackerUrl(raw)).toEqual({ ok: true, value });
+    }
+  });
+
+  it('refuses a ? or # part, user-info, other schemes, and cleartext off this computer', () => {
+    expect(err('')).toMatch(/Enter a tracker address/);
+    expect(err('tracker.example')).toMatch(/start with wss:\/\//);
+    expect(err('wss://tracker .example')).toMatch(/spaces/);
+    expect(err('wss://tracker.example/?x=1')).toMatch(/no \? or # part/);
+    expect(err('wss://tracker.example/#x')).toMatch(/no \? or # part/);
+    expect(err('wss://u:p@tracker.example')).toMatch(/user name or password/);
+    expect(err('ws://tracker.example')).toMatch(
+      /ws:\/\/ is allowed only for a tracker on this computer/,
+    );
+    expect(err('ws://192.168.1.10:8000')).toMatch(/only for a tracker on this computer/);
+    expect(err('https://tracker.example')).toBe('Trackers use wss://, not https://');
+    expect(err('wss://tracker.example:0')).toMatch(/not a valid tracker address/);
+    expect(err('wss://tracker.example./')).toMatch(/not a valid tracker address/);
+    expect(err(`wss://${'a'.repeat(600)}.example`)).toMatch(/too long/);
+  });
+
+  it('refuses a duplicate in normal form', () => {
+    expect(err('WSS://Tracker.Example/', ['wss://tracker.example'])).toBe(
+      'That tracker is already in the list.',
+    );
+    expect(validateTrackerUrl('wss://other.example', ['wss://tracker.example']).ok).toBe(true);
   });
 });
 

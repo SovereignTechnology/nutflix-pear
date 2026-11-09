@@ -4,7 +4,15 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { IrohRelayUrl, MintUrl, NfxSettings, RelayUrl, Sats, Settings } from '@sovit/core';
+import type {
+  IrohRelayUrl,
+  MintUrl,
+  NfxSettings,
+  RelayUrl,
+  Sats,
+  Settings,
+  TrackerUrl,
+} from '@sovit/core';
 
 import { memoryLogger } from '../log.js';
 import {
@@ -169,6 +177,43 @@ describe('SettingsStore (atomic JSON in userData)', () => {
         settings: { theme: 'dark', nfx: { ...nfx, irohRelays } },
       });
       expect(parsed?.settings, JSON.stringify(irohRelays)).toEqual({
+        ...DEFAULT_SETTINGS,
+        theme: 'dark',
+        nfx: { ...DEFAULT_NFX, enabled: false },
+      });
+    }
+  });
+
+  it('contracts v14: stored `trackers` round-trip; a bad one drops `nfx` alone; none by default', async () => {
+    expect(DEFAULT_NFX.trackers).toBeUndefined();
+    const nfx: NfxSettings = {
+      ...DEFAULT_NFX,
+      trackers: ['wss://tracker.example/announce', 'ws://127.0.0.1:8000'] as TrackerUrl[],
+    };
+    expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      theme: 'dark',
+      nfx,
+    });
+    const s = new SettingsStore(dir, memoryLogger());
+    await s.load();
+    await s.update({ nfx });
+    const reread = new SettingsStore(dir, memoryLogger());
+    expect((await reread.load()).nfx).toEqual(nfx);
+    // Not the player's form, cleartext off this computer, a query, a duplicate, more than 4.
+    for (const trackers of [
+      ['WSS://tracker.example'],
+      ['ws://tracker.example'],
+      ['wss://tracker.example?x=1'],
+      ['wss://t.example', 'wss://t.example'],
+      Array.from({ length: 5 }, (_, i) => `wss://t${String(i)}.example`),
+      'wss://tracker.example',
+    ]) {
+      const parsed = parseStoredSettings({
+        v: 1,
+        settings: { theme: 'dark', nfx: { ...nfx, trackers } },
+      });
+      expect(parsed?.settings, JSON.stringify(trackers)).toEqual({
         ...DEFAULT_SETTINGS,
         theme: 'dark',
         nfx: { ...DEFAULT_NFX, enabled: false },

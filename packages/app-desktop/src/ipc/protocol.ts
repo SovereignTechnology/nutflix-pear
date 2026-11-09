@@ -19,6 +19,7 @@ import type {
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
   MAX_NFX_IROH_RELAYS,
   MAX_NFX_SCOPED_RELAYS,
+  MAX_NFX_TRACKERS,
   CatalogVideo,
   Comment,
   FeedQuery,
@@ -132,6 +133,8 @@ export const LIMITS = {
   maxNfxScopedRelays: 8,
   /** Contracts v12: `NfxSettings.irohRelays` — core's `MAX_NFX_IROH_RELAYS`. */
   maxNfxIrohRelays: 4,
+  /** Contracts v14: `NfxSettings.trackers` — core's `MAX_NFX_TRACKERS`. */
+  maxNfxTrackers: 4,
   /** `PricePolicy.minPaySats` ceiling — core's `MAX_MIN_PAY_SATS` (the manifest parser's bound). */
   maxMinPaySats: 1_000_000,
   /** A custom thumbnail's bytes (same cap as host-fetched images, design §3). */
@@ -991,7 +994,13 @@ interface Checks {
   nfxPlayKeys: IsNever<Exclude<NonMethodKeys<NfxPlaySession>, keyof NfxPlaySessionWire>>;
   nfxPlayData: Mutual<Pick<NfxPlaySessionWire, NfxPlayData>, Pick<NfxPlaySession, NfxPlayData>>;
   nfxPlaySource: NfxPlaySessionWire['source'] extends NfxPlaySession['source'] ? true : false;
-  nfxSessionMethods: IsNever<Exclude<MethodKeys<NfxPlaySession>, SessionWireMethod>>;
+  /**
+   * Contracts v14: `setRendition` is optional, and this app's sessions do not offer it: a
+   * switch closes the session and opens another, as before.
+   */
+  nfxSessionMethods: IsNever<
+    Exclude<MethodKeys<NfxPlaySession>, SessionWireMethod | 'setRendition'>
+  >;
   /** PlaySession's methods are all on the wire, as `session.*` or as a topic. */
   sessionMethods: IsNever<
     Exclude<MethodKeys<PlaySession>, SessionWireMethod | 'onPeers' | 'onSpend'>
@@ -1015,6 +1024,8 @@ interface Checks {
   nfxScopedRelays: Mutual<(typeof LIMITS)['maxNfxScopedRelays'], typeof MAX_NFX_SCOPED_RELAYS>;
   /** Contracts v12: the iroh relay cap is core's too. */
   nfxIrohRelays: Mutual<(typeof LIMITS)['maxNfxIrohRelays'], typeof MAX_NFX_IROH_RELAYS>;
+  /** Contracts v14: the tracker cap is core's too. */
+  nfxTrackers: Mutual<(typeof LIMITS)['maxNfxTrackers'], typeof MAX_NFX_TRACKERS>;
   nfxNetworks: Mutual<(typeof NFX_NETWORK_IDS)[number], NfxNetwork>;
   topUpPerDay: Mutual<
     (typeof LIMITS)['maxAutoTopUpSatsPerDay'],
