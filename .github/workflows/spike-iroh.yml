@@ -4,7 +4,10 @@
 #
 # Supply-chain policy as ci.yml (threat T12): first-party actions pinned by commit SHA, every
 # download checked against a pinned sha256, Cargo.lock honoured (--locked), least-privilege
-# token. nfx is checked out read-only at a pinned commit and only built here.
+# token. nfx is checked out read-only at a pinned commit and only built here; so is strfry, the
+# stock Nostr relay of the matrix's stock-relay cells (nfx #30's groundwork: "compatible with
+# Nostr relays", proven rather than asserted), at its release tag's commit with the submodule
+# commits that tree records.
 #
 # The checks (helper fmt/clippy/tests, cargo deny, the Bare smoke run under bare-sidecar, the
 # NAT matrix) each record an outcome and do not stop the others; the `verdict` job fails the run
@@ -34,9 +37,15 @@ env:
   CARGO_DENY_SHA256: '9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f'
   # The nfx commit whose nfxd the helper is judged against: nfx main with #18 (`nfxd
   # --iroh-relay-ca`), so nfxd can use the matrix's TLS relay and every TLS cell is judged in all
-  # four pairings.
+  # four pairings. The matrix's port-forwarded seeder cells (fwdseed-*) need nfx N1's
+  # `--iroh-bind`/`--iroh-external` and skip until this pin is bumped to a commit that has them
+  # (run.sh reads nfxd's usage text, never this pin).
   NFX_SHA: '5d628db55ad0eb203ab01b4cbf8280b0d1a8c587'
   IROH_RELAY_VERSION: '1.2.0'
+  # strfry 1.1.3 (released 2026-09-04): the commit its tag names. Built with its own Makefile;
+  # run with its own default strfry.conf, only the database, address and port changed.
+  STRFRY_VERSION: '1.1.3'
+  STRFRY_SHA: '16c00df04e264f4d68db5e10a48127f015c7824b'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
   NODE_OPTIONS: ''
@@ -134,6 +143,37 @@ jobs:
           root="$RUNNER_TEMP/iroh-relay"
           [ -x "$root/bin/iroh-relay" ] || cargo "+$RUST_VERSION" install "iroh-relay@${IROH_RELAY_VERSION}" --locked --features server --root "$root"
           install -m 0755 "$root/bin/iroh-relay" bins/
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hoytech/strfry
+          ref: ${{ env.STRFRY_SHA }}
+          path: strfry
+          submodules: recursive
+          persist-credentials: false
+      - name: strfry cache (keyed by its commit)
+        id: strfry-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/strfry-bin
+          key: spike-iroh-strfry-${{ env.STRFRY_SHA }}-ubuntu-24.04
+      - name: strfry (the stock relay, built from its pinned commit with its own Makefile)
+        run: |
+          set -euo pipefail
+          [ "$(git -C strfry rev-parse HEAD)" = "$STRFRY_SHA" ]
+          bin="$RUNNER_TEMP/strfry-bin"
+          if [ ! -x "$bin/strfry" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends g++ make pkg-config libtool \
+              libssl-dev zlib1g-dev liblmdb-dev libflatbuffers-dev libsecp256k1-dev libzstd-dev
+            make -C strfry setup-golpe
+            make -C strfry -j"$(nproc)"
+            mkdir -p "$bin"
+            strip -o "$bin/strfry" strfry/strfry
+          fi
+          install -m 0755 "$bin/strfry" bins/
+          install -m 0644 strfry/strfry.conf bins/strfry.conf
+          stat -c '%n %s' bins/strfry | tee -a results/size.txt
+          ldd bins/strfry | tee -a results/size.txt || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: spike-iroh-bins
@@ -164,10 +204,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: system packages (ffmpeg for nfx-package, nftables for the routers)
+      - name: system packages (ffmpeg for nfx-package, nftables for the routers, strfry's libraries)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg liblmdb-dev libsecp256k1-dev libzstd-dev
           command -v nft >/dev/null || sudo apt-get install -y -qq nftables
       - run: npm ci --ignore-scripts
       # The harness imports the built packages (core, seeder) and the worker's helper client.
@@ -177,7 +217,12 @@ jobs:
           name: spike-iroh-bins
           path: bins
       - name: binaries (artifacts drop the executable bit)
-        run: chmod 0755 bins/* && ls -l bins && mkdir -p results
+        run: |
+          set -euo pipefail
+          chmod 0755 bins/nfxd bins/nfx-package bins/iroh-relay bins/nutflix-iroh-helper bins/strfry
+          ls -l bins && mkdir -p results
+          # strfry's shared libraries all resolve here, or the stock-relay cells cannot start.
+          if ldd bins/strfry | grep -F 'not found'; then echo "::error::strfry: a library is missing"; exit 1; fi
       - name: the helper under the real Bare runtime (bare-sidecar, bare-subprocess, stdin pipe)
         id: bare
         continue-on-error: true
@@ -225,6 +270,7 @@ jobs:
           sudo env "PATH=$PATH" OUT="$PWD/results" WORK="$RUNNER_TEMP/spike-iroh" \
             HELPER="$PWD/bins/nutflix-iroh-helper" NFXD="$PWD/bins/nfxd" \
             NFX_PACKAGE="$PWD/bins/nfx-package" IROH_RELAY="$PWD/bins/iroh-relay" \
+            STRFRY="$PWD/bins/strfry" STRFRY_CONF="$PWD/bins/strfry.conf" \
             ./spikes/iroh/nat/run.sh
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: always()
@@ -256,17 +302,22 @@ jobs:
               print(f"\nhelper: release {s['release_bytes']:,} B · release-small {s['release_small_bytes']:,} B · gzip -9 {s['release_gzip_bytes']:,} B · {s['lock_crates']} crates in the lock")
           except Exception as x:
               print(f"\nsizes: unavailable ({x})")
-          print("\n| check | passed | path | direct B | relayed B | Mbit/s | wall ms | detail |")
-          print("|---|---|---|---|---|---|---|---|")
+          # relayed B is the iroh relay's traffic only; nostr B is the Nostr relay's (:7447).
+          print("\n| check | expect | passed | path | direct B | relayed B | nostr B | Mbit/s | wall ms | detail |")
+          print("|---|---|---|---|---|---|---|---|---|---|")
           try:
               for line in open("results/nat.jsonl"):
                   d = json.loads(line)
+                  exp = f"{d.get('expect', '')} {'' if d.get('expect_path') in ('-', 'any', None) else d['expect_path']}".strip()
+                  if d.get("skipped"):
+                      print(f"| {d['check']} | {exp} | skipped | | | | | | | {d.get('reason', '')} |")
+                      continue
                   if "passed" not in d:
                       continue
-                  keep = {k: d[k] for k in ("error", "what", "server_ready", "server_rss_kib", "client_rss_kib", "helper_rss_kib", "helper_store_bytes_after_fetch") if k in d}
-                  print(f"| {d['check']} | {'✓' if d['passed'] else '✗'}{'' if d['judged'] else ' (info)'} | {d.get('path')} | {d.get('direct_bytes')} | {d.get('relayed_bytes')} | {d.get('mbit_s', '')} | {d.get('wall_ms', '')} | `{json.dumps(keep)}` |")
+                  keep = {k: d[k] for k in ("error", "what", "server_ready", "server_rss_kib", "client_rss_kib", "helper_rss_kib", "helper_store_bytes_after_fetch", "relay", "relay_manifests", "manifest_event_bytes", "relay_beacons", "relay_refused", "relay_refused_first", "publish_err") if k in d}
+                  print(f"| {d['check']} | {exp} | {'✓' if d['passed'] else '✗'}{'' if d['judged'] else ' (info)'} | {d.get('path')} | {d.get('direct_bytes')} | {d.get('relayed_bytes')} | {d.get('nostr_bytes', '')} | {d.get('mbit_s', '')} | {d.get('wall_ms', '')} | `{json.dumps(keep)}` |")
           except FileNotFoundError:
-              print("| (no NAT results) | | | | | | | |")
+              print("| (no NAT results) | | | | | | | | | |")
           EOF
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

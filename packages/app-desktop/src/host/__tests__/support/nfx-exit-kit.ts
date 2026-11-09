@@ -303,6 +303,11 @@ export interface GivenRelays {
    * for it to take).
    */
   readonly relayOnly: boolean;
+  /**
+   * `NFX_NOSTR_ONLY=true` (pear #79, nfx #30): no iroh relay on either side, so `iroh` is empty
+   * and both machines meet only on the scoped relays. Never together with `relayOnly`.
+   */
+  readonly nostrOnly: boolean;
 }
 
 const WSS_RE = /^wss:\/\/[a-z0-9.-]{1,253}(?::[1-9][0-9]{0,4})?\/?$/;
@@ -322,43 +327,60 @@ function list(name: string, re: RegExp): string[] {
   return items;
 }
 
-/** `NFX_RELAY_ONLY`: unset or empty is false; otherwise exactly `true` or `false`. */
-function relayOnlyFlag(): boolean {
-  const raw = (process.env['NFX_RELAY_ONLY'] ?? '').trim();
+/** A boolean variable: unset or empty is false; otherwise exactly `true` or `false`. */
+function flag(name: string): boolean {
+  const raw = (process.env[name] ?? '').trim();
   if (raw === '' || raw === 'false') return false;
   if (raw === 'true') return true;
-  throw new Error('NFX_RELAY_ONLY: must be true or false');
+  throw new Error(`${name}: must be true or false`);
 }
 
 /**
  * The relays the two-host run is given, validated: `wss://` scoped relays and `https://` iroh
- * relays, at most `MAX_GIVEN_RELAYS` each, at least one of each; `NFX_IROH_RELAY_CA` an optional
- * PEM path (option 1's private CA; a public relay needs none); `NFX_RELAY_ONLY` an optional
- * boolean that needs the iroh relays (nfxd refuses `--relay-only` without an `--iroh-relay`).
+ * relays, at most `MAX_GIVEN_RELAYS` each, at least one scoped relay; `NFX_IROH_RELAY_CA` an
+ * optional PEM path (option 1's private CA; a public relay needs none); `NFX_RELAY_ONLY` an
+ * optional boolean that needs the iroh relays (nfxd refuses `--relay-only` without an
+ * `--iroh-relay`); `NFX_NOSTR_ONLY` an optional boolean that takes none (and no CA), and never
+ * comes with `NFX_RELAY_ONLY`. Without it, at least one iroh relay.
  */
 export function givenRelays(): GivenRelays {
   const scoped = list('NFX_SCOPED_RELAYS', WSS_RE).map((u) => u.replace(/\/$/, '') as RelayUrl);
   const iroh = list('NFX_IROH_RELAYS', IROH_HTTPS_RE) as IrohRelayUrl[];
-  const relayOnly = relayOnlyFlag();
+  const relayOnly = flag('NFX_RELAY_ONLY');
+  const nostrOnly = flag('NFX_NOSTR_ONLY');
+  const ca = (process.env['NFX_IROH_RELAY_CA'] ?? '').trim();
+  if (nostrOnly && relayOnly)
+    throw new Error(
+      'NFX_NOSTR_ONLY=true and NFX_RELAY_ONLY=true: pick one (a Nostr-only run has no iroh relay to relay through)',
+    );
+  if (nostrOnly && iroh.length > 0)
+    throw new Error('NFX_NOSTR_ONLY=true takes no NFX_IROH_RELAYS: clear them');
+  if (nostrOnly && ca !== '')
+    throw new Error('NFX_NOSTR_ONLY=true takes no NFX_IROH_RELAY_CA: there is no iroh relay');
   if (relayOnly && iroh.length === 0)
     throw new Error(
       'NFX_RELAY_ONLY=true needs NFX_IROH_RELAYS: nfxd --relay-only refuses to start without an --iroh-relay',
     );
   if (scoped.length === 0) throw new Error('NFX_SCOPED_RELAYS: at least one wss:// relay');
-  if (iroh.length === 0) throw new Error('NFX_IROH_RELAYS: at least one https:// iroh relay');
-  const ca = (process.env['NFX_IROH_RELAY_CA'] ?? '').trim();
-  return { scoped, iroh, irohCa: ca === '' ? null : ca, relayOnly };
+  if (!nostrOnly && iroh.length === 0)
+    throw new Error(
+      'NFX_IROH_RELAYS: at least one https:// iroh relay (or NFX_NOSTR_ONLY=true for none)',
+    );
+  return { scoped, iroh, irohCa: ca === '' ? null : ca, relayOnly, nostrOnly };
 }
 
 /**
  * The relay flags of an `nfxd run` for the given relays. With `relayOnly`, nfxd also gets
  * `--relay-only` (every byte through the iroh relays); it refuses that flag without an
  * `--iroh-relay` and together with `--gossip`, so the one is checked here and the other is never
- * passed: this function and the suite pass no gossip flag.
+ * passed: this function and the suite pass no gossip flag. With `nostrOnly` there is no iroh flag
+ * at all (nfxd then runs with its relays disabled).
  */
 export function nfxdRelayArgs(relays: GivenRelays): string[] {
   if (relays.relayOnly && relays.iroh.length === 0)
     throw new Error('relay-only needs at least one iroh relay');
+  if (relays.nostrOnly && (relays.iroh.length > 0 || relays.irohCa !== null || relays.relayOnly))
+    throw new Error('nostr-only takes no iroh relay, CA or relay-only');
   return [
     ...relays.scoped.flatMap((r) => ['--relay', r]),
     ...relays.iroh.flatMap((r) => ['--iroh-relay', r]),

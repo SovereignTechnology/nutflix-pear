@@ -19,6 +19,13 @@
 # nfx:testnet:1's public iroh relay, https://iroh.nutflix.xyz/ (see nfx docs/nfx/testnet.md), whose
 # QUIC address discovery is off. The pear role is unchanged: nfxd offers it no direct path.
 #
+# nostr_only (default false; pear #79 item 4, nfx #30): no iroh relay on either side, so the
+# runners meet only on the scoped Nostr relays: nfxd runs with no --iroh-relay and the app's
+# worker with an empty iroh relay list (relays disabled in the helper). Clear iroh_relays to use
+# it: a run with both is refused, and so is nostr_only with relay_only (which needs a relay).
+# Until nfx #30 lands, two runners behind their own cloud NATs are not expected to connect this
+# way; the run records how they fail.
+#
 # DISPATCH ONLY: it publishes to the relays it is given. With the defaults that is
 #   - 2 kind-38504 manifests on wss://offchain.pub (throwaway keys derived from the run id): A's
 #     withdrawn at the end by `nfxd delete` (kind 5), B's with a NIP-40 expiration an hour out and
@@ -39,11 +46,16 @@ on:
         required: true
         default: 'wss://offchain.pub'
       iroh_relays:
-        description: "iroh relays (https://host/, the app's form: no trailing dot; at most 4)"
-        required: true
+        description: "iroh relays (https://host/, the app's form: no trailing dot; 1 to 4; empty only with nostr_only)"
+        required: false
         default: 'https://use1-1.relay.n0.iroh.link/ https://euc1-1.relay.n0.iroh.link/'
       relay_only:
         description: 'Run nfxd with --relay-only: every byte through the iroh relays, none direct'
+        type: boolean
+        required: false
+        default: false
+      nostr_only:
+        description: 'No iroh relay on either side, signaling only through the scoped relays (clear iroh_relays)'
         type: boolean
         required: false
         default: false
@@ -64,6 +76,7 @@ env:
   NFX_SCOPED_RELAYS: ${{ inputs.scoped_relays }}
   NFX_IROH_RELAYS: ${{ inputs.iroh_relays }}
   NFX_RELAY_ONLY: ${{ inputs.relay_only }}
+  NFX_NOSTR_ONLY: ${{ inputs.nostr_only }}
 
 jobs:
   build:
@@ -73,21 +86,30 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: the inputs (wss:// and https:// relays only, at most 4 each; relay_only a boolean)
+      - name: the inputs (wss:// and https:// relays only, at most 4 each; relay_only, nostr_only booleans, not both)
         run: |
           set -euo pipefail
-          check() { # name, regex, value
+          set -f # the relay lists are split on spaces below, never globbed
+          check() { # name, regex, value, least
             local n=0 u
             for u in $3; do
               n=$((n + 1))
               [[ $u =~ $2 ]] || { echo "::error::$1: not a relay this run takes"; exit 1; }
             done
-            [ "$n" -ge 1 ] && [ "$n" -le 4 ] || { echo "::error::$1: 1 to 4 relays"; exit 1; }
+            [ "$n" -ge "$4" ] && [ "$n" -le 4 ] || { echo "::error::$1: $4 to 4 relays"; exit 1; }
           }
-          check scoped_relays '^wss://[a-z0-9.-]{1,253}(:[1-9][0-9]{0,4})?/?$' "$NFX_SCOPED_RELAYS"
-          check iroh_relays '^https://[a-z0-9_.-]{1,253}[a-z0-9_](:[1-9][0-9]{0,4})?/$' "$NFX_IROH_RELAYS"
-          # nfxd --relay-only needs an --iroh-relay; check() above already demands 1 to 4.
           [[ $NFX_RELAY_ONLY =~ ^(true|false)$ ]] || { echo "::error::relay_only: true or false"; exit 1; }
+          [[ $NFX_NOSTR_ONLY =~ ^(true|false)$ ]] || { echo "::error::nostr_only: true or false"; exit 1; }
+          check scoped_relays '^wss://[a-z0-9.-]{1,253}(:[1-9][0-9]{0,4})?/?$' "$NFX_SCOPED_RELAYS" 1
+          if [ "$NFX_NOSTR_ONLY" = true ]; then
+            # No iroh relay on either side: an iroh relay given anyway would be a contradiction, and
+            # nfxd --relay-only needs one.
+            [ "$NFX_RELAY_ONLY" = false ] || { echo "::error::nostr_only and relay_only: pick one"; exit 1; }
+            [ -z "${NFX_IROH_RELAYS//[[:space:]]/}" ] || { echo "::error::nostr_only: clear iroh_relays (a Nostr-only run has none)"; exit 1; }
+          else
+            # nfxd --relay-only needs an --iroh-relay; this demands 1 to 4.
+            check iroh_relays '^https://[a-z0-9_.-]{1,253}[a-z0-9_](:[1-9][0-9]{0,4})?/$' "$NFX_IROH_RELAYS" 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -176,7 +198,7 @@ jobs:
             "$(printf '%s|%s' "$(hostname)" "$GITHUB_RUN_ID" | sha256sum | cut -c1-16)" \
             | tee "$RUNNER_TEMP/exit2-logs/machine-$ROLE.json"
       - name: the path meter (bytes received over a relay vs direct)
-        run: sudo --preserve-env=NFX_IROH_RELAYS spikes/iroh/two-host/meter.sh start
+        run: sudo --preserve-env=NFX_IROH_RELAYS,NFX_NOSTR_ONLY spikes/iroh/two-host/meter.sh start
       - name: the two-host run, this machine's role
         env:
           NUTFLIX_EXIT_TWO_HOST: '1'

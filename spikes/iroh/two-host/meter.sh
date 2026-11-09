@@ -10,14 +10,25 @@
 # runner what arrives is mostly A (it fetches A, serves B); on the nfx runner mostly B. A rough
 # split, not an exact one: small control traffic lands in both.
 #
+# A Nostr-only run (NFX_NOSTR_ONLY=true) has no iroh relay: NFX_IROH_RELAYS must then be empty,
+# the relay sets stay empty, and relayed stays 0.
+#
 #   sudo NFX_IROH_RELAYS="https://h1/ https://h2/" meter.sh start
+#   sudo NFX_NOSTR_ONLY=true NFX_IROH_RELAYS= meter.sh start
 #   sudo meter.sh read > meter.json
 set -euo pipefail
+set -f # the relay list is split on spaces, never globbed
 case ${1:?start or read} in
   start)
     v4=()
     v6=()
-    for u in ${NFX_IROH_RELAYS:?}; do
+    relays=${NFX_IROH_RELAYS:-}
+    if [ "${NFX_NOSTR_ONLY:-false}" = true ]; then
+      [ -z "${relays//[[:space:]]/}" ] || { echo "meter: a Nostr-only run takes no iroh relay" >&2; exit 2; }
+    else
+      [ -n "${relays//[[:space:]]/}" ] || { echo "meter: no iroh relay given" >&2; exit 2; }
+    fi
+    for u in $relays; do
       host=${u#https://}
       host=${host%%/*}
       host=${host%%:*}
@@ -27,7 +38,8 @@ case ${1:?start or read} in
         elif [[ $ip =~ ^[0-9a-f:]{2,39}$ ]]; then v6+=("$ip"); fi
       done < <(getent ahosts "$host" | awk '{print $1}' | sort -u)
     done
-    [ ${#v4[@]} -gt 0 ] || [ ${#v6[@]} -gt 0 ] || { echo "meter: no relay address resolved" >&2; exit 2; }
+    [ -z "${relays//[[:space:]]/}" ] || [ ${#v4[@]} -gt 0 ] || [ ${#v6[@]} -gt 0 ] ||
+      { echo "meter: no relay address resolved" >&2; exit 2; }
     join() { local IFS=,; echo "$*"; }
     nft delete table inet nfxtwo 2>/dev/null || true
     {
