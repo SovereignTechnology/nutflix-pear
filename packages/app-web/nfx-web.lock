@@ -28,10 +28,12 @@
 # pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
 # web/player/package-lock.json. Node 22.
 #
-# ffef793 is nfx #73 (the player as a library). Its tar came out byte for byte the same twice in a
-# Kata VM before this pin; the web-site workflow (.github/workflows/web-site.yml) builds it again on
-# a GitHub runner on every run and fails unless it matches.
-nfx ffef7935388bd73bd1d6bcd964f325920794adc3 4705f52f9d4c1c00880928821eb6849f4d230278eccd3d3f48cc0288a08e236c b3b0bad24040f524b28f675caa198a688963f8caff4b2d7e8147c2c839f63c02
+# ffef793 is nfx #73 (the player as a library). The pin is the canonical build's: GitHub's
+# ubuntu-24.04 runner, with the tools above, by the web-site workflow (.github/workflows/web-site.yml),
+# which builds it again on every run and fails unless it matches. Two runs gave these bytes. A Kata VM
+# build of the same commit gave other bytes (b3b0bad2…), so lib-tar.sh is not yet host-independent
+# at this commit; the wasm is the same in both.
+nfx ffef7935388bd73bd1d6bcd964f325920794adc3 4705f52f9d4c1c00880928821eb6849f4d230278eccd3d3f48cc0288a08e236c 18a849a8d0f5632ab36eab7e44382f57bfe81dea1911b4996856dada94a5b404
 tool rust 1.98.0
 tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
 tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f
