@@ -10,17 +10,17 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SignerStatus } from '@sovit/core';
 import { mocks } from '@sovit/core';
-import type * as Ui from '@sovit/ui';
-import type { SignerFlow } from '../App.js';
-import { Shell } from '../App.js';
+import type * as Screens from '../../screens/index.js';
+import type { SignerFlow } from '../Shell.js';
+import { Shell } from '../Shell.js';
 import { createShellModel } from '../model.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const seen = vi.hoisted(() => ({ props: new Map<string, Record<string, unknown>>() }));
 
-vi.mock('@sovit/ui', async (importOriginal) => {
-  const orig = await importOriginal<typeof Ui>();
+vi.mock('../../screens/index.js', async (importOriginal) => {
+  const orig = await importOriginal<typeof Screens>();
   const stub =
     (name: string) =>
     (props: Record<string, unknown>): ReturnType<typeof createElement> => {

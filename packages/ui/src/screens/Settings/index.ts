@@ -14,3 +14,4 @@ export type {
   RecoveryStatusView,
 } from './RecoverySection.js';
 export type { TopUpHoldControls, TopUpHoldReason, TopUpHoldView } from './TopUpHolds.js';
+export type { NfxSectionParts } from './NfxSection.js';

@@ -6,6 +6,8 @@
  *   dist/components.css  = src/components/components.css with its @imports inlined
  *   dist/screens.css     = src/screens/screens.css with its @imports inlined (L5)
  *   dist/ui.css          = all three, in that order
+ *   dist/shell.css       = src/shell/shell.css, the app shell's layout (ADR 0022), a separate sheet
+ *                          that a shell links after ui.css
  * Plain CSS in, plain CSS out — no bundler, no minifier, byte-identical for every consumer.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -33,11 +35,13 @@ function inline(file: string, seen = new Set<string>()): string {
 const tokens = readFileSync(join(src, 'tokens', 'tokens.css'), 'utf8');
 const components = inline(join(src, 'components', 'components.css'));
 const screens = inline(join(src, 'screens', 'screens.css'));
+const shell = readFileSync(join(src, 'shell', 'shell.css'), 'utf8');
 mkdirSync(dist, { recursive: true });
 writeFileSync(join(dist, 'tokens.css'), tokens);
 writeFileSync(join(dist, 'components.css'), components);
 writeFileSync(join(dist, 'screens.css'), screens);
 writeFileSync(join(dist, 'ui.css'), `${tokens}\n${components}\n${screens}`);
+writeFileSync(join(dist, 'shell.css'), shell);
 process.stderr.write(
-  `build-css: wrote dist/tokens.css, dist/components.css, dist/screens.css, dist/ui.css\n`,
+  `build-css: wrote dist/tokens.css, dist/components.css, dist/screens.css, dist/ui.css, dist/shell.css\n`,
 );

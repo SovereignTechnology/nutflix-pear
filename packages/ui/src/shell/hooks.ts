@@ -4,8 +4,8 @@
  */
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { MintUrl, NetworkAdapter, NostrPubkey, Profile, Sats } from '@sovit/core';
-import type { CoordinatorSnapshot, PlaybackCoordinator } from '../coordinator.js';
-import type { Router, RouterState } from '../router.js';
+import type { CoordinatorSnapshot, PlaybackCoordinator } from './coordinator.js';
+import type { Router, RouterState } from './router.js';
 
 export function useRouterState(router: Router): RouterState {
   return useSyncExternalStore(

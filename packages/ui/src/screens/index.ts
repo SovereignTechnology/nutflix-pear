@@ -9,6 +9,7 @@ export { Channel } from './Channel/index.js';
 export type { ChannelProps, ChannelTab } from './Channel/index.js';
 export { SETTINGS_SECTIONS, Settings } from './Settings/index.js';
 export type {
+  NfxSectionParts,
   RecoveryControls,
   RecoveryProgressView,
   RecoveryRestoreOutcome,

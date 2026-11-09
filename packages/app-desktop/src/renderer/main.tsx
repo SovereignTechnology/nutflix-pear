@@ -3,7 +3,8 @@
  * `index.html` with `<script type="module" src="app.js">` under a CSP with no inline anything).
  *
  * `window.nutflix` (the preload's bridge) → rehydrating adapter → the ONE playback coordinator
- * wrap → the shell. No network from here: `connect-src 'none'`; everything goes over the bridge.
+ * wrap → the shell (`@sovit/ui`'s, since ADR 0022; the desktop offers every section). No network
+ * from here: `connect-src 'none'`; everything goes over the bridge.
  */
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -12,9 +13,8 @@ import {
   recoveryFromBridge,
   topUpHoldsFromBridge,
 } from './adapter/rehydrate.js';
+import { Shell, createShellModel, type SignerFlow } from '@sovit/ui';
 import type { NutflixBridge } from './bridge-types.js';
-import { Shell, type SignerFlow } from './App.js';
-import { createShellModel } from './model.js';
 
 function boot(root: HTMLElement): void {
   const bridge = (window as unknown as { nutflix?: NutflixBridge }).nutflix;

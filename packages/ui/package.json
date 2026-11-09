@@ -15,7 +15,8 @@
     "./ui.css": "./dist/ui.css",
     "./tokens.css": "./dist/tokens.css",
     "./components.css": "./dist/components.css",
-    "./screens.css": "./dist/screens.css"
+    "./screens.css": "./dist/screens.css",
+    "./shell.css": "./dist/shell.css"
   },
   "files": [
     "dist"
