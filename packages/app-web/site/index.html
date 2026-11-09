@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <!-- scripts/build-site.ts runs scripts/csp-sri.mjs over this page: the CSP <meta> goes first in
+         <head>, and every script, module and stylesheet below gets its SRI hash. Nothing is
+         inline. The WASM is fetched with its SRI hash by app.js. -->
+    <title>Nutflix · NFX videos</title>
+    <link rel="stylesheet" href="ui.css" />
+    <link rel="stylesheet" href="shell.css" />
+    <link rel="modulepreload" href="nfx/player.js" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      This page is a Nostr client that plays NFX videos, and it needs JavaScript. Its source is in
+      source.json.
+    </noscript>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+{
+  // The site's entry (bundled by scripts/build-site.ts, never emitted by tsc). `tsc -b` checks it
+  // against site/nfx-web-lib.d.ts; the site build checks lib-check.ts against the pinned library's
+  // own declarations instead.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": ["./*.ts"],
+  "references": [{ "path": ".." }]
+}

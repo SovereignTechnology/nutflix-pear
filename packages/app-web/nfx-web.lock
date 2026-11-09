@@ -1,0 +1,37 @@
+# packages/app-web/nfx-web.lock: the nfx web player library this site is built with (ADR 0022 item 2).
+#
+# The pin is the one `nfx` line:
+#
+#   nfx <commit> <source sha256> <library tar sha256>
+#
+#   commit          SovereignTechnology/nfx, 40 lowercase hex
+#   source sha256   of GitHub's archive of that commit,
+#                   https://github.com/SovereignTechnology/nfx/archive/<commit>.tar.gz
+#   library sha256  of nfx-web-lib-<commit, 12 hex>.tar, which nfx's web/player/lib-tar.sh builds
+#                   from that source: api.d.ts, player.d.ts, player.js, wasm/nfx_wasm_bg.wasm
+#
+# Re-pinning is replacing that line, and nothing else: `bash scripts/nfx-lib.sh pin <commit>` (from
+# packages/app-web, with the tools below on PATH) fetches the source, builds the tar and prints the
+# new line. The site build (scripts/build-site.ts) refuses a tar whose sha256 is not the one here,
+# and checks the tar's api.d.ts and player.d.ts against src/nfx-lib.ts, so a library whose API
+# drifted fails the build. The e2e (e2e/web.e2e.ts) runs nfxd built from the same commit.
+#
+# How to rebuild the tar: `bash scripts/nfx-lib.sh build` (from packages/app-web). It downloads the
+# source, refuses it unless its sha256 is the one here, runs `npm ci --ignore-scripts` and lib-tar.sh
+# in it, and refuses the tar unless its sha256 is the one here. lib-tar.sh checks the tools first,
+# because other versions give other bytes:
+#
+#   tool <name> <version> [<sha256 of the x86_64-unknown-linux-musl release tarball>]
+#
+# rust: the toolchain with the wasm32-unknown-unknown target (nfx's rust-version and its CI image).
+# wasm-pack and wasm-bindgen: GitHub releases, wasm-bindgen at the version nfx's crates/Cargo.lock
+# pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
+# web/player/package-lock.json. Node 22.
+#
+# ffef793 is nfx #73 (the player as a library). Its tar came out byte for byte the same twice in a
+# Kata VM before this pin; the web-site workflow (.github/workflows/web-site.yml) builds it again on
+# a GitHub runner on every run and fails unless it matches.
+nfx ffef7935388bd73bd1d6bcd964f325920794adc3 4705f52f9d4c1c00880928821eb6849f4d230278eccd3d3f48cc0288a08e236c b3b0bad24040f524b28f675caa198a688963f8caff4b2d7e8147c2c839f63c02
+tool rust 1.98.0
+tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
+tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f

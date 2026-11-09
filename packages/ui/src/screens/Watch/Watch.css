@@ -1222,3 +1222,31 @@
   align-self: flex-end;
   font-size: var(--nf-text-sm);
 }
+
+/* Contracts v15: what the player ran into (refused files, skipped origins, a stop). */
+.nf-nfxwatch__problems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-space-8);
+}
+
+.nf-nfxwatch__problem {
+  margin: 0;
+  font-size: var(--nf-text-sm);
+  color: var(--nf-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.nf-nfxwatch__problem--stopped {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nf-space-8);
+  color: var(--nf-color-text-primary);
+}
+
+.nf-nfxwatch__problem-text {
+  margin: 0;
+  flex: 1 1 16rem;
+}

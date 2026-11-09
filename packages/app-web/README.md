@@ -1,8 +1,8 @@
 # @sovit/app-web
 
-The web client for NFX videos, to be served at web.nutflix.xyz. It is being built and nothing ships
-from it yet. [ADR 0022](../../docs/decisions/0022-a-web-client-for-nfx.md) records the decision
-and its reasons; this file says what is coming and what is here.
+The web client for NFX videos, to be served at web.nutflix.xyz. Its static site builds here and is
+tested end to end; it is not deployed yet. [ADR 0022](../../docs/decisions/0022-a-web-client-for-nfx.md)
+records the decision and its reasons; this file says what it is, what is here and how it is built.
 
 ## What it will be
 
@@ -49,9 +49,53 @@ the same video. Whoever serves the page can change it; a browser cannot fully pr
   in the sidebar; Settings' Appearance, Playback, Relays and NFX), the route mirrored in the hash
   (`#/watch/<address>`, also `?a=<address>`).
 
-## How it will be built
+## How it is built
 
-A static site from `scripts/build-site.ts` (esbuild): one page with SRI on every script and on the
-wasm and a CSP with nothing inline, the `@sovit/ui` styles, nfx's player and its wasm, and a
-`source.json` naming the exact source (AGPL-3.0 §13). The bundle is checked against a deny list:
-no Cashu, sodium, Hypercore, Bare, Electron, wallet, payment or signer code.
+A static site, `dist/site/`, from `scripts/build-site.ts` (esbuild), with nfx's player library
+pinned in [`nfx-web.lock`](nfx-web.lock):
+
+| File                                         | What                                                                                                                                                                    |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.html`                                 | `site/index.html` with a CSP `<meta>` and SRI on every script, module and stylesheet (`scripts/csp-sri.mjs`)                                                            |
+| `app.js`                                     | `site/entry.ts` bundled: `startWebClient` over nfx's library                                                                                                            |
+| `ui.css`, `shell.css`                        | `@sovit/ui`'s styles                                                                                                                                                    |
+| `nfx/player.js`, `nfx/wasm/nfx_wasm_bg.wasm` | nfx's library and its WASM verifier, byte for byte from the pinned tar; `index.html` preloads the library with its SRI hash, and `app.js` fetches the WASM with its own |
+| `source.json`                                | the pear and nfx commits, the lock, the CSP and the sha256 of every file (AGPL-3.0 §13), linked from Settings                                                           |
+
+Beside it, `dist/site-headers.txt` (the `Content-Security-Policy` and the other headers to serve the
+page with) and `dist/nutflix-web-site-<pear commit, 12 hex>.tar` (the site as a tar with fixed
+metadata). From a clean checkout, with nfx-web.lock's tools on `PATH` for the library tar:
+
+```sh
+npm ci --ignore-scripts && npx tsc -b && npm run -w packages/ui build:css
+bash packages/app-web/scripts/nfx-lib.sh build    # the library tar, refused unless it is the lock's
+npm run -w packages/app-web build:site            # dist/site, its headers and its tar
+```
+
+The build refuses a library tar that is not the lock's, a library whose `player.d.ts` and
+`api.d.ts` no longer fit `src/nfx-lib.ts` (`site/lib-check.ts`), a bundle that loaded anything on
+its deny list (Cashu, sodium, Hypercore, Bare, Electron, Pear, BIP-39, core's wallet, payment,
+signer and main entry, the gateway, the seeder, the desktop app, Node built-ins), a page with
+anything inline or from another origin, and a pear tree with uncommitted changes. It prints every
+file's sha256, the tree hash (`scripts/reproducible-build.mjs`'s definition) and the tar's sha256;
+built twice from the same commit, at any path, they are the same.
+
+The page's CSP: `default-src 'none'`; scripts, styles and fonts from the page's own origin only,
+plus `'wasm-unsafe-eval'` so that the WASM compiles (never `'unsafe-eval'`); `connect-src 'self'
+https: wss: blob:`, because relays, origins and trackers can be anywhere, and the verified WASM
+reaches nfx's `init` as a `blob:` URL; media and images from the page or `blob:`; no frames,
+objects, forms or base URI.
+
+Re-pinning nfx is one line of `nfx-web.lock`: `bash scripts/nfx-lib.sh pin <commit>` (or the
+`web-site` workflow dispatched with `repin`) prints it.
+
+## Tests
+
+- `npm test`: the adapter, settings and shell (jsdom), and the site build's rules
+  (`scripts/__tests__`: the lock, the deny list, the tree hash, `source.json`).
+- `e2e/web.e2e.ts`: the built site in headless Chromium under its own headers, against nfxd built
+  from the lock's nfx commit (scoped relay, origin, tracker and a WebRTC bridge) and a stock relay
+  without NIP-50 (strfry), all on loopback. It checks the feed, search on both relays, playback,
+  playback from the bridge once the origin refuses every segment, a lying origin refused, a deleted
+  video, a video nobody seeds, the Settings notices and `source.json`, and that the CSP refused
+  nothing. `.github/workflows/web-site.yml` runs it on every change to the client.

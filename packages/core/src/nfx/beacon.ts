@@ -6,8 +6,8 @@
  * This reader implements NFX-12, which nfx-proto does not yet: a `hyperdht` endpoint is parsed
  * strictly, and its `bind` must verify, or the whole beacon is invalid (NFX-12 §2).
  */
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { hexToBytes } from 'nostr-tools/utils';
-import sodium from 'sodium-universal';
 
 import type { NfxVideo, NostrEvent, NostrFilter } from '../contracts/index.js';
 import { fail, ok, type NfxResult, type Verified } from './errors.js';
@@ -221,7 +221,24 @@ export function hyperdhtBindMessage(seeder: string, namespace: string): string {
   return `nfx/hyperdht/1:${seeder}:${namespace}`;
 }
 
-/** Whether `bind` (128 hex) is `peer`'s (64 hex) Ed25519 signature for `seeder` on `namespace`. */
+/**
+ * Whether `bind` (128 hex) is `peer`'s (64 hex) Ed25519 signature for `seeder` on `namespace`.
+ *
+ * `@noble/curves`' Ed25519 (ADR 0022: `@sovit/core/nfx` runs in a page without sodium), held to
+ * the answers libsodium's `crypto_sign_verify_detached` gives, which the desktop app used before:
+ *
+ * - noble's strict mode (`zip215: false`) refuses what libsodium refuses before it hashes: an `S`
+ *   of `L` or more, a public key that is not a canonical encoding of a point or is of small order;
+ * - libsodium also refuses an `R` of small order, however it is encoded, so this does too;
+ * - noble checks the cofactored equation (`[8]SB = [8]R + [8]hA`), libsodium the cofactorless one
+ *   (`SB - hA` encodes to `R`). The two agree whenever `R` and `A` have no small-order part, so a
+ *   key or an `R` with one is refused here. Ed25519 key generation never makes such a key.
+ *
+ * So this accepts exactly what libsodium accepts, except signatures by a public key with a
+ * small-order part, which libsodium accepts about one time in eight and this never does
+ * (`__tests__/crypto-parity.test.ts` checks both against sodium-native). Only library calls:
+ * nothing here implements a curve operation (SECURITY.md, "No model writes crypto").
+ */
 export function verifyHyperdhtBind(
   peer: string,
   bind: string,
@@ -230,11 +247,14 @@ export function verifyHyperdhtBind(
 ): boolean {
   if (!isLowerHex(peer, 64) || !isLowerHex(bind, 128)) return false;
   try {
-    return sodium.crypto_sign_verify_detached(
-      hexToBytes(bind),
-      utf8(hyperdhtBindMessage(seeder, namespace)),
-      hexToBytes(peer),
-    );
+    const sig = hexToBytes(bind);
+    const key = hexToBytes(peer);
+    const R = ed25519.Point.fromBytes(sig.subarray(0, 32), true);
+    if (R.isSmallOrder() || !R.isTorsionFree()) return false;
+    if (!ed25519.Point.fromBytes(key, false).isTorsionFree()) return false;
+    return ed25519.verify(sig, utf8(hyperdhtBindMessage(seeder, namespace)), key, {
+      zip215: false,
+    });
   } catch {
     return false;
   }

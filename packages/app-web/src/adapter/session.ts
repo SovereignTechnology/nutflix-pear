@@ -7,11 +7,17 @@
  * Renditions are the player's hls.js levels, known once its master playlist is parsed (`levels`);
  * a rendition's id is `l<index>`, and `setRendition` is the player's `setLevel`. Before that, the
  * session lists none and hls.js picks (`rendition` is `auto`).
+ *
+ * Contracts v15: what goes wrong is kept as `problems` (a file the player refused, an origin whose
+ * hash list did not verify, a play that stopped), and `onChange` tells the watch page when the
+ * renditions arrive or a problem is added.
  */
 import type {
   ElementPlaySource,
+  MAX_NFX_PLAY_PROBLEMS,
   MediaElementLike,
   NfxAddress,
+  NfxPlayProblem,
   NfxPlaySession,
   NfxRenditionInfo,
   Unsubscribe,
@@ -40,6 +46,63 @@ export function levelOf(id: string): number | null {
 
 /** What `rendition` reads while hls.js picks. */
 export const AUTO_RENDITION = 'auto';
+
+/** The most problems one session keeps (contracts v15), the newest. */
+export const WEB_MAX_PLAY_PROBLEMS: typeof MAX_NFX_PLAY_PROBLEMS = 16;
+
+function capped(s: string): string {
+  return s.length > 120 ? `${s.slice(0, 119)}…` : s;
+}
+
+/** `url` as a viewer can read it: its host and the last part of its path, at most 120 characters. */
+export function shortUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const name =
+      u.pathname
+        .split('/')
+        .filter((p) => p !== '')
+        .at(-1) ?? '';
+    return capped(name === '' ? u.host : `${u.host}/…/${name}`);
+  } catch {
+    return capped(url);
+  }
+}
+
+/**
+ * The problem a player event reports, or `null` for one that is not a problem. A play the browser
+ * would not start on its own (`play: …`, autoplay refused) is not one: the element's controls
+ * start it. nfx's player reports a refused segment from the mesh only in its log, as
+ * `mesh: rejected <http|p2p> bytes for <url>: <why>`, so that line is read as a refusal too.
+ */
+export function problemOf(e: NfxPlayerEvent): NfxPlayProblem | null {
+  switch (e.type) {
+    case 'rejected':
+      return { kind: 'refused', message: `Refused ${shortUrl(e.url)}: ${e.why}` };
+    case 'origin':
+      return e.ok
+        ? null
+        : {
+            kind: 'origin',
+            message: `${capped(e.origin)}: ${e.why ?? 'its hash list did not verify'}`,
+          };
+    case 'error':
+      return e.message.startsWith('play: ') ? null : { kind: 'stopped', message: e.message };
+    case 'log': {
+      const m = /^mesh: rejected (http|p2p) bytes for (\S+): (.*)$/.exec(e.message);
+      return m === null
+        ? null
+        : {
+            kind: 'refused',
+            message: `Refused ${shortUrl(m[2] ?? '')} from ${m[1] === 'p2p' ? 'a peer' : 'an origin'}: ${m[3] ?? ''}`,
+          };
+    }
+    case 'verified':
+    case 'levels':
+    case 'playing':
+      return null;
+  }
+}
 
 export interface WebNfxSessionOptions {
   readonly videoId: NfxAddress;
@@ -77,7 +140,8 @@ export class WebNfxSession implements NfxPlaySession {
   #picked: number | null;
   #attached: Attachment | null = null;
   #closed = false;
-  #error: string | null = null;
+  #problems: NfxPlayProblem[] = [];
+  readonly #listeners = new Set<() => void>();
 
   constructor(o: WebNfxSessionOptions) {
     this.#o = o;
@@ -103,13 +167,30 @@ export class WebNfxSession implements NfxPlaySession {
     }));
   }
 
-  /** The last error nfx's player reported (no origin verified, a fatal media error), if any. */
+  /** Contracts v15: what went wrong, oldest first, the newest `WEB_MAX_PLAY_PROBLEMS`. */
+  get problems(): readonly NfxPlayProblem[] {
+    return [...this.#problems];
+  }
+
+  /** The last time the play stopped (the player refused to start, a fatal media error), if ever. */
   get error(): string | null {
-    return this.#error;
+    return this.#problems.findLast((p) => p.kind === 'stopped')?.message ?? null;
   }
 
   get closed(): boolean {
     return this.#closed;
+  }
+
+  /** Contracts v15: told after the renditions, the rendition or the problems change. */
+  onChange(cb: () => void): Unsubscribe {
+    if (this.#closed) return () => undefined;
+    const once = (): void => {
+      cb();
+    };
+    this.#listeners.add(once);
+    return () => {
+      this.#listeners.delete(once);
+    };
   }
 
   setRendition(id: string): Promise<void> {
@@ -125,6 +206,7 @@ export class WebNfxSession implements NfxPlaySession {
       return rejectWith('invalid-argument', 'no such rendition');
     }
     this.#picked = index;
+    this.#changed();
     return Promise.resolve();
   }
 
@@ -132,9 +214,28 @@ export class WebNfxSession implements NfxPlaySession {
   close(): Promise<void> {
     if (this.#closed) return Promise.resolve();
     this.#closed = true;
+    this.#listeners.clear();
     this.#detach();
     this.#o.onClose?.(this);
     return Promise.resolve();
+  }
+
+  #changed(): void {
+    for (const cb of [...this.#listeners]) {
+      try {
+        cb();
+      } catch {
+        // A listener's failure is its own.
+      }
+    }
+  }
+
+  #problem(p: NfxPlayProblem): void {
+    this.#problems.push(p);
+    if (this.#problems.length > WEB_MAX_PLAY_PROBLEMS) {
+      this.#problems.splice(0, this.#problems.length - WEB_MAX_PLAY_PROBLEMS);
+    }
+    this.#changed();
   }
 
   #attach(el: MediaElementLike): Unsubscribe {
@@ -174,15 +275,28 @@ export class WebNfxSession implements NfxPlaySession {
         return;
       }
       slot.session = session;
-      if (session.levels.length > 0) this.#levels = [...session.levels];
+      if (session.levels.length > 0) {
+        this.#levels = [...session.levels];
+        this.#changed();
+      }
     } catch (e) {
-      if (live()) this.#error = e instanceof Error ? e.message : 'the player did not start';
+      if (live()) {
+        this.#problem({
+          kind: 'stopped',
+          message: e instanceof Error ? e.message : 'the player did not start',
+        });
+      }
     }
   }
 
   #hear(e: NfxPlayerEvent): void {
-    if (e.type === 'levels') this.#levels = [...e.levels];
-    else if (e.type === 'error') this.#error = e.message;
+    if (e.type === 'levels') {
+      this.#levels = [...e.levels];
+      this.#changed();
+      return;
+    }
+    const p = problemOf(e);
+    if (p !== null) this.#problem(p);
   }
 
   #detach(): void {

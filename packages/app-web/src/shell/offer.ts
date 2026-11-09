@@ -10,6 +10,8 @@
  *   shown here), Playback, Relays and NFX (no switch, since NFX is always on; no iroh relays; the
  *   trackers; and the line saying that trackers and peers see the viewer's IP address).
  * - **No sign-in** in the header (NIP-07 comes after v1).
+ * - **The source** (T13, AGPL-3.0 §13): Settings links to `source.json`, which the site build
+ *   writes beside the page (the commits it was built from and the sha256 of every file).
  */
 import type { ShellOffer } from '@sovit/ui';
 
@@ -26,4 +28,5 @@ export const WEB_OFFER: ShellOffer = Object.freeze({
   }),
   appearanceParts: Object.freeze({ remoteImages: false }),
   signIn: false,
+  source: Object.freeze({ href: 'source.json' }),
 });

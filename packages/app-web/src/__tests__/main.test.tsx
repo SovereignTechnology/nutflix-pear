@@ -147,6 +147,10 @@ describe('the web shell (ADR 0022)', () => {
     expect(container.querySelector('[id$="-nfx-iroh-add"]')).toBeNull();
     expect(container.textContent).toContain('wss://web.nutflix.xyz/tracker');
     expect(container.textContent).toContain('wss://relay.nutflix.xyz');
+    // T13 and AGPL-3.0 §13: the source the page was built from, and what a browser cannot promise.
+    expect(container.querySelector('.nf-settings__source a')?.getAttribute('href')).toBe(
+      'source.json',
+    );
   });
 
   it('the route follows the hash, and the hash the route', async () => {

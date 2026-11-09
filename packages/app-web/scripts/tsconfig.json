@@ -1,0 +1,13 @@
+{
+  // The site build and its tests (Node, with type stripping: `.ts` imports). Checked by `tsc -b`
+  // from the root, never emitted.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["./*.ts", "./__tests__/*.ts"]
+}

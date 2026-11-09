@@ -1,0 +1,324 @@
+# The web client's site (ADR 0022, M4): nfx's player library built from the source
+# packages/app-web/nfx-web.lock pins, the static site built from it twice (two checkouts, two paths)
+# and compared byte for byte, and the end-to-end run of that site in headless Chromium against nfxd
+# (built from the same nfx commit) and a stock Nostr relay without NIP-50 (strfry).
+#
+#   nfx-lib  fetch the nfx source archive the lock names (sha256-checked), build the library tar
+#            with nfx's own web/player/lib-tar.sh, and fail unless its sha256 is the lock's.
+#            Dispatched with `repin` = an nfx commit, it builds that commit's tar and prints the
+#            lock line that pins it instead (and the other jobs do not run).
+#   site     `build:site` from this checkout and again from a clone at another path, each from a
+#            clean install; the two dist/site trees and tars must be identical. The site tar, its
+#            headers and the build output are this run's artifact (what deployment takes).
+#   e2e      packages/app-web/e2e/web.e2e.ts on that very tar.
+#
+# Supply-chain policy as ci.yml (threat T12): actions pinned by commit SHA, `npm ci
+# --ignore-scripts`, Cargo.lock honoured (--locked), least-privilege token, no secrets, inputs only
+# through env. Downloads: nfx's source archive (sha256 from the lock), wasm-pack and wasm-bindgen
+# (sha256 from the lock), the runner's rustup toolchain, strfry at a pinned commit (as spike-iroh.yml
+# pins it), ffmpeg (apt), and Playwright's Chromium (`playwright-core install`, the version the
+# lockfile pins). Nothing here is a server for anyone but the run's own browser on loopback.
+name: web-site
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/web-site.yml'
+      - 'packages/app-web/**'
+      - 'packages/ui/**'
+      - 'packages/core/**'
+      - 'scripts/csp-sri.mjs'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/web-site.yml'
+      - 'packages/app-web/**'
+      - 'packages/ui/**'
+      - 'packages/core/**'
+      - 'scripts/csp-sri.mjs'
+      - 'package-lock.json'
+  workflow_dispatch:
+    inputs:
+      repin:
+        description: 'nfx commit to build the library tar for, printing its nfx-web.lock line (40 lowercase hex); empty = build and check the lock'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-site-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: ''
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+  # strfry 1.1.3 (released 2026-09-04), as spike-iroh.yml pins it: the commit its tag names.
+  STRFRY_SHA: '16c00df04e264f4d68db5e10a48127f015c7824b'
+
+jobs:
+  nfx-lib:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      commit: ${{ steps.lock.outputs.NFX_COMMIT }}
+      src_sha256: ${{ steps.lock.outputs.NFX_SRC_SHA256 }}
+      rust: ${{ steps.lock.outputs.RUST_VERSION }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: the lock's pins
+        id: lock
+        run: bash packages/app-web/scripts/nfx-lib.sh show | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: the lock's Rust toolchain and the wasm32 target (the runner's rustup)
+        env:
+          RUST_VERSION: ${{ steps.lock.outputs.RUST_VERSION }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$RUST_VERSION"
+          rustc -V
+      - name: wasm-pack and wasm-bindgen (the lock's releases, sha256-checked)
+        env:
+          WASM_PACK_VERSION: ${{ steps.lock.outputs.WASM_PACK_VERSION }}
+          WASM_PACK_SHA256: ${{ steps.lock.outputs.WASM_PACK_SHA256 }}
+          WASM_BINDGEN_VERSION: ${{ steps.lock.outputs.WASM_BINDGEN_VERSION }}
+          WASM_BINDGEN_SHA256: ${{ steps.lock.outputs.WASM_BINDGEN_SHA256 }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/tools"
+          mkdir -p "$d"
+          curl -sSfL --retry 8 --retry-all-errors -o "$d/wasm-pack.tgz" \
+            "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${WASM_PACK_SHA256}  $d/wasm-pack.tgz" | sha256sum -c -
+          curl -sSfL --retry 8 --retry-all-errors -o "$d/wasm-bindgen.tgz" \
+            "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${WASM_BINDGEN_SHA256}  $d/wasm-bindgen.tgz" | sha256sum -c -
+          tar -xzf "$d/wasm-pack.tgz" -C "$d"
+          tar -xzf "$d/wasm-bindgen.tgz" -C "$d"
+          sudo install -m 0755 "$d/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack" /usr/local/bin/
+          sudo install -m 0755 "$d/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl/wasm-bindgen" /usr/local/bin/
+          wasm-pack -V
+          wasm-bindgen -V
+      - name: build the library tar from the pinned source (refused unless it is the lock's)
+        if: inputs.repin == ''
+        run: |
+          set -euo pipefail
+          bash packages/app-web/scripts/nfx-lib.sh build --out "$RUNNER_TEMP/nfx-lib" | tee "$RUNNER_TEMP/nfx-lib.txt"
+          sha256sum "$RUNNER_TEMP"/nfx-lib/*.tar
+      - name: re-pin (dispatch only) — the lock line for another nfx commit
+        if: inputs.repin != ''
+        env:
+          REPIN: ${{ inputs.repin }}
+        run: |
+          set -euo pipefail
+          [[ $REPIN =~ ^[0-9a-f]{40}$ ]] || { echo "::error::repin must be 40 lowercase hex"; exit 1; }
+          bash packages/app-web/scripts/nfx-lib.sh pin "$REPIN" --out "$RUNNER_TEMP/nfx-lib" | tee "$RUNNER_TEMP/nfx-lib.txt"
+          {
+            echo '### nfx-web.lock line'
+            echo '```'
+            grep '^nfx ' "$RUNNER_TEMP/nfx-lib.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nfx-web-lib
+          path: ${{ runner.temp }}/nfx-lib/
+          if-no-files-found: error
+          retention-days: 14
+
+  site:
+    needs: nfx-lib
+    if: inputs.repin == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nfx-web-lib
+          path: ${{ runner.temp }}/nfx-lib
+      - name: the library tar is the lock's
+        run: bash packages/app-web/scripts/nfx-lib.sh check "$RUNNER_TEMP"/nfx-lib/nfx-web-lib-*.tar
+      - name: build 1 (this checkout)
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npx tsc -b
+          npm run -w packages/ui build:css
+          npm run -s -w packages/app-web build:site -- --nfx-lib "$(ls "$RUNNER_TEMP"/nfx-lib/nfx-web-lib-*.tar)" | tee "$RUNNER_TEMP/build-1.txt"
+      - name: build 2 (a clone at another path, from scratch)
+        run: |
+          set -euo pipefail
+          git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$RUNNER_TEMP/again/nutflix-pear"
+          cd "$RUNNER_TEMP/again/nutflix-pear"
+          npm ci --ignore-scripts
+          npx tsc -b
+          npm run -w packages/ui build:css
+          npm run -s -w packages/app-web build:site -- --nfx-lib "$(ls "$RUNNER_TEMP"/nfx-lib/nfx-web-lib-*.tar)" | tee "$RUNNER_TEMP/build-2.txt"
+      - name: the two builds are the same bytes
+        run: |
+          set -euo pipefail
+          grep -E '^SITE_(FILE |TREE_SHA256=|TAR_SHA256=)' "$RUNNER_TEMP/build-1.txt" > "$RUNNER_TEMP/1.txt"
+          grep -E '^SITE_(FILE |TREE_SHA256=|TAR_SHA256=)' "$RUNNER_TEMP/build-2.txt" > "$RUNNER_TEMP/2.txt"
+          diff "$RUNNER_TEMP/1.txt" "$RUNNER_TEMP/2.txt"
+          diff -r packages/app-web/dist/site "$RUNNER_TEMP/again/nutflix-pear/packages/app-web/dist/site"
+          cmp packages/app-web/dist/site-headers.txt "$RUNNER_TEMP/again/nutflix-pear/packages/app-web/dist/site-headers.txt"
+          cat "$RUNNER_TEMP/1.txt"
+          {
+            echo '### web site'
+            echo '```'
+            cat "$RUNNER_TEMP/1.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: the artifact (the site tar, its sha256, its headers, the build's output)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/web-site"
+          cp packages/app-web/dist/nutflix-web-site-*.tar packages/app-web/dist/nutflix-web-site-*.tar.sha256 \
+            packages/app-web/dist/site-headers.txt packages/app-web/dist/site/source.json \
+            "$RUNNER_TEMP/build-1.txt" "$RUNNER_TEMP/web-site/"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-site
+          path: ${{ runner.temp }}/web-site/
+          if-no-files-found: error
+          retention-days: 30
+
+  e2e:
+    needs: [nfx-lib, site]
+    if: inputs.repin == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: nfx's source at the lock's commit (the archive, sha256-checked as nfx-lib.sh checks it)
+        env:
+          NFX_COMMIT: ${{ needs.nfx-lib.outputs.commit }}
+          NFX_SRC_SHA256: ${{ needs.nfx-lib.outputs.src_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ $NFX_COMMIT =~ ^[0-9a-f]{40}$ && $NFX_SRC_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          curl -sSfL --retry 8 --retry-all-errors -o "$RUNNER_TEMP/nfx.tar.gz" \
+            "https://github.com/SovereignTechnology/nfx/archive/${NFX_COMMIT}.tar.gz"
+          echo "${NFX_SRC_SHA256}  $RUNNER_TEMP/nfx.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/nfx"
+          tar -xzf "$RUNNER_TEMP/nfx.tar.gz" -C "$RUNNER_TEMP/nfx" --strip-components=1 --no-same-owner
+      - name: the lock's Rust toolchain (the runner's rustup)
+        env:
+          RUST_VERSION: ${{ needs.nfx-lib.outputs.rust }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ${{ runner.temp }}/nfx/crates/target
+          key: web-site-nfxd-${{ needs.nfx-lib.outputs.rust }}-${{ needs.nfx-lib.outputs.commit }}
+      - name: nfxd and nfx-package (debug builds, as nfx's own e2e uses them)
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path "$RUNNER_TEMP/nfx/crates/Cargo.toml" -p nfxd -p nfx-media --bins
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 0755 "$RUNNER_TEMP/nfx/crates/target/debug/nfxd" "$RUNNER_TEMP/nfx/crates/target/debug/nfx-package" "$RUNNER_TEMP/bin/"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hoytech/strfry
+          ref: ${{ env.STRFRY_SHA }}
+          path: strfry
+          submodules: recursive
+          persist-credentials: false
+      - name: strfry cache (keyed by its commit)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/strfry-bin
+          key: web-site-strfry-${{ env.STRFRY_SHA }}-ubuntu-24.04
+      - name: strfry (the stock relay, from its pinned commit with its own Makefile)
+        run: |
+          set -euo pipefail
+          [ "$(git -C strfry rev-parse HEAD)" = "$STRFRY_SHA" ]
+          bin="$RUNNER_TEMP/strfry-bin"
+          if [ ! -x "$bin/strfry" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends g++ make pkg-config libtool \
+              libssl-dev zlib1g-dev liblmdb-dev libflatbuffers-dev libsecp256k1-dev libzstd-dev
+            make -C strfry setup-golpe
+            make -C strfry -j"$(nproc)"
+            mkdir -p "$bin"
+            strip -o "$bin/strfry" strfry/strfry
+          fi
+          install -m 0644 strfry/strfry.conf "$RUNNER_TEMP/strfry.conf"
+      - name: system packages (ffmpeg for the clips; strfry's shared libraries, as spike-iroh.yml)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg liblmdb-dev libsecp256k1-dev libzstd-dev
+          ! ldd "$RUNNER_TEMP/strfry-bin/strfry" | grep 'not found'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: playwright-core and its Chromium
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npx --no-install playwright-core install --with-deps chromium
+      # Chromium's sandbox stays on: Ubuntu 24.04 restricts the unprivileged user namespaces it
+      # uses, so lift that on this throwaway runner, as screenshots.yml does.
+      - name: allow Chrome's user-namespace sandbox on this runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-site
+          path: ${{ runner.temp }}/web-site
+      - name: the site, from the site job's tar (its sha256 checked)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/web-site"
+          sha256sum -c nutflix-web-site-*.tar.sha256
+          mkdir -p "$RUNNER_TEMP/site"
+          tar -xf nutflix-web-site-*.tar -C "$RUNNER_TEMP/site"
+          ls -lR "$RUNNER_TEMP/site"
+      - name: e2e (packages/app-web/e2e/web.e2e.ts)
+        env:
+          NFX_BIN: ${{ runner.temp }}/bin
+          STRFRY: ${{ runner.temp }}/strfry-bin/strfry
+          STRFRY_CONF: ${{ runner.temp }}/strfry.conf
+          SITE: ${{ runner.temp }}/site
+          SITE_HEADERS: ${{ runner.temp }}/web-site/site-headers.txt
+          E2E_OUT: ${{ runner.temp }}/e2e-out
+        run: timeout --kill-after=30 2400 node packages/app-web/e2e/web.e2e.ts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: web-e2e
+          path: ${{ runner.temp }}/e2e-out/
+          if-no-files-found: ignore
+          retention-days: 14

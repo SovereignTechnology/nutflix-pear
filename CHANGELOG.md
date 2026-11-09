@@ -9,6 +9,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Changed
 
+- **NFX's SHA-256 and the NFX-12 `hyperdht` bind check come from `@noble/hashes` and
+  `@noble/curves`** instead of libsodium, so that the same code runs in the web client (ADR 0022).
+  The digests are the same bytes. The bind check gives libsodium's answers, except for a signature
+  by a public key with a small-order part, which no key generator makes: refused now, where
+  libsodium accepted about one in eight. Files are still checked through libsodium in the worker.
+
 - **NFX is on by default, on the test network's public relays** (ADR 0020's 2026-11-08
   amendment): `wss://relay.nutflix.xyz` to find videos and `https://iroh.nutflix.xyz/` to reach
   seeders behind home routers, both run by SovTech. Free videos show up with no setup. Everything
@@ -23,10 +29,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   defaults, so existing installs are unchanged.
 - **Docs: the public iroh relay.** `nfx:testnet:1` now has a public iroh relay,
   `https://iroh.nutflix.xyz/`. The README's known limitations say how to opt in (Settings › NFX
-  network › iroh relays; nothing is added for you, the URL must be exactly `https://host/`, at most
-  4) and that there is still no public scoped Nostr relay. No code, defaults or contracts changed.
+  network › iroh relays; nothing is added for you, the URL must be exactly `https://host/`, at most 4) and that there is still no public scoped Nostr relay. No code, defaults or contracts changed.
 
 ### CI
+
+- **`web-site`** builds nfx's web player library from the source `packages/app-web/nfx-web.lock`
+  pins and fails unless it is the pinned tar, builds the web client's site twice (from two
+  checkouts at two paths) and fails unless they are the same bytes, and runs the site end to end in
+  headless Chromium against nfxd and a stock relay (strfry). The desktop app is unchanged by it.
 
 - **`nfx-exit-two-host` takes a `relay_only` input** (default false). Set, nfxd runs with
   `--relay-only`, so every byte it moves goes through the iroh relays, to exercise a relay's own
@@ -149,8 +159,8 @@ Settings and give it the network's scoped and iroh relays (see the README's know
   - **Opening:** the host passes those seeders to the worker's `nfx.play.open` and hands main the
     media link.
   - **No money:** there is no balance check, and the session never reaches the money plane.
-  - **On the Watch page:** NfxWatch has *Play — free*, the video with a quality picker, and
-    *No seeders online* with Retry.
+  - **On the Watch page:** NfxWatch has _Play — free_, the video with a quality picker, and
+    _No seeders online_ with Retry.
   - **Closing:** a session closes with the page, its webContents, or the worker.
 - The worker plays a free NFX video (ADR 0020 slice 5d-2), as `nfx.play.open` / `nfx.play.close`.
   - **What it does:** it dials the seeders it is given over HyperDHT and fetches the hash list,

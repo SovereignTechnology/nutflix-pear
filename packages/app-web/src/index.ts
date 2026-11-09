@@ -36,7 +36,15 @@ export {
   type WebSettingsStoreOptions,
 } from './settings/store.js';
 export { WebNetworkAdapter, type WebAdapterOptions } from './adapter/web-adapter.js';
-export { WebNfxSession, AUTO_RENDITION, levelId, levelOf } from './adapter/session.js';
+export {
+  WebNfxSession,
+  AUTO_RENDITION,
+  WEB_MAX_PLAY_PROBLEMS,
+  levelId,
+  levelOf,
+  problemOf,
+  shortUrl,
+} from './adapter/session.js';
 export {
   beaconEndpoints,
   beaconOrigin,

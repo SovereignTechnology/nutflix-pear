@@ -6,7 +6,13 @@
 import { act, createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
-import type { MediaElementLike, NfxAddress, NfxPlaySession } from '@sovit/core';
+import type {
+  MediaElementLike,
+  NfxAddress,
+  NfxPlayProblem,
+  NfxPlaySession,
+  NfxRenditionInfo,
+} from '@sovit/core';
 import { click, render, type Rendered } from '../../../components/testing/render.js';
 import type { Route } from '../../shared/route.js';
 import { NfxWatch } from '../NfxWatch.js';
@@ -214,6 +220,102 @@ describe('NfxWatch', () => {
     expect(playNfx).toHaveBeenCalledTimes(2);
     expect(playNfx).toHaveBeenLastCalledWith(NFX.id, '720p');
     expect(opened).toHaveLength(2);
+  });
+
+  it('v15: renditions an element source learns after attach reach the quality picker', async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true });
+    const real = adapter.playNfx.bind(adapter);
+    let renditions: readonly NfxRenditionInfo[] = [];
+    const listeners = new Set<() => void>();
+    vi.spyOn(adapter, 'playNfx').mockImplementation(async (addr, rendition) => {
+      const s = await real(addr, rendition);
+      return {
+        videoId: s.videoId,
+        rendition: 'auto',
+        get renditions() {
+          return renditions;
+        },
+        source: { kind: 'element', attach: () => () => undefined },
+        setRendition: () => Promise.resolve(),
+        onChange: (cb) => {
+          listeners.add(cb);
+          return () => listeners.delete(cb);
+        },
+        close: () => Promise.resolve(),
+      };
+    });
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    expect(r.container.querySelector('.nf-nfxwatch__quality')).toBeNull();
+    expect(listeners.size).toBe(1);
+    renditions = [
+      { id: 'l0', bandwidth: 800_000, resolution: '640x360' },
+      { id: 'l1', bandwidth: 2_500_000, resolution: '1280x720' },
+    ];
+    act(() => {
+      for (const cb of listeners) cb();
+    });
+    const select = r.get('.nf-nfxwatch__quality select') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(['Auto', '640x360', '1280x720']);
+    expect(select.value).toBe('');
+    r.unmount();
+    mounted = undefined;
+    expect(listeners.size).toBe(0);
+  });
+
+  it('v15: the problems a session reports are shown, and a stopped play can be tried again', async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true });
+    const real = adapter.playNfx.bind(adapter);
+    let problems: NfxPlayProblem[] = [];
+    let tell: () => void = () => undefined;
+    const playNfx = vi.spyOn(adapter, 'playNfx').mockImplementation(async (addr, rendition) => {
+      const s = await real(addr, rendition);
+      return {
+        ...s,
+        get problems() {
+          return problems;
+        },
+        onChange: (cb) => {
+          tell = cb;
+          return () => undefined;
+        },
+      };
+    });
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    expect(r.container.querySelector('.nf-nfxwatch__problems')).toBeNull();
+    problems = [
+      { kind: 'origin', message: 'https://a.example/o: hash list: HTTP 503' },
+      { kind: 'refused', message: 'Refused b.example/…/x.m4s: sha256 mismatch' },
+      { kind: 'refused', message: 'Refused b.example/…/y.m4s: sha256 mismatch' },
+    ];
+    act(() => {
+      tell();
+    });
+    const text = r.get('.nf-nfxwatch__problems').textContent;
+    expect(text).toContain('2 files did not match the video’s hash list and were refused.');
+    expect(text).toContain('Refused b.example/…/y.m4s: sha256 mismatch');
+    expect(text).toContain('An origin did not serve a hash list that verifies, so it was skipped.');
+    expect(r.container.querySelector('[role="alert"]')).toBeNull();
+    problems = [
+      ...problems,
+      { kind: 'stopped', message: 'no origin served a hash list that verifies' },
+    ];
+    act(() => {
+      tell();
+    });
+    expect(r.get('[role="alert"]').textContent).toContain(
+      'Playback stopped. no origin served a hash list that verifies',
+    );
+    problems = [];
+    click(r.get('.nf-nfxwatch__problem--stopped button'));
+    await flush();
+    expect(playNfx).toHaveBeenCalledTimes(2);
+    expect(playNfx).toHaveBeenLastCalledWith(NFX.id);
   });
 
   it('nobody seeding: says so, and Retry asks again', async () => {
