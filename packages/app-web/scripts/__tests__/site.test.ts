@@ -192,7 +192,10 @@ describe('the tree hash and source.json', () => {
     });
     expect(j.nfx.library.sha256).toBe(T);
     expect(j['files']).toEqual(input.files);
-    expect(JSON.parse(sourceRecord({ ...input, modified: true })).pear.tree).toBe('modified');
+    const dirty = JSON.parse(sourceRecord({ ...input, modified: true })) as {
+      pear: { tree: string };
+    };
+    expect(dirty.pear.tree).toBe('modified');
   });
 
   it('SITE_FILES is sorted bytewise, and sri384 is the SRI form', () => {

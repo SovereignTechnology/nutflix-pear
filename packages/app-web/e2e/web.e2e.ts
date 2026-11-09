@@ -746,6 +746,7 @@ async function main(): Promise<void> {
       w.frames
         .filter((f) => f.payload.startsWith('["REQ"'))
         .map((f) => ({ url: f.url, search: f.payload.includes('"search"') }));
+    w.frames.length = 0;
     await go(page, '#/search/lighthouse');
     await page
       .locator('.nf-search')
@@ -773,7 +774,7 @@ async function main(): Promise<void> {
 
     // 3. Play the lead video past 5 s: nothing refused, and the quality picker once levels arrive.
     await go(page, `#/watch/${addr(lead)}`);
-    await page.getByRole('button', { name: /Play/ }).first().click({ timeout: 60_000 });
+    await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
     // Up to one beacon interval to find the seeder (the page was reloaded), then the play.
     await waitTime(page, 5, 180_000);
     if ((await page.locator('.nf-nfxwatch__problems').count()) > 0)
@@ -815,7 +816,7 @@ async function main(): Promise<void> {
 
     // 5. The liar: a byte of every segment, then of the hash list.
     await go(page, `#/watch/${addr(lies)}`);
-    await page.getByRole('button', { name: /Play/ }).first().click({ timeout: 60_000 });
+    await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
     await page
       .locator('.nf-nfxwatch__problems')
       .getByText(/did not match the video’s hash list/)
@@ -828,7 +829,7 @@ async function main(): Promise<void> {
     l.lie('hashlist');
     await go(page, '#/');
     await go(page, `#/watch/${addr(lies)}`);
-    await page.getByRole('button', { name: /Play/ }).first().click({ timeout: 60_000 });
+    await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
     await page
       .locator('.nf-nfxwatch__problem--stopped')
       .getByText(/no origin served a hash list that verifies/)
@@ -849,7 +850,7 @@ async function main(): Promise<void> {
 
     // 7. Nobody seeds this one: Play waits out one beacon interval, then says so.
     await go(page, `#/watch/${addr(lone)}`);
-    await page.getByRole('button', { name: /Play/ }).first().click({ timeout: 60_000 });
+    await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
     await page.getByText('No seeders online').first().waitFor({ timeout: 120_000 });
     results['unseeded'] = 'No seeders online';
 

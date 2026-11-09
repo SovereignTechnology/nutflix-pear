@@ -132,14 +132,14 @@ describe('verifyHyperdhtBind (@noble/curves) against libsodium', () => {
       const sig = libsodiumSign(k, MSG);
       for (let bit = 0; bit < 512; bit++) {
         const bad = sig.slice();
-        bad[bit >> 3]! ^= 1 << (bit & 7);
+        bad[bit >> 3] = (bad[bit >> 3] ?? 0) ^ (1 << (bit & 7));
         expect(ours(bad, k.pk), `signature bit ${String(bit)}`).toBe(
           libsodiumVerify(bad, MSG, k.pk),
         );
       }
       for (let bit = 0; bit < 256; bit++) {
         const bad = k.pk.slice();
-        bad[bit >> 3]! ^= 1 << (bit & 7);
+        bad[bit >> 3] = (bad[bit >> 3] ?? 0) ^ (1 << (bit & 7));
         expect(ours(sig, bad), `key bit ${String(bit)}`).toBe(libsodiumVerify(sig, MSG, bad));
       }
     }
@@ -166,7 +166,7 @@ describe('verifyHyperdhtBind (@noble/curves) against libsodium', () => {
       // The same points with the sign bit flipped, and y = p, p + 1 (0 and 1, not reduced).
       ...SMALL.map((P) => {
         const b = P.toBytes();
-        b[31]! ^= 0x80;
+        b[31] = (b[31] ?? 0) ^ 0x80;
         return b;
       }),
       numberToBytesLE(p, 32),
