@@ -28,13 +28,14 @@ supersedes it.
 | [0016](0016-nut13-seed-backup.md)                    | A wallet rebuilt from twelve words: NUT-13 seed backup                    | Accepted                                                  |
 | [0017](0017-packaging.md)                            | Packaging: Electron Forge, fuses, asar and Nostr-signed releases          | Accepted; shipped as desktop 0.1.0 (.deb and AppImage)    |
 | [0018](0018-one-peer-routing.md)                     | One seeder per block, credit per seeder window                            | Accepted                                                  |
-| [0019](0019-scope-pear-desktop-only.md)              | Scope: Pear/desktop only; the web portal is out                           | Accepted; scope amended by 0020                           |
-| [0020](0020-speak-nfx.md)                            | Speak NFX beside the legacy protocol                                      | Accepted; "does not speak iroh" amended by 0021           |
+| [0019](0019-scope-pear-desktop-only.md)              | Scope: Pear/desktop only; the web portal is out                           | Accepted; scope amended by 0020; web ruling reversed in part by 0022 |
+| [0020](0020-speak-nfx.md)                            | Speak NFX beside the legacy protocol                                      | Accepted; "does not speak iroh" amended by 0021; "no web portal" by 0022 |
 | [0021](0021-speak-iroh-through-a-helper.md)          | Speak iroh as well, through a thin helper process                         | Accepted                                                  |
+| [0022](0022-a-web-client-for-nfx.md)                 | A web client for NFX videos at web.nutflix.xyz                            | Accepted                                                  |
 
 ## Numbering
 
-The next free number is **0022**. Numbers **0006** and **0008** are not
+The next free number is **0023**. Numbers **0006** and **0008** are not
 missing: the sibling [nfx](https://github.com/SovereignTechnology/nfx) repository uses them
 ([0006, the standardisation suite](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0006-standardization-suite-nfx.md)
 and

@@ -115,8 +115,9 @@ These are the things you would otherwise find out by trying them. Release 0.1.2:
   incoming ones.
 - **Linux x86_64 only.** There is no Windows, macOS or arm64 build, no automatic update, and no
   operating-system code signing. You verify downloads yourself ([below](#verify-a-download)).
-- **The web app is a placeholder.** `packages/app-web` is an empty scaffold. The web portal that
-  the early plans described is not part of this repository.
+- **There is no web app yet.** `packages/app-web` will hold a web client for NFX videos at
+  web.nutflix.xyz ([ADR 0022](docs/decisions/0022-a-web-client-for-nfx.md)). It is not built yet.
+  The web portal of the early plans, with Hypercore in the page, is not part of this repository.
 
 ## Install
 
@@ -205,7 +206,7 @@ the AGPL's section 13 applies: users who interact with a modified version are en
 | `packages/gateway`     | `@sovit/gateway`     | Seeder plus a WebSocket bridge and Blossom HTTP                                    |
 | `packages/ui`          | `@sovit/ui`          | React design system and screens; talks only to the `NetworkAdapter` contract       |
 | `packages/app-desktop` | `@sovit/app-desktop` | The Electron app: main process, host process, Bare worker, packaging               |
-| `packages/app-web`     | `@sovit/app-web`     | Placeholder scaffold, not shipped                                                  |
+| `packages/app-web`     | `@sovit/app-web`     | Web client for NFX videos (ADR 0022); in progress, not shipped                     |
 
 The packages are internal to this workspace and are not published to npm. "Nutflix" is the brand
 name. The package scope is `@sovit/*` and the wire protocol is `pay/1`, but a few persisted
