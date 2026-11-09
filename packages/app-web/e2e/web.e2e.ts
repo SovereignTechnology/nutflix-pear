@@ -23,8 +23,8 @@
  * Checks, in one page (the beacon watch lives as long as the page):
  *  1. Home's Network feed lists the videos (not the deleted one).
  *  2. Search finds the lead video through strfry (no NIP-50: a plain query matched in the page,
- *     and no `search` filter is sent to it), and through nfxd's relay alone (NIP-50: `search` is
- *     sent there).
+ *     and no `search` filter is sent to it), and through nfxd's relay alone, in a fresh start of
+ *     the app (its NIP-11 document, listing 50, is read with CORS; then `search` is sent there).
  *  3. The lead video plays past 5 s with nothing refused and nothing stopped, and its quality
  *     picker appears once the player knows the renditions.
  *  4. The origin then refuses every segment, and playback goes on 15 s more, past the end of the
@@ -484,13 +484,29 @@ interface Watch {
   readonly csp: string[];
   readonly errors: string[];
   readonly frames: { url: string; payload: string }[];
+  /** The NIP-11 requests (https to a relay's name) and how each ended: `200 acao=*`, or why not. */
+  readonly nip11: { url: string; outcome: string }[];
+  /** The page's console errors and warnings (the last `CONSOLE_KEEP`), for a failure's report. */
+  readonly console: string[];
 }
+
+const CONSOLE_KEEP = 200;
+const RELAY_HTTPS = /^https:\/\/(?:relay|strfry)\.e2e\.test[:/]/;
 
 /** Everything the run must not see, from every page of the context. */
 async function watch(context: BrowserContext): Promise<Watch> {
-  const w: Watch = { csp: [], errors: [], frames: [] };
+  const w: Watch = { csp: [], errors: [], frames: [], nip11: [], console: [] };
   await context.exposeBinding('__e2eCsp', (_source, v: string) => {
     w.csp.push(v);
+  });
+  context.on('response', (r) => {
+    if (!RELAY_HTTPS.test(r.url())) return;
+    const acao = r.headers()['access-control-allow-origin'] ?? '(none)';
+    w.nip11.push({ url: r.url(), outcome: `${String(r.status())} acao=${acao}` });
+  });
+  context.on('requestfailed', (r) => {
+    if (RELAY_HTTPS.test(r.url()))
+      w.nip11.push({ url: r.url(), outcome: `failed: ${r.failure()?.errorText ?? '?'}` });
   });
   await context.addInitScript({
     content: `document.addEventListener('securitypolicyviolation', (e) => {
@@ -501,6 +517,10 @@ async function watch(context: BrowserContext): Promise<Watch> {
     page.on('pageerror', (e) => w.errors.push(e.message));
     page.on('console', (m) => {
       if (/Content.Security.Policy/i.test(m.text())) w.csp.push(`console: ${m.text()}`);
+      if (m.type() === 'error' || m.type() === 'warning') {
+        w.console.push(`${m.type()}: ${m.text()}`);
+        if (w.console.length > CONSOLE_KEEP) w.console.shift();
+      }
     });
     page.on('websocket', (ws) => {
       ws.on('framesent', (f) => {
@@ -538,6 +558,17 @@ async function waitTime(page: Page, past: number, ms: number): Promise<void> {
     past,
     { timeout: ms, polling: 250 },
   );
+}
+
+/**
+ * Off the app (to `source.json`, same origin) and then these settings, so the next `goto` starts
+ * the app afresh with them. The store reads its settings when the app starts (a `storage` event
+ * reaches only other pages), and a `goto` that changes only the hash, or nothing, stays in the
+ * same document: the app would go on with the settings it started with.
+ */
+async function offApp(page: Page, site: string, relays: string[], scoped: string[]): Promise<void> {
+  await page.goto(`${site}/source.json`);
+  await settings(page, relays, scoped);
 }
 
 async function settings(page: Page, relays: string[], scoped: string[]): Promise<void> {
@@ -731,8 +762,7 @@ async function main(): Promise<void> {
   const page = await context.newPage();
   try {
     // Settings before the app first runs: strfry the read relay, nfxd A's relay the scoped one.
-    await page.goto(`${site}/source.json`);
-    await settings(page, [stock], [relay]);
+    await offApp(page, site, [stock], [relay]);
     await page.goto(`${site}/#/`);
 
     // 1. The Network feed.
@@ -758,18 +788,32 @@ async function main(): Promise<void> {
     if (viaStock.some((s) => s.search && s.url.startsWith(stock)))
       throw new Error('a NIP-50 search filter went to strfry, which does not list NIP-50');
     if (!viaStock.some((s) => s.url.startsWith(stock))) throw new Error('strfry was never asked');
-    await settings(page, [], [relay]);
+    const stockInfo = w.nip11.filter((n) => n.url.startsWith(stock.replace(/^wss:/, 'https:')));
+    // nfxd's relay alone, in a fresh start of the app (a new adapter, so a new NIP-11 probe).
+    await offApp(page, site, [], [relay]);
     w.frames.length = 0;
+    w.nip11.length = 0;
     await page.goto(`${site}/#/search/lighthouse`);
     await page
       .locator('.nf-search')
       .getByText('Lighthouse web e2e')
       .first()
       .waitFor({ timeout: 60_000 });
+    const relayInfo = w.nip11.filter((n) => n.url.startsWith(relay.replace(/^wss:/, 'https:')));
+    if (!relayInfo.some((n) => n.outcome === '200 acao=*'))
+      throw new Error(`nfxd’s relay did not answer the NIP-11 probe: ${JSON.stringify(w.nip11)}`);
     if (!searches().some((s) => s.search && s.url.startsWith(relay)))
-      throw new Error('no NIP-50 search went to nfxd’s relay');
-    results['search'] = { stock: 'matched in the page', scoped: 'NIP-50' };
-    await settings(page, [stock], [relay]);
+      throw new Error(
+        `no NIP-50 search went to nfxd’s relay (NIP-11: ${JSON.stringify(relayInfo)}; ` +
+          `REQs: ${JSON.stringify(searches())})`,
+      );
+    results['search'] = {
+      stock: 'matched in the page',
+      stockNip11: stockInfo.map((n) => n.outcome),
+      scoped: 'NIP-50',
+      scopedNip11: relayInfo.map((n) => n.outcome),
+    };
+    await offApp(page, site, [stock], [relay]);
     await page.goto(`${site}/#/`);
     await page.getByText('Lighthouse web e2e').first().waitFor({ timeout: 60_000 });
 
@@ -895,9 +939,11 @@ async function main(): Promise<void> {
         .catch(() => undefined);
       writeFileSync(join(OUT, 'nfxd-a.log'), a.text());
       writeFileSync(join(OUT, 'nfxd-b.log'), b.text());
+      writeFileSync(join(OUT, 'console.txt'), `${w.console.join('\n')}\n`);
     }
     results['csp_violations'] = w.csp;
     results['page_errors'] = w.errors;
+    results['nip11'] = w.nip11;
     throw e;
   } finally {
     await browser.close();
