@@ -3,7 +3,7 @@
  * only), unit conversion for the seeding disk cap, the prefetch ("buffer = money") and
  * auto-top-up bounds, signer copy and error copy. No React, no adapter calls.
  */
-import type { IrohRelayUrl, MintUrl, RelayUrl, SignerStatus } from '@sovit/core';
+import type { IrohRelayUrl, MintUrl, RelayUrl, SignerStatus, TrackerUrl } from '@sovit/core';
 import {
   UI_AUTO_TOP_UP_MAX_SATS,
   UI_AUTO_TOP_UP_PER_DAY_SATS,
@@ -153,6 +153,54 @@ export function validateIrohRelayUrl(
   if (existing.some((e) => normaliseIrohRelayUrl(e) === url))
     return fail('That relay is already in the list.');
   return ok(url as IrohRelayUrl);
+}
+
+/** Contracts v14: core's `MAX_NFX_TRACKERS`. */
+export const UI_MAX_NFX_TRACKERS = 4;
+
+/**
+ * `WSS://Tracker.Example/` → `wss://tracker.example`: the form nfx's web player reduces a tracker
+ * URL to (scheme, host, port, and the path unless it is a bare `/`), so a beacon's tracker and a
+ * configured one compare as strings.
+ */
+export function normaliseTrackerUrl(input: string): string {
+  const u = parse(input.trim());
+  if (!u) return input.trim();
+  return `${u.protocol}//${u.host}${u.pathname === '/' ? '' : u.pathname}`;
+}
+
+/**
+ * Tracker check for Settings › NFX (contracts v14, NFX-10 §1): a WebTorrent tracker of the
+ * network's browser mesh. `wss://`, or `ws://` to this computer only (a local tracker). A tracker
+ * learns which peers watch which video, so a cleartext one anywhere else would show that to the
+ * network. No user name, password, `?` or `#` part.
+ */
+export function validateTrackerUrl(
+  input: string,
+  existing: readonly string[] = [],
+): Validation<TrackerUrl> {
+  const raw = input.trim();
+  if (raw === '') return fail('Enter a tracker address, for example wss://tracker.example');
+  if (raw.length > MAX_URL_LENGTH) return fail('That address is too long to be a tracker.');
+  if (/\s/.test(raw)) return fail('A tracker address cannot contain spaces.');
+  const scheme = schemeOf(raw);
+  if (scheme === undefined)
+    return fail('Tracker addresses start with wss:// — for example wss://tracker.example');
+  if (scheme !== 'wss' && scheme !== 'ws') return fail(`Trackers use wss://, not ${scheme}://`);
+  const u = parse(raw);
+  if (!u) return fail('That is not a valid tracker address.');
+  if (scheme === 'ws' && !LOOPBACK_HOSTS.includes(u.hostname))
+    return fail('Use wss:// — ws:// is allowed only for a tracker on this computer.');
+  if (!IROH_HOST_RE.test(u.hostname) || u.port === '0')
+    return fail('That is not a valid tracker address.');
+  if (u.username !== '' || u.password !== '')
+    return fail('Remove the user name or password from the address.');
+  if (u.search !== '' || u.hash !== '') return fail('A tracker address has no ? or # part.');
+  const url = normaliseTrackerUrl(raw);
+  if (url.length > MAX_URL_LENGTH) return fail('That address is too long to be a tracker.');
+  if (existing.some((e) => normaliseTrackerUrl(e) === url))
+    return fail('That tracker is already in the list.');
+  return ok(url as TrackerUrl);
 }
 
 /** `https://Mint.Example/` → `https://mint.example` (contract: `MintUrl` has no trailing slash). */

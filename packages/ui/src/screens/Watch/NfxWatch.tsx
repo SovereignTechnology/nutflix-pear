@@ -8,8 +8,20 @@
  *
  * Slice 5d-4: the NFX copy of a NIP-71 video (`legacyId`) shows that event's comments, once the
  * event is found and is by the same author (a manifest cannot borrow another video's thread).
+ *
+ * Contracts v14 (ADR 0022): a session's source may be a URL (the desktop app's media link) or an
+ * `element` source, which the adapter's own player feeds into this page's `<video>` (`attach`);
+ * a session with `setRendition` switches quality in place, any other is closed and reopened.
  */
-import { useCallback, useEffect, useId, useRef, useState, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactElement,
+  type RefCallback,
+} from 'react';
 import type {
   NetworkAdapter,
   NfxAddress,
@@ -37,6 +49,7 @@ import {
 } from '../../components/index.js';
 import type { ScreenProps } from '../shared/route.js';
 import { avatarSrc } from '../shared/image.js';
+import { playSourceUrl } from '../shared/play-source.js';
 import { describeWatchError, type Me } from './model.js';
 import { useResolvers } from './useResolvers.js';
 import { WatchComments } from './WatchComments.js';
@@ -63,11 +76,99 @@ type Phase =
 type PlayState =
   | { readonly status: 'idle' }
   | { readonly status: 'opening' }
-  | { readonly status: 'playing'; readonly session: NfxPlaySession }
+  | { readonly status: 'playing'; readonly session: NfxPlaySession; readonly ticket: number }
   | { readonly status: 'no-seeders' }
   | { readonly status: 'error'; readonly error: unknown };
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * A playing session's `<video>` and quality picker. An `element` source (v14) is attached to the
+ * element while both live and detached when either goes; a URL source is the element's `src`.
+ * `onReopen` closes the session and opens the rendition anew: the only switch a session without
+ * `setRendition` has, and the fallback when an in-place switch fails.
+ */
+function NfxPlayer({
+  session,
+  title,
+  onReopen,
+}: {
+  readonly session: NfxPlaySession;
+  readonly title: string;
+  readonly onReopen: (rendition: string) => void;
+}): ReactElement {
+  const [rendition, setRendition] = useState(session.rendition);
+  const [switching, setSwitching] = useState(false);
+  const source = session.source;
+  const detach = useRef<(() => void) | null>(null);
+  const videoRef: RefCallback<HTMLVideoElement> = useCallback(
+    (el: HTMLVideoElement | null) => {
+      detach.current?.();
+      detach.current = null;
+      if (el !== null && source.kind === 'element') detach.current = source.attach(el);
+    },
+    [source],
+  );
+  useEffect(
+    () => () => {
+      detach.current?.();
+      detach.current = null;
+    },
+    [],
+  );
+
+  const pick = (id: string): void => {
+    if (id === rendition) return;
+    const inPlace = session.setRendition?.bind(session);
+    if (inPlace === undefined) {
+      onReopen(id);
+      return;
+    }
+    setSwitching(true);
+    inPlace(id).then(
+      () => {
+        setSwitching(false);
+        setRendition(id);
+      },
+      () => {
+        setSwitching(false);
+        onReopen(id);
+      },
+    );
+  };
+
+  return (
+    <div className="nf-nfxwatch__player">
+      <video
+        ref={videoRef}
+        className="nf-nfxwatch__video"
+        src={playSourceUrl(source)}
+        controls
+        autoPlay
+        playsInline
+        aria-label={title}
+      />
+      {session.renditions.length > 1 ? (
+        <label className="nf-nfxwatch__quality">
+          Quality{' '}
+          <select
+            value={rendition}
+            disabled={switching}
+            onChange={(e) => {
+              pick(e.currentTarget.value);
+            }}
+          >
+            {session.renditions.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.resolution ?? r.id}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+    </div>
+  );
+}
 
 /** The stage: Play, then the free session's video, with its renditions to pick from. */
 function NfxStage({
@@ -107,7 +208,7 @@ function NfxStage({
           return;
         }
         session.current = s;
-        setState({ status: 'playing', session: s });
+        setState({ status: 'playing', session: s, ticket });
       },
       (error: unknown) => {
         if (!mounted.current || ticket !== opening.current) return;
@@ -174,39 +275,17 @@ function NfxStage({
         </div>
       );
     }
-    case 'playing': {
-      const s = state.session;
-      const url = s.source.kind === 'mediasource' ? undefined : s.source.url;
+    case 'playing':
       return (
-        <div className="nf-nfxwatch__player">
-          <video
-            className="nf-nfxwatch__video"
-            src={url}
-            controls
-            autoPlay
-            playsInline
-            aria-label={video.title}
-          />
-          {s.renditions.length > 1 ? (
-            <label className="nf-nfxwatch__quality">
-              Quality{' '}
-              <select
-                value={s.rendition}
-                onChange={(e) => {
-                  open(e.currentTarget.value);
-                }}
-              >
-                {s.renditions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.resolution ?? r.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-        </div>
+        <NfxPlayer
+          key={state.ticket}
+          session={state.session}
+          title={video.title}
+          onReopen={(rendition) => {
+            open(rendition);
+          }}
+        />
       );
-    }
   }
 }
 

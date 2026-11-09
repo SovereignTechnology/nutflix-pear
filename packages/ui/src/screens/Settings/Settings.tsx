@@ -13,6 +13,10 @@
  * The theme choice is only persisted here. Applying it to the document is the shell's job:
  * it reads `settings().theme` at boot and hears every confirmed change via `onSettingsChange`.
  * This screen never touches `document` / root attributes.
+ *
+ * ADR 0022: a shell picks the sections it offers (`sections`) and the parts of the NFX section
+ * (`nfxParts`); without either, every section and the desktop app's NFX parts are shown. A section
+ * not offered is not rendered, and the wallet and seeder behind it are never asked.
  */
 import { useCallback, useEffect, useId, useRef, useState, type ReactElement } from 'react';
 import type { Settings as SettingsData } from '@sovit/core';
@@ -29,7 +33,7 @@ import { AppearanceSection } from './AppearanceSection.js';
 import { PlaybackSection } from './PlaybackSection.js';
 import { RecoverySection, type RecoveryControls } from './RecoverySection.js';
 import type { TopUpHoldControls } from './TopUpHolds.js';
-import { NfxSection } from './NfxSection.js';
+import { NfxSection, type NfxSectionParts } from './NfxSection.js';
 import { RelaysSection } from './RelaysSection.js';
 import { SeedingSection, useSeederStatus } from './SeedingSection.js';
 import { SignerSection, useSigner } from './SignerSection.js';
@@ -55,6 +59,13 @@ export const SETTINGS_SECTIONS: readonly {
 ];
 
 export interface SettingsProps extends ScreenProps {
+  /**
+   * ADR 0022: the sections this shell offers, shown in `SETTINGS_SECTIONS` order whatever the
+   * order here. Absent: every section (the desktop app).
+   */
+  readonly sections?: readonly SettingsSectionId[] | undefined;
+  /** ADR 0022: which parts of the NFX section to show. Absent: the desktop app's. */
+  readonly nfxParts?: NfxSectionParts | undefined;
   /**
    * Shell-owned signer flow (connect / switch), called with the signer type the viewer
    * picked. The v3 contract has no "change signer" method, so without this prop the choice
@@ -93,6 +104,8 @@ export function Settings({
   adapter,
   navigate,
   miniPlayer,
+  sections,
+  nfxParts,
   onChangeSigner,
   recovery,
   topUpHolds,
@@ -142,14 +155,21 @@ export function Settings({
     [dismiss, pushToast],
   );
 
+  // ---- the sections this shell offers (ADR 0022) ----------------------------------------------
+  const shown =
+    sections === undefined
+      ? SETTINGS_SECTIONS
+      : SETTINGS_SECTIONS.filter((s) => sections.includes(s.id));
+  const offers = (s: SettingsSectionId): boolean => sections === undefined || sections.includes(s);
+
   // ---- data ------------------------------------------------------------------------------
   const store = useSettingsStore(adapter, { onSaved: onSettingsChange, onFailure });
   const signer = useSigner(adapter);
-  const seeder = useSeederStatus(adapter);
-  const wallet = useWalletMints(adapter);
+  const seeder = useSeederStatus(adapter, offers('seeding'));
+  const wallet = useWalletMints(adapter, offers('mints'));
 
   // ---- section nav -------------------------------------------------------------------------
-  const [active, setActive] = useState<SettingsSectionId>('account');
+  const [active, setActive] = useState<SettingsSectionId>(() => shown[0]?.id ?? 'account');
   const headings = useRef(new Map<SettingsSectionId, HTMLHeadingElement>());
   const headingRef = useCallback(
     (s: SettingsSectionId) =>
@@ -228,7 +248,7 @@ export function Settings({
     if (store.status === 'loading' || view === undefined || saved === undefined) {
       return (
         <div className="nf-settings__loading" aria-hidden="true">
-          {SETTINGS_SECTIONS.map((s) => (
+          {shown.map((s) => (
             <div key={s.id} className="nf-settings__section nf-settings__section--skeleton">
               <Skeleton variant="text" width="30%" />
               <SkeletonLines lines={3} />
@@ -240,54 +260,75 @@ export function Settings({
     const common = { view, saved, pending: store.pending, save: store.save };
     return (
       <>
-        <SignerSection
-          id={sectionId('account')}
-          signer={signer}
-          onChangeSigner={onChangeSigner}
-          onChangePicture={async (image) => {
-            await adapter.setProfilePicture(image);
-            signer.refresh();
-          }}
-          headingRef={refFor('account')}
-        />
-        <AppearanceSection
-          id={sectionId('appearance')}
-          {...common}
-          headingRef={refFor('appearance')}
-        />
-        <PlaybackSection id={sectionId('playback')} {...common} headingRef={refFor('playback')} />
-        <RelaysSection
-          id={sectionId('relays')}
-          {...common}
-          signedOut={signer.signedOut}
-          headingRef={refFor('relays')}
-        />
-        <WalletSection
-          id={sectionId('mints')}
-          {...common}
-          wallet={wallet}
-          signedIn={signer.signedIn}
-          signedOut={signer.signedOut}
-          navigate={navigate}
-          headingRef={refFor('mints')}
-          topUpHolds={topUpHolds}
-        />
-        <RecoverySection
-          id={sectionId('recovery')}
-          adapter={adapter}
-          recovery={recovery}
-          signedIn={signer.signedIn}
-          headingRef={refFor('recovery')}
-        />
-        <SeedingSection
-          id={sectionId('seeding')}
-          {...common}
-          adapter={adapter}
-          seeder={seeder}
-          navigate={navigate}
-          headingRef={refFor('seeding')}
-        />
-        <NfxSection id={sectionId('nfx')} {...common} headingRef={refFor('nfx')} />
+        {offers('account') ? (
+          <SignerSection
+            id={sectionId('account')}
+            signer={signer}
+            onChangeSigner={onChangeSigner}
+            onChangePicture={async (image) => {
+              await adapter.setProfilePicture(image);
+              signer.refresh();
+            }}
+            headingRef={refFor('account')}
+          />
+        ) : null}
+        {offers('appearance') ? (
+          <AppearanceSection
+            id={sectionId('appearance')}
+            {...common}
+            headingRef={refFor('appearance')}
+          />
+        ) : null}
+        {offers('playback') ? (
+          <PlaybackSection id={sectionId('playback')} {...common} headingRef={refFor('playback')} />
+        ) : null}
+        {offers('relays') ? (
+          <RelaysSection
+            id={sectionId('relays')}
+            {...common}
+            signedOut={signer.signedOut}
+            headingRef={refFor('relays')}
+          />
+        ) : null}
+        {offers('mints') ? (
+          <WalletSection
+            id={sectionId('mints')}
+            {...common}
+            wallet={wallet}
+            signedIn={signer.signedIn}
+            signedOut={signer.signedOut}
+            navigate={navigate}
+            headingRef={refFor('mints')}
+            topUpHolds={topUpHolds}
+          />
+        ) : null}
+        {offers('recovery') ? (
+          <RecoverySection
+            id={sectionId('recovery')}
+            adapter={adapter}
+            recovery={recovery}
+            signedIn={signer.signedIn}
+            headingRef={refFor('recovery')}
+          />
+        ) : null}
+        {offers('seeding') ? (
+          <SeedingSection
+            id={sectionId('seeding')}
+            {...common}
+            adapter={adapter}
+            seeder={seeder}
+            navigate={navigate}
+            headingRef={refFor('seeding')}
+          />
+        ) : null}
+        {offers('nfx') ? (
+          <NfxSection
+            id={sectionId('nfx')}
+            {...common}
+            parts={nfxParts}
+            headingRef={refFor('nfx')}
+          />
+        ) : null}
       </>
     );
   };
@@ -317,7 +358,7 @@ export function Settings({
         <div className="nf-settings__layout">
           <nav className="nf-settings__nav" aria-label="Settings sections">
             <ul className="nf-settings__nav-list">
-              {SETTINGS_SECTIONS.map((s) => (
+              {shown.map((s) => (
                 <li key={s.id}>
                   <button
                     type="button"

@@ -5,9 +5,13 @@
  * to this computer only. Below them, the network's own iroh relays (contracts v12, NFX-06 §1):
  * `https://`, or `http://` to this computer only. Every change is one optimistic
  * `updateSettings({ nfx })`.
+ *
+ * ADR 0022: a shell picks the parts it shows (`parts`). The web client has no iroh and NFX is
+ * always on there, and it lists the network's WebTorrent trackers instead (contracts v14,
+ * NFX-10 §1): `wss://`, or `ws://` to this computer only.
  */
 import { useState, type ReactElement, type ReactNode, type SubmitEvent } from 'react';
-import type { IrohRelayUrl, NfxSettings, RelayUrl, Settings } from '@sovit/core';
+import type { IrohRelayUrl, NfxSettings, RelayUrl, Settings, TrackerUrl } from '@sovit/core';
 import { Button, IconButton } from '../../components/index.js';
 import {
   FieldError,
@@ -20,15 +24,30 @@ import {
 import {
   UI_MAX_NFX_IROH_RELAYS,
   UI_MAX_NFX_SCOPED_RELAYS,
+  UI_MAX_NFX_TRACKERS,
   UI_NFX_NETWORK,
   normaliseIrohRelayUrl,
   normaliseRelayUrl,
+  normaliseTrackerUrl,
   validateIrohRelayUrl,
   validateScopedRelayUrl,
+  validateTrackerUrl,
   type Validation,
 } from './model.js';
 
 const LABEL = 'the NFX settings';
+
+/** ADR 0022: the parts of the section a shell shows; each absent part takes its default. */
+export interface NfxSectionParts {
+  /** The on/off switch. Default: shown. */
+  readonly toggle?: boolean | undefined;
+  /** The scoped relays. Default: shown. */
+  readonly scopedRelays?: boolean | undefined;
+  /** The iroh relays (contracts v12). Default: shown. */
+  readonly irohRelays?: boolean | undefined;
+  /** The WebTorrent trackers (contracts v14). Default: hidden; the desktop app has no use for them. */
+  readonly trackers?: boolean | undefined;
+}
 
 /** `base.nfx`, or the network's starting point (off, no scoped relays). */
 function nfxOf(base: Settings): NfxSettings {
@@ -198,14 +217,23 @@ export function NfxSection({
   saved,
   pending,
   save,
+  parts,
   headingRef,
 }: SectionProps & {
   readonly id: string;
+  readonly parts?: NfxSectionParts | undefined;
   readonly headingRef?: ((el: HTMLHeadingElement | null) => void) | undefined;
 }): ReactElement {
   const nfx = nfxOf(view);
   const savedNfx = nfxOf(saved);
   const irohRelays = nfx.irohRelays ?? [];
+  const trackers = nfx.trackers ?? [];
+  const show = {
+    toggle: parts?.toggle ?? true,
+    scopedRelays: parts?.scopedRelays ?? true,
+    irohRelays: parts?.irohRelays ?? true,
+    trackers: parts?.trackers ?? false,
+  };
 
   const update = (fn: (current: NfxSettings) => NfxSettings): Promise<boolean> =>
     save({ field: 'nfx', label: LABEL, patch: (base: Settings) => ({ nfx: fn(nfxOf(base)) }) });
@@ -240,6 +268,17 @@ export function NfxSection({
     }));
   };
 
+  const addTracker = (url: TrackerUrl): Promise<boolean> =>
+    update((cur) => {
+      const list = cur.trackers ?? [];
+      return list.some((t) => normaliseTrackerUrl(t) === url) || list.length >= UI_MAX_NFX_TRACKERS
+        ? cur
+        : { ...cur, trackers: [...list, url] };
+    });
+  const removeTracker = (url: TrackerUrl): void => {
+    void update((cur) => ({ ...cur, trackers: (cur.trackers ?? []).filter((t) => t !== url) }));
+  };
+
   return (
     <SectionFrame
       id={id}
@@ -248,61 +287,92 @@ export function NfxSection({
       busy={pending.has('nfx')}
       headingRef={headingRef}
     >
-      <SwitchRow
-        id={`${id}-enabled`}
-        label="Take part in the NFX testnet"
-        description="Lists the network's free videos beside the Nostr ones, and sends a free upload's NFX announcement to the scoped relays below. Off: nothing is asked of or sent to NFX."
-        checked={nfx.enabled}
-        busy={pending.has('nfx')}
-        onChange={toggle}
-      />
-      <RelayList
-        inputId={`${id}-add`}
-        title="Scoped relays"
-        column="Scoped relay"
-        relays={nfx.scopedRelays}
-        saved={new Set<string>(savedNfx.scopedRelays)}
-        max={UI_MAX_NFX_SCOPED_RELAYS}
-        empty={
-          <>
-            No scoped relays yet. The network&apos;s videos are still read from your relays; add the
-            network&apos;s own relays for what your relays do not carry.
-          </>
-        }
-        addLabel="Add a scoped relay"
-        placeholder="wss://relay.example"
-        hint={
-          <>
-            wss:// relays, or ws:// to a relay on this computer. At most {UI_MAX_NFX_SCOPED_RELAYS}.
-          </>
-        }
-        fullError={`At most ${String(UI_MAX_NFX_SCOPED_RELAYS)} scoped relays.`}
-        validate={validateScopedRelayUrl}
-        add={addScoped}
-        remove={removeScoped}
-      />
-      <RelayList
-        inputId={`${id}-iroh-add`}
-        title="iroh relays"
-        description="The network's own iroh relays: the only relays this app uses to reach NFX seeders over iroh, and the only ones its announcements name."
-        column="iroh relay"
-        relays={irohRelays}
-        saved={new Set<string>(savedNfx.irohRelays ?? [])}
-        max={UI_MAX_NFX_IROH_RELAYS}
-        empty="No iroh relays yet: iroh then connects only directly."
-        addLabel="Add an iroh relay"
-        placeholder="https://relay.example/"
-        hint={
-          <>
-            https:// relays, or http:// to a relay on this computer. At most{' '}
-            {UI_MAX_NFX_IROH_RELAYS}.
-          </>
-        }
-        fullError={`At most ${String(UI_MAX_NFX_IROH_RELAYS)} iroh relays.`}
-        validate={validateIrohRelayUrl}
-        add={addIroh}
-        remove={removeIroh}
-      />
+      {show.toggle ? (
+        <SwitchRow
+          id={`${id}-enabled`}
+          label="Take part in the NFX testnet"
+          description="Lists the network's free videos beside the Nostr ones, and sends a free upload's NFX announcement to the scoped relays below. Off: nothing is asked of or sent to NFX."
+          checked={nfx.enabled}
+          busy={pending.has('nfx')}
+          onChange={toggle}
+        />
+      ) : null}
+      {show.scopedRelays ? (
+        <RelayList
+          inputId={`${id}-add`}
+          title="Scoped relays"
+          column="Scoped relay"
+          relays={nfx.scopedRelays}
+          saved={new Set<string>(savedNfx.scopedRelays)}
+          max={UI_MAX_NFX_SCOPED_RELAYS}
+          empty={
+            <>
+              No scoped relays yet. The network&apos;s videos are still read from your relays; add
+              the network&apos;s own relays for what your relays do not carry.
+            </>
+          }
+          addLabel="Add a scoped relay"
+          placeholder="wss://relay.example"
+          hint={
+            <>
+              wss:// relays, or ws:// to a relay on this computer. At most{' '}
+              {UI_MAX_NFX_SCOPED_RELAYS}.
+            </>
+          }
+          fullError={`At most ${String(UI_MAX_NFX_SCOPED_RELAYS)} scoped relays.`}
+          validate={validateScopedRelayUrl}
+          add={addScoped}
+          remove={removeScoped}
+        />
+      ) : null}
+      {show.irohRelays ? (
+        <RelayList
+          inputId={`${id}-iroh-add`}
+          title="iroh relays"
+          description="The network's own iroh relays: the only relays this app uses to reach NFX seeders over iroh, and the only ones its announcements name."
+          column="iroh relay"
+          relays={irohRelays}
+          saved={new Set<string>(savedNfx.irohRelays ?? [])}
+          max={UI_MAX_NFX_IROH_RELAYS}
+          empty="No iroh relays yet: iroh then connects only directly."
+          addLabel="Add an iroh relay"
+          placeholder="https://relay.example/"
+          hint={
+            <>
+              https:// relays, or http:// to a relay on this computer. At most{' '}
+              {UI_MAX_NFX_IROH_RELAYS}.
+            </>
+          }
+          fullError={`At most ${String(UI_MAX_NFX_IROH_RELAYS)} iroh relays.`}
+          validate={validateIrohRelayUrl}
+          add={addIroh}
+          remove={removeIroh}
+        />
+      ) : null}
+      {show.trackers ? (
+        <RelayList
+          inputId={`${id}-tracker-add`}
+          title="Trackers"
+          description="The network's WebTorrent trackers, which put viewers' browsers in touch over WebRTC. Trackers and the peers you meet see your IP address."
+          column="Tracker"
+          relays={trackers}
+          saved={new Set<string>(savedNfx.trackers ?? [])}
+          max={UI_MAX_NFX_TRACKERS}
+          empty="No trackers yet: videos then come only from the seeders' own trackers and over HTTPS."
+          addLabel="Add a tracker"
+          placeholder="wss://tracker.example"
+          hint={
+            <>
+              wss:// trackers, or ws:// to a tracker on this computer. At most {UI_MAX_NFX_TRACKERS}
+              .
+            </>
+          }
+          fullError={`At most ${String(UI_MAX_NFX_TRACKERS)} trackers.`}
+          validate={validateTrackerUrl}
+          add={addTracker}
+          remove={removeTracker}
+        />
+      ) : null}
     </SectionFrame>
   );
 }

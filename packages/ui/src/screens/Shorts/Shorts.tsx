@@ -83,6 +83,7 @@ import {
 } from '../../components/index.js';
 import type { ScreenProps } from '../shared/route.js';
 import { avatarSrc, thumbnailSrc } from '../shared/image.js';
+import { playSourceUrl } from '../shared/play-source.js';
 
 /** Shorts per `adapter.feed({ source: 'shorts' })` page. */
 export const SHORTS_PAGE_SIZE = 10;
@@ -1370,11 +1371,7 @@ export function Shorts({
               <video
                 ref={videoElRef}
                 className="nf-shorts__video"
-                src={
-                  binding.session.source.kind === 'mediasource'
-                    ? undefined
-                    : binding.session.source.url
-                }
+                src={playSourceUrl(binding.session.source)}
                 poster={thumb ?? undefined}
                 playsInline
                 preload="auto"

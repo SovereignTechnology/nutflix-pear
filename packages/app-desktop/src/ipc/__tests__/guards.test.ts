@@ -30,6 +30,7 @@ import {
   isSessionId,
   isSubMsg,
   isTopic,
+  isTrackerUrl,
   isVideoManifest,
   isSeederStatusWire,
   promptAnswerFits,
@@ -685,6 +686,109 @@ describe('NFX iroh relays (contracts v12)', () => {
           const raw = `${sc}://${h}${p === undefined ? '' : `:${String(p)}`}${pa}`;
           const r = ui.validateIrohRelayUrl(raw);
           if (r.ok) expect(isIrohRelayUrl(r.value), `${raw} → ${String(r.value)}`).toBe(true);
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+});
+
+describe('NFX trackers (contracts v14)', () => {
+  const nfx = (over: Record<string, unknown> = {}): unknown => ({
+    enabled: true,
+    network: 'nfx:testnet:1',
+    scopedRelays: ['wss://scoped.example'],
+    irohRelays: ['https://relay.example/'],
+    trackers: ['wss://tracker.example/announce', 'ws://127.0.0.1:8000'],
+    ...over,
+  });
+  const patch = (x: unknown): boolean => validateArgs.updateSettings([{ nfx: x }]);
+
+  it("nfx's player's form only: wss anywhere, ws to loopback only, no ? # or user-info", () => {
+    for (const ok of [
+      'wss://tracker.example',
+      'wss://tracker.example/announce',
+      'wss://tracker.example/announce/',
+      'wss://tracker.example:8443',
+      'wss://10.0.0.1/tracker',
+      'wss://[2001:db8::1]:443',
+      'ws://127.0.0.1:8000',
+      'ws://[::1]:8000/tracker',
+      'ws://localhost',
+    ])
+      expect(isTrackerUrl(ok), ok).toBe(true);
+    for (const bad of [
+      'WSS://tracker.example',
+      'wss://Tracker.Example',
+      'wss://tracker.example/',
+      'wss://tracker.example?x=1',
+      'wss://tracker.example/announce?x=1',
+      'wss://tracker.example/#x',
+      'wss://u@tracker.example',
+      'wss://u:p@tracker.example',
+      ' wss://tracker.example',
+      'wss://tracker.example ',
+      'wss://tracker.example\n',
+      'wss://tracker .example',
+      'wss://tracker.example:0',
+      'ws://tracker.example',
+      'ws://192.168.1.10:8000',
+      'ws://127.0.0.2',
+      'ws://localhost.example',
+      'https://tracker.example',
+      'wss://',
+      `wss://${`${'a'.repeat(63)}.`.repeat(8)}example`, // over the 512 cap
+      42,
+      null,
+    ])
+      expect(isTrackerUrl(bad), String(bad)).toBe(false);
+  });
+
+  it('a patch may carry up to 4 unique trackers, or none at all (v10 to v13)', () => {
+    expect(patch(nfx())).toBe(true);
+    expect(patch(nfx({ trackers: [] }))).toBe(true);
+    expect(
+      patch({ enabled: true, network: 'nfx:testnet:1', scopedRelays: ['wss://scoped.example'] }),
+    ).toBe(true);
+    const five = Array.from({ length: 5 }, (_, i) => `wss://t${String(i)}.example`);
+    expect(patch(nfx({ trackers: five }))).toBe(false);
+    expect(patch(nfx({ trackers: five.slice(0, 4) }))).toBe(true);
+    expect(patch(nfx({ trackers: ['wss://t.example', 'wss://t.example'] }))).toBe(false);
+    expect(patch(nfx({ trackers: 'wss://t.example' }))).toBe(false);
+    expect(patch(nfx({ trackers: undefined }))).toBe(false);
+  });
+
+  it('every tracker the Settings validator accepts is accepted here', async () => {
+    const ui = (await import(
+      /* @vite-ignore */ new URL('../../../../ui/src/screens/Settings/model.ts', import.meta.url)
+        .href
+    )) as {
+      validateTrackerUrl(s: string): { ok: boolean; value?: string };
+      UI_MAX_NFX_TRACKERS: number;
+    };
+    expect(ui.UI_MAX_NFX_TRACKERS).toBe(LIMITS.maxNfxTrackers);
+    const host = fc.constantFrom(
+      '127.0.0.1',
+      '[::1]',
+      'localhost',
+      'LocalHost',
+      'tracker.example',
+      'Tracker.Example',
+      '[2001:DB8::1]',
+      '10.0.0.1',
+    );
+    const port = fc.option(fc.integer({ min: 0, max: 65535 }), { nil: undefined });
+    const path = fc.constantFrom('', '/', '/announce', '/announce/', '//', '/a/b', '/?x=1', '/#x');
+    fc.assert(
+      fc.property(
+        fc.constantFrom('wss', 'WSS', 'ws', 'WS', 'https', 'http'),
+        host,
+        port,
+        path,
+        (sc, h, p, pa) => {
+          const raw = `${sc}://${h}${p === undefined ? '' : `:${String(p)}`}${pa}`;
+          const r = ui.validateTrackerUrl(raw);
+          if (r.ok) expect(isTrackerUrl(r.value), `${raw} → ${String(r.value)}`).toBe(true);
         },
       ),
       { numRuns: 300 },
