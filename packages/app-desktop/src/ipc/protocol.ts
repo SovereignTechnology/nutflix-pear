@@ -990,17 +990,17 @@ interface Checks {
   playKeys: IsNever<Exclude<NonMethodKeys<PlaySession>, keyof PlaySessionWire>>;
   playData: Mutual<Pick<PlaySessionWire, PlayData>, Pick<PlaySession, PlayData>>;
   playSource: PlaySessionWire['source'] extends PlaySession['source'] ? true : false;
-  /** Contracts v11: the same for a free NFX session; its one method is `session.close`. */
-  nfxPlayKeys: IsNever<Exclude<NonMethodKeys<NfxPlaySession>, keyof NfxPlaySessionWire>>;
+  /**
+   * Contracts v11: the same for a free NFX session; its one method is `session.close`. v14: the
+   * optional `setRendition` (a possibly-absent member, so not a method key here) is left out: this
+   * app's sessions do not offer it, and a switch closes the session and opens another, as before.
+   */
+  nfxPlayKeys: IsNever<
+    Exclude<NonMethodKeys<NfxPlaySession>, keyof NfxPlaySessionWire | 'setRendition'>
+  >;
   nfxPlayData: Mutual<Pick<NfxPlaySessionWire, NfxPlayData>, Pick<NfxPlaySession, NfxPlayData>>;
   nfxPlaySource: NfxPlaySessionWire['source'] extends NfxPlaySession['source'] ? true : false;
-  /**
-   * Contracts v14: `setRendition` is optional, and this app's sessions do not offer it: a
-   * switch closes the session and opens another, as before.
-   */
-  nfxSessionMethods: IsNever<
-    Exclude<MethodKeys<NfxPlaySession>, SessionWireMethod | 'setRendition'>
-  >;
+  nfxSessionMethods: IsNever<Exclude<MethodKeys<NfxPlaySession>, SessionWireMethod>>;
   /** PlaySession's methods are all on the wire, as `session.*` or as a topic. */
   sessionMethods: IsNever<
     Exclude<MethodKeys<PlaySession>, SessionWireMethod | 'onPeers' | 'onSpend'>
