@@ -7,7 +7,7 @@ builds on it. It is internal to this workspace and is not published to npm.
 | Directory       | What it holds                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------------ |
 | `contracts/`    | The frozen interfaces (network adapter, signer, wallet, payment engine, `pay/1`, manifest, media) and `CONTRACTS_VERSION` |
-| `nostr/`        | The relay data layer: feeds, follows, profiles, reactions, comments, reports, trending           |
+| `nostr/`        | The relay data layer: feeds, follows, profiles, reactions, comments, reports, trending, and the NFX catalogue, live beacon watch and NIP-11 search routing (ADR 0022) |
 | `manifest/`     | Parsing and building the signed video events (NIP-71)                                            |
 | `nfx/`          | The NFX wire formats (ADR 0020): manifests, beacons, hash lists, canonical JSON, the NFX-12 messages; pinned by `docs/vendor/nfx-test-vectors` |
 | `media/`        | The rendition ladder and the ffmpeg helpers, and NFX-05 packaging (CMAF by stream copy)          |
@@ -22,6 +22,13 @@ builds on it. It is internal to this workspace and is not published to npm.
 (`npm run check:contracts`). `payment/`, `signer/`, `pay-protocol/`, `wallet/spend.ts` and
 `wallet/seed.ts` are the audit surface: nothing there logs and it imports only the audited
 libraries (`npm run check:locked`, [SECURITY.md](../../SECURITY.md#locked-directories)).
+
+**Entry points.** `@sovit/core` is everything, wallet and Cashu included. `@sovit/core/nostr` and
+`@sovit/core/nfx` (ADR 0022) are the relay data layer and the NFX wire formats alone, for a page
+that must not carry the wallet (the web client); `@sovit/core/media/node` is the Node ffmpeg
+runner. The package declares `"sideEffects": false`: no module does anything when imported.
+`nfx/` still reaches Cashu's library for one curve-point check (`nfx/manifest.ts`) and
+`sodium-universal` for NFX-12's `bind` signature (`nfx/beacon.ts`).
 
 Build with `npm run build` at the repository root. Tests sit in `__tests__` directories and run
 with `npm test`.

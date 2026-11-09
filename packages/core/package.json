@@ -15,8 +15,17 @@
     "./media/node": {
       "types": "./dist/media/node/index.d.ts",
       "default": "./dist/media/node/index.js"
+    },
+    "./nostr": {
+      "types": "./dist/nostr/index.d.ts",
+      "default": "./dist/nostr/index.js"
+    },
+    "./nfx": {
+      "types": "./dist/nfx/index.d.ts",
+      "default": "./dist/nfx/index.js"
     }
   },
+  "sideEffects": false,
   "files": [
     "dist"
   ],

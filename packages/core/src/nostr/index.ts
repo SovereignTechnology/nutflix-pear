@@ -32,14 +32,42 @@ export {
 export { NostrClient, NoSignerError, PublishError } from './client.js';
 export {
   MAX_TWIN_LOOKUP,
+  NFX_SCAN_PAGE,
   fetchNfxVideo,
   nfxAuthorsFeed,
   nfxTagsFeed,
   nfxTwinsOf,
+  nfxVideoMatchesText,
   nfxVideoPage,
+  scanNfxVideos,
   searchNfxVideos,
+  searchNfxVideosRouted,
   type NfxReadOptions,
 } from './nfx-feeds.js';
+export {
+  MAX_BEACONS_PER_VIDEO,
+  MAX_BEACON_VIDEOS,
+  NFX_BEACON_KEEP_S,
+  NFX_BEACON_WAIT_MS,
+  NFX_BEACON_WARM_MS,
+  NfxBeaconWatch,
+  type NfxBeaconWatchDeps,
+  type NfxBeaconWatchTimers,
+} from './nfx-beacon-watch.js';
+export {
+  NFX_FEED_PAGE,
+  NfxCatalog,
+  type NfxCatalogOptions,
+  type NfxSearchQuery,
+  type NfxSource,
+} from './nfx-catalog.js';
+export {
+  RelaySearchSupport,
+  nip11Url,
+  relayInfoSupportsSearch,
+  type RelayInfoFetch,
+  type RelaySearchSupportOptions,
+} from './relay-info.js';
 export type { PublishReport } from './client.js';
 export { SimplePoolAdapter, toWireFilter } from './simple-pool-adapter.js';
 export type { PoolBackend } from './simple-pool-adapter.js';

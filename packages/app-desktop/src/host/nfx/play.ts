@@ -46,10 +46,8 @@ export interface NfxPlaySources {
   readonly iroh: NfxIrohEndpointWire[];
 }
 
-/** The beacon filter for one video (NFX-04 §5, "Live availability"). */
-export function beaconFilter(video: NfxVideo): NostrFilter {
-  return { kinds: [nfx.KIND_BEACON], '#n': [video.namespace], '#a': [video.id] };
-}
+/** The beacon filter for one video (NFX-04 §5, "Live availability"): core's, since ADR 0022. */
+export const beaconFilter: (video: NfxVideo) => NostrFilter = nfx.beaconFilter;
 
 type IrohEndpoint = Extract<nfx.Endpoint, { readonly t: 'iroh' }>;
 

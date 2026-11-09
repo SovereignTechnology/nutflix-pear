@@ -28,12 +28,16 @@ import { SignerIdentity } from '../identity.js';
 import { memoryLogger } from '../log.js';
 import { NostrCatalog } from '../catalog/catalog.js';
 import { MergedCatalog } from '../catalog/merged-catalog.js';
-import { NfxCatalog, type NfxSource } from '../catalog/nfx-catalog.js';
 import { DEFAULT_NFX } from '../settings/settings.js';
 import { seedVideos } from './support/catalog.js';
 import { coreTestKit, type TestSignerLike } from './support/core-helpers.js';
 import type { Rig } from './support/rig.js';
 import { rig } from './support/rig.js';
+
+// ADR 0022: the NFX catalogue lives in core now; the desktop builds it in the adapter.
+const { NfxCatalog } = nostr;
+type NfxCatalog = nostr.NfxCatalog;
+type NfxSource = nostr.NfxSource;
 
 const kit = await coreTestKit();
 const NS = 'nfx:testnet:1';

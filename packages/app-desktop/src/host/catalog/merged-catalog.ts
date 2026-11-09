@@ -34,7 +34,6 @@ import type {
 import { nostr } from '@sovit/core';
 import type { Logger } from '../log.js';
 import { FEED_PAGE, type CatalogSource, type SearchQuery } from './catalog.js';
-import type { NfxSource } from './nfx-catalog.js';
 
 /** Whether a feed's NFX side is sure to list `copy` on some page (see the module comment). */
 type Covers = (copy: NfxVideo) => boolean;
@@ -61,10 +60,10 @@ const MAX_EMPTY_STEPS = 3;
 
 export class MergedCatalog implements CatalogSource {
   private readonly legacy: CatalogSource;
-  private readonly nfx: NfxSource;
+  private readonly nfx: nostr.NfxSource;
   private readonly log: Logger;
 
-  constructor(legacy: CatalogSource, nfx: NfxSource, log: Logger) {
+  constructor(legacy: CatalogSource, nfx: nostr.NfxSource, log: Logger) {
     this.legacy = legacy;
     this.nfx = nfx;
     this.log = log;
