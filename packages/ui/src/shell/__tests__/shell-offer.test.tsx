@@ -58,7 +58,11 @@ afterEach(() => {
 
 async function flush(): Promise<void> {
   await act(async () => {
-    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 8; i++) {
+      await new Promise<void>((r) => {
+        setTimeout(r, 0);
+      });
+    }
   });
 }
 
@@ -120,7 +124,7 @@ describe('ShellOffer (ADR 0022)', () => {
     for (const name of ['shorts', 'library', 'studio', 'wallet'] as const) {
       await go(m, { name });
       expect(m.container.querySelector('[data-screen]')?.getAttribute('data-screen')).toBe(
-        name[0]!.toUpperCase() + name.slice(1),
+        name.charAt(0).toUpperCase() + name.slice(1),
       );
     }
     await go(m, { name: 'settings' });
