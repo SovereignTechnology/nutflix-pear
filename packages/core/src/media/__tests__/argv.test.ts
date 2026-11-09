@@ -88,10 +88,11 @@ describe('renditionArgv (h264/mp4)', () => {
     expect(argv).toContain('-nostats');
   });
 
-  it('uses rotated display dimensions for portrait sources', () => {
+  it('uses rotated display dimensions for portrait sources, sized on the short side (#97)', () => {
+    // 1920x1080 stored, rotation 90: displays 1080x1920, so its 720p is 720 wide, 1280 tall.
     const portrait: MediaProbe = { ...source, video: { ...source.video!, rotation: 90 } };
     const a = renditionArgv('/in', '/out', portrait, spec720, { fps: 30 });
-    expect(opt(a, '-vf')).toBe('scale=406:720');
+    expect(opt(a, '-vf')).toBe('scale=720:1280');
   });
 
   it('vp9 → webm/libopus, av1 → mp4/libsvtav1, no movflags for webm', () => {
