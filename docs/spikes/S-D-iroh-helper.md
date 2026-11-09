@@ -153,6 +153,74 @@ the paragraphs above settle.
 An upstream report (holepunchto/bare or bare-subprocess) is drafted, not filed: posting it is
 Cameron's call.
 
+## nfx #30 groundwork: Nostr-only cells and a stock relay (2026-11-09)
+
+The question for nfx #30 (Nostr-only connectivity): what connects today with **no iroh relay on
+either side**, so that a Nostr relay is the only infrastructure, and do NFX's events pass through
+an ordinary Nostr relay unchanged? Run
+[42554048448](https://github.com/SovereignTechnology/nutflix-pear/actions/runs/42554048448)
+(nfxd at nfx `5d628db`, the same 30 s clip, 13.16 MB in 37 files): 63 checks run, all as
+expected; 6 skipped. The cells are in `spikes/iroh/nat/run.sh`'s header. Each asserts today's
+outcome, so when nfx #30 changes one (consistent/consistent first), the matrix fails until it is
+re-judged.
+
+- **New in the harness.** A public seeder namespace (`sdps`, 10.200.0.21 on the bridge, no NAT),
+  and a `forward` router mode (router A forwards UDP 10.200.0.11:7843 to the seeder at
+  192.168.10.2:7843, only for that destination address): a seeder behind a port forward. strfry
+  1.1.3 (its tag's commit, built in CI) runs with its own default `strfry.conf`, with only the
+  database, address and port changed, in place of nfxd's scoped relay for the `stock-*` cells.
+- **The meter, fixed.** Relayed bytes used to be every TCP byte from the relay's address, the
+  Nostr relay's `:7447` included. Now only the iroh relay's `:3340`/`:3443` count as relayed, and
+  `:7447` is counted apart (nostr B below). No judgement changed: a path needs 90% of 13 MB. But
+  `symmetric-symmetric-norelay` now reads relayed 0, not the 3.9 to 7.0 KB of Nostr traffic it
+  showed before (run 42336734726).
+
+Per cell, pairings server ∈ {nfxd, helper} × client ∈ {nfxd, helper}. The fwdseed cells run nfxd
+only, since its flags are nfxd's. Bytes are what the fetcher's router received:
+
+| cell | pairings | expected | got | direct B | relayed B | nostr B | as expected |
+|---|---|---|---|---|---|---|---|
+| `open-open-norelay` | 4 | ok, direct | 4/4 ok, direct (helper fetch 474 to 513 Mbit/s) | 13.55 to 13.56 MB | 0 B | 2.7 to 4.6 KB | 4/4 |
+| `consistent-consistent-norelay` | 4 | fail | 0/4 ok | 0 B | 0 B | 2.6 to 5.6 KB | 4/4 |
+| `consistent-symmetric-norelay` | 4 | fail | 0/4 ok | 0 B | 0 B | 2.6 to 5.6 KB | 4/4 |
+| `symmetric-symmetric-norelay` (existing) | 4 | fail | 0/4 ok | 0 B | 0 B | 3.9 to 7.0 KB | 4/4 |
+| `pubseed-consistent-norelay` | 4 | ok, direct | 4/4 ok, direct (475 to 506 Mbit/s) | 13.56 MB | 0 B | 2.7 to 4.6 KB | 4/4 |
+| `pubseed-symmetric-norelay` | 4 | ok, direct | 4/4 ok, direct (463 to 503 Mbit/s) | 13.55 to 13.56 MB | 0 B | 2.7 to 4.6 KB | 4/4 |
+| `fwdseed-symmetric-noflags` | 2 | fail | 0/2 ok | 0 B | 0 B | 2.6 to 4.3 KB | 2/2 |
+| `fwdseed-{consistent,symmetric}-norelay` | 2 + 2 | ok, direct | skipped: nfxd at `5d628db` has no `--iroh-bind`/`--iroh-external` | | | | |
+| `stock-open-open-norelay` | 4 | ok, direct | 4/4 ok, direct (465 to 517 Mbit/s) | 13.56 MB | 0 B | 1.9 to 4.6 KB | 4/4 |
+| `stock-pubseed-symmetric-norelay` | 4 | ok, direct | 4/4 ok, direct (466 to 514 Mbit/s) | 13.55 to 13.56 MB | 0 B | 1.9 to 4.6 KB | 4/4 |
+| `stock-fwdseed-symmetric-norelay` | 2 | ok, direct | skipped (as above) | | | | |
+
+Findings:
+
+1. **With no iroh relay, a connection works only when the seeder is reachable as it stands.** That
+   is the open/open case, or a seeder on a public address. The fetcher may sit behind a consistent
+   **or a symmetric** NAT: it dials out, so nothing needs punching. Every such pairing went
+   direct, with 0 relayed bytes, at the helper's usual direct throughput.
+2. **Two NATed peers with no iroh relay do not connect, in any pairing.** Consistent/consistent,
+   consistent/symmetric and symmetric/symmetric all moved 0 bytes; only Nostr traffic (2.6 to
+   7.0 KB) arrived. This is the gap nfx #30 fills. iroh's hole punch starts inside an existing
+   connection, there is no address discovery without a relay, and the harness has no
+   UPnP/NAT-PMP/PCP gateway for nfxd's portmapper (on) to map with. A seeder-side router that maps
+   would put the seeder in finding 1's case. Two consistent NATs need nfx #30's candidate exchange
+   and simultaneous dial.
+3. **A seeder behind a port forward is unreachable without N1.** nfxd binds a random port and
+   advertises only its LAN address, so the forward never matches (0/2). The cells with nfx N1's
+   `--iroh-bind 192.168.10.2:7843 --iroh-external 10.200.0.11:7843` skip with a notice until the
+   matrix's `NFX_SHA` is bumped to a commit that has the flags. run.sh reads nfxd's usage text,
+   not the pin.
+4. **A stock relay carries NFX unchanged.** strfry, at its defaults, accepted and stored the kind
+   38504 manifest (691 B normalised, 1% of its 65,536 B `maxEventSize`). It delivered the kind
+   20464 beacons live: its scan held 1 to 2 per pairing, since strfry keeps ephemeral events for
+   5 minutes. It refused nothing. All 8 pairings fetched direct, nfxd and the helper alike, as
+   seeder and as fetcher. Nothing in discovery needs an NFX-04 relay. One constraint for nfx #30's
+   signaling kind: strfry rejects ephemeral events older than 60 s by default
+   (`rejectEphemeralEventsOlderThanSeconds`), so candidate offers must be signed when sent, not
+   queued.
+5. **Signaling cost.** Discovery over Nostr (one manifest, beacons, the subscriptions) delivered
+   1.9 to 7.0 KB to the fetcher's side per pairing.
+
 ## Open questions
 
 - Other targets (ADR 0103 §3 step 2), and signing.
@@ -163,3 +231,6 @@ Cameron's call.
 - A soak, IPv6, and packaging as a `prebuilds/` package (slice 5).
 - Finding 10: why the plain `bare` tears down with a live subprocess (Bare's; the real worker
   does not, 5e-1 above).
+- nfx #30: the fwdseed cells once N1 is in the pinned nfxd, and `consistent-consistent-norelay`
+  re-judged once the Nostr-signaled candidate exchange and simultaneous dial exist (see the
+  groundwork section above).

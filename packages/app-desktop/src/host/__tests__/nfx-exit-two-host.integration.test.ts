@@ -16,7 +16,9 @@
  * (`NFX_SCOPED_RELAYS`, wss://) for manifests, beacons and the run's signals, and iroh relays
  * (`NFX_IROH_RELAYS`, https://, optionally with a private CA in `NFX_IROH_RELAY_CA`). With
  * `NFX_RELAY_ONLY=true` nfxd runs with `--relay-only`, so every byte it moves goes through those
- * iroh relays (the suite passes it no gossip flag, which nfxd refuses with it). Everything
+ * iroh relays (the suite passes it no gossip flag, which nfxd refuses with it). With
+ * `NFX_NOSTR_ONLY=true` (pear #79, nfx #30) there are no iroh relays at all: nfxd and the worker's
+ * helper run with relays disabled, and the scoped relays are the only meeting point. Everything
  * else derives from the run id (`NFX_EXIT_RUN_ID`) on both sides: the throwaway keys
  * (`derivedSecret`), the video ids and so the manifest addresses.
  *
@@ -146,6 +148,7 @@ describe.skipIf(!TWO_HOST)(`slice 5f two-host run, role ${ROLE}`, () => {
     if (relays.irohCa !== null && !existsSync(relays.irohCa))
       throw new Error('NFX_IROH_RELAY_CA names no file');
     result['relayOnly'] = relays.relayOnly;
+    result['nostrOnly'] = relays.nostrOnly;
     const d = await tempDir('nf-exit2-');
     teardown.push(() => d.rm());
     work = d.dir;
