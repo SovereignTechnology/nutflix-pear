@@ -90,7 +90,7 @@ function run(cmd: string, args: string[]): string {
 interface Started {
   readonly child: ChildProcess;
   readonly matches: RegExpExecArray[];
-  text(): string;
+  readonly text: () => string;
 }
 
 /** A child in its own process group, once its stderr has matched every pattern. */
@@ -262,8 +262,7 @@ class HelperEvents {
         this.all.push(...(r['events'] as Event[]));
         if (r['lost'] === true) this.lost = true;
       } catch {
-        if (this.stopped) return;
-        await sleep(200);
+        await sleep(200); // the loop's condition ends it once stopped
       }
     }
   }
@@ -423,19 +422,27 @@ async function pageServer(): Promise<string> {
   return `http://127.0.0.1:${String(port)}`;
 }
 
-/** The origin behind a switch: once `block` is on, every segment is refused. */
+/**
+ * The origin behind a switch: once `block` is on, every segment is refused. It forwards only an
+ * origin-form path (`/…`) to nfxd's fixed host and port, so no request target can point it
+ * anywhere else.
+ */
 async function gate(
   upstream: string,
 ): Promise<{ url: string; block: () => void; refused: () => number }> {
+  const to = new URL(upstream);
   let blocked = false;
   let refused = 0;
   const port = await listen(
     createServer((req, res) => {
-      if (blocked && (req.url ?? '').endsWith('.m4s')) {
+      const path = req.url ?? '';
+      if (!path.startsWith('/') || path.startsWith('//')) return res.writeHead(400).end();
+      if (blocked && path.endsWith('.m4s')) {
         refused += 1;
         return res.writeHead(503, { 'cache-control': 'no-store' }).end();
       }
-      const up = httpRequest(`${upstream}${req.url ?? '/'}`, { method: req.method }, (r) => {
+      const method = req.method === 'HEAD' ? 'HEAD' : 'GET';
+      const up = httpRequest({ hostname: to.hostname, port: to.port, path, method }, (r) => {
         res.writeHead(r.statusCode ?? 502, r.headers);
         r.pipe(res);
       });
