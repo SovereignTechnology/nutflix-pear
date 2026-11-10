@@ -5,7 +5,15 @@
  */
 import { join } from 'node:path';
 
-import type { IrohRelayUrl, MintUrl, NfxSettings, RelayUrl, Sats, Settings } from '@sovit/core';
+import type {
+  IrohRelayUrl,
+  MintUrl,
+  NfxSettings,
+  RelayUrl,
+  Sats,
+  Settings,
+  StunServer,
+} from '@sovit/core';
 
 import { isAbsolutePath, obj } from '../../ipc/guards.js';
 import { validateArgs } from '../../ipc/guards.js';
@@ -28,12 +36,21 @@ const FILE_V = 1 as const;
  * network's public relays, which SovTech runs: wss://relay.nutflix.xyz (the scoped relay: manifests
  * and beacons) and https://iroh.nutflix.xyz/ (the iroh relay, for peers behind NAT). Nothing is fixed:
  * Settings › NFX network switches it off, and either list can be emptied or replaced.
+ *
+ * ADR 0023 (the maintainer, 2026-11-09): WebRTC with web browsers is on too, with the disclosure
+ * Settings gives, and learns its public address from the network's own STUN server, the one the
+ * web client uses (web.nutflix.xyz:3478, nfxd `--stun`, ADR 0022 item 4).
  */
+export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
+  'web.nutflix.xyz:3478' as StunServer,
+]);
 export const DEFAULT_NFX: NfxSettings = Object.freeze({
   enabled: true,
   network: 'nfx:testnet:1',
   scopedRelays: Object.freeze(['wss://relay.nutflix.xyz' as RelayUrl]),
   irohRelays: Object.freeze(['https://iroh.nutflix.xyz/' as IrohRelayUrl]),
+  webrtc: true,
+  stunServers: DEFAULT_NFX_STUN_SERVERS,
 });
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -98,11 +115,22 @@ export function parseStoredSettings(raw: unknown): StoredSettings | null {
   const sizes: unknown = publishSizes === undefined ? {} : { publishSizes };
   const nfxPatch: unknown = nfx === undefined ? {} : { nfx };
   // A stored `nfx` this build cannot read never becomes "on": it falls back to the defaults, off.
-  const kept = isSettingsPatch(nfxPatch) ? nfxPatch : { nfx: { ...DEFAULT_NFX, enabled: false } };
+  // Contracts v17: when only its WebRTC fields are unreadable, WebRTC alone goes off.
+  const kept = isSettingsPatch(nfxPatch)
+    ? nfxPatch
+    : (withoutWebrtc(nfx) ?? { nfx: { ...DEFAULT_NFX, enabled: false } });
   return {
     v: FILE_V,
     settings: { ...DEFAULT_SETTINGS, ...rest, ...kept, ...(isSettingsPatch(sizes) ? sizes : {}) },
   };
+}
+
+/** `nfx` with WebRTC off and no STUN servers, if that much of it is readable; else `null`. */
+function withoutWebrtc(nfx: unknown): Partial<Settings> | null {
+  if (typeof nfx !== 'object' || nfx === null || Array.isArray(nfx)) return null;
+  const { webrtc: _webrtc, stunServers: _stun, ...rest } = nfx as Record<string, unknown>;
+  const patch: unknown = { nfx: { ...rest, webrtc: false } };
+  return isSettingsPatch(patch) ? patch : null;
 }
 
 /** What `settings.json` holds. */

@@ -75,7 +75,10 @@ trickle candidates), and both directions.
 - The worker gains a WebRTC client and the host a signaling path (the next steps of #89): the
   worker builds serve tables from its verified store and a fetcher that places segments by playlist
   position; the host adds the Nostr signaling once nfx #71 defines it.
-- Settings gain a WebRTC switch, on by default, with the disclosure the web client gives: browser
-  peers see your IP address, and a STUN server learns when you watch.
+- Settings gain a WebRTC switch, on by default, with a disclosure: browser peers see the user's
+  IP address, and so does the network's STUN server, which the helper asks every 25 s while its
+  WebRTC side runs (contracts v17: `NfxSettings.webrtc?`, `stunServers?`). The side starts only
+  once the app can signal (the host's `NFX_WEBRTC_SIGNALING`): before that nobody could reach it,
+  so no STUN server is asked and the switch is not shown.
 - Same-LAN peers do not see each other's LAN address, so they connect through the router's public
   mapping (hairpin) or not at all, unless a test or LAN run sets `allow_private`.

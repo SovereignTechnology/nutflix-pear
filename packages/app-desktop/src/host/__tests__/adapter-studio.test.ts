@@ -12,6 +12,7 @@ import type {
   IrohRelayUrl,
   NostrEvent,
   RelayUrl,
+  StunServer,
   UploadProgress,
   VideoManifest,
 } from '@sovit/core';
@@ -241,25 +242,30 @@ describe('seeder over the worker; settings side effects', () => {
 
   it('slice 5b: Settings.nfx reaches the worker on every on/off change and at init', async () => {
     const nfx = { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } as const;
+    // #89: no WebRTC side until this build can signal (`NFX_WEBRTC_SIGNALING`).
+    const RTC = null;
     r = await rig();
     await r.ready();
     const a = r.host.adapter;
     expect(r.worker().calls('init')[0]).toMatchObject({
       // ADR 0020 2026-11-08: a fresh install (no stored settings) starts with NFX on, on the test
       // network's public iroh relay.
-      nfx: { enabled: true, irohRelays: ['https://iroh.nutflix.xyz/'] },
+      nfx: { enabled: true, irohRelays: ['https://iroh.nutflix.xyz/'], rtc: RTC },
       // Slice 5e-3: no helper unless the environment names one (the entry reads it).
       irohHelper: null,
     });
     await a.updateSettings({ nfx });
-    expect(r.worker().calls('nfx.configure')).toEqual([{ enabled: true, irohRelays: [] }]);
+    expect(r.worker().calls('nfx.configure')).toEqual([
+      { enabled: true, irohRelays: [], rtc: RTC },
+    ]);
     await a.updateSettings({ theme: 'dark' });
     await a.updateSettings({ nfx: { ...nfx, scopedRelays: ['wss://scoped.test' as RelayUrl] } });
     expect(r.worker().calls('nfx.configure')).toHaveLength(1); // no on/off change, no push
     await a.updateSettings({ nfx: { ...nfx, enabled: false } });
     expect(r.worker().calls('nfx.configure')).toEqual([
-      { enabled: true, irohRelays: [] },
-      { enabled: false, irohRelays: [] },
+      { enabled: true, irohRelays: [], rtc: RTC },
+      // NFX off is WebRTC off too.
+      { enabled: false, irohRelays: [], rtc: null },
     ]);
     await a.updateSettings({ nfx });
     // Slice 5e-3: a change of the iroh relays is pushed too, and only a change.
@@ -267,9 +273,15 @@ describe('seeder over the worker; settings side effects', () => {
     await a.updateSettings({ nfx: { ...nfx, irohRelays } });
     await a.updateSettings({ nfx: { ...nfx, irohRelays: [...irohRelays] } });
     expect(r.worker().calls('nfx.configure').slice(2)).toEqual([
-      { enabled: true, irohRelays: [] },
-      { enabled: true, irohRelays },
+      { enabled: true, irohRelays: [], rtc: RTC },
+      { enabled: true, irohRelays, rtc: RTC },
     ]);
+    // #89: WebRTC settings change nothing the worker sees while it is gated off.
+    await a.updateSettings({ nfx: { ...nfx, irohRelays, webrtc: false } });
+    await a.updateSettings({
+      nfx: { ...nfx, irohRelays, stunServers: ['stun.test:3478' as StunServer] },
+    });
+    expect(r.worker().calls('nfx.configure')).toHaveLength(4);
     // A restarted worker starts with the current state.
     r.worker().crash(1);
     await eventually(
@@ -277,7 +289,9 @@ describe('seeder over the worker; settings side effects', () => {
       'restart',
       5000,
     );
-    expect(r.spawned[1]!.calls('init')[0]).toMatchObject({ nfx: { enabled: true, irohRelays } });
+    expect(r.spawned[1]!.calls('init')[0]).toMatchObject({
+      nfx: { enabled: true, irohRelays, rtc: null },
+    });
   });
 
   it('seeder.status events reach onStatus as SeederStatus (Map)', async () => {

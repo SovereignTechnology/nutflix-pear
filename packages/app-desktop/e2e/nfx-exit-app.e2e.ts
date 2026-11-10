@@ -434,6 +434,8 @@ void describe(
               network: NS,
               scopedRelays: [scoped],
               irohRelays: [irohRelay],
+              // Over iroh only, on this machine: no WebRTC, so no public STUN server is asked.
+              webrtc: false,
             },
           },
         }),

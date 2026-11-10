@@ -108,7 +108,7 @@ import { sniffImage } from './images/images.js';
 import type { Logger } from './log.js';
 import { redact } from './log.js';
 import type { DesktopConfig, SettingsStore } from './settings/settings.js';
-import { autoTopUpDue } from './settings/settings.js';
+import { DEFAULT_NFX_STUN_SERVERS, autoTopUpDue } from './settings/settings.js';
 import type { WorkerCall } from './sessions.js';
 import { HostPlaySession, SessionRegistry } from './sessions.js';
 import { buildUnreactDeletion, fetchReactionSummary, ownReactionIds } from './social/reactions.js';
@@ -1220,12 +1220,15 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       }
     }
     // Slice 5b: NFX on or off reaches the worker; slice 5e-3: so does a change of the network's
-    // iroh relays (the worker then restarts its helper with them).
+    // iroh relays (the worker then restarts its helper with them); #89: and WebRTC on or off, or
+    // a change of its STUN servers (the worker restarts its WebRTC helper with them).
     const nfxNow = nfxWorkerArgs(next);
     const nfxWas = nfxWorkerArgs(prev);
+    const stun = (a: NfxConfigureArgs): string | null => a.rtc?.stun.join(' ') ?? null;
     if (
       nfxNow.enabled !== nfxWas.enabled ||
-      nfxNow.irohRelays.join(' ') !== nfxWas.irohRelays.join(' ')
+      nfxNow.irohRelays.join(' ') !== nfxWas.irohRelays.join(' ') ||
+      stun(nfxNow) !== stun(nfxWas)
     ) {
       try {
         await this.o.worker('nfx.configure', nfxNow);
@@ -1410,11 +1413,28 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 }
 
 /**
- * Slice 5b: `Settings.nfx` as the worker takes it (`init.nfx`, `nfx.configure`); slice 5e-3: with
- * the network's iroh relays, none when unset.
+ * #89: whether this build can signal WebRTC connections (Nostr, nfx #71; the next step of #89).
+ * Until it can, nobody could reach the worker's WebRTC side, so it is never started: no STUN server
+ * is asked, no helper runs, and Settings shows no switch for it.
  */
-export function nfxWorkerArgs(s: Settings): NfxConfigureArgs {
-  return { enabled: s.nfx?.enabled === true, irohRelays: s.nfx?.irohRelays ?? [] };
+export const NFX_WEBRTC_SIGNALING = false;
+
+/**
+ * Slice 5b: `Settings.nfx` as the worker takes it (`init.nfx`, `nfx.configure`); slice 5e-3: with
+ * the network's iroh relays, none when unset. #89 (contracts v17): `rtc` while NFX and WebRTC
+ * (absent = on) are both on, there is a STUN server (absent = the network's default) and this
+ * build can signal; else `null`, and the worker runs no WebRTC side.
+ */
+export function nfxWorkerArgs(s: Settings, signaling = NFX_WEBRTC_SIGNALING): NfxConfigureArgs {
+  const enabled = s.nfx?.enabled === true;
+  const stun = s.nfx?.stunServers ?? DEFAULT_NFX_STUN_SERVERS;
+  // `enabled` narrows `s.nfx` to present.
+  const webrtc = signaling && enabled && s.nfx.webrtc !== false && stun.length > 0;
+  return {
+    enabled,
+    irohRelays: s.nfx?.irohRelays ?? [],
+    rtc: webrtc ? { stun: [...stun] } : null,
+  };
 }
 
 function toComment(pc: nostr.ParsedComment): Comment {

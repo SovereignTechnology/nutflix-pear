@@ -19,6 +19,7 @@ import type {
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
   MAX_NFX_IROH_RELAYS,
   MAX_NFX_SCOPED_RELAYS,
+  MAX_NFX_STUN_SERVERS,
   MAX_NFX_TRACKERS,
   MAX_UPLOAD_HEIGHT,
   MAX_UPLOAD_SIZES,
@@ -138,6 +139,8 @@ export const LIMITS = {
   maxNfxIrohRelays: 4,
   /** Contracts v14: `NfxSettings.trackers` — core's `MAX_NFX_TRACKERS`. */
   maxNfxTrackers: 4,
+  /** Contracts v17: `NfxSettings.stunServers` — core's `MAX_NFX_STUN_SERVERS`. */
+  maxNfxStunServers: 4,
   /** Contracts v16: `UploadInput.sizes` / `Settings.publishSizes` — core's `MAX_UPLOAD_SIZES`. */
   maxUploadSizes: 7,
   /** Contracts v16: the tallest rendition height — core's `MAX_UPLOAD_HEIGHT`. */
@@ -1046,6 +1049,8 @@ interface Checks {
   nfxIrohRelays: Mutual<(typeof LIMITS)['maxNfxIrohRelays'], typeof MAX_NFX_IROH_RELAYS>;
   /** Contracts v14: the tracker cap is core's too. */
   nfxTrackers: Mutual<(typeof LIMITS)['maxNfxTrackers'], typeof MAX_NFX_TRACKERS>;
+  /** Contracts v17: the STUN server cap is core's too. */
+  nfxStunServers: Mutual<(typeof LIMITS)['maxNfxStunServers'], typeof MAX_NFX_STUN_SERVERS>;
   /** Contracts v16: the upload size caps are core's too. */
   uploadSizes: Mutual<(typeof LIMITS)['maxUploadSizes'], typeof MAX_UPLOAD_SIZES>;
   uploadHeight: Mutual<(typeof LIMITS)['maxUploadHeight'], typeof MAX_UPLOAD_HEIGHT>;

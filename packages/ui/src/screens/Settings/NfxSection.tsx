@@ -53,6 +53,13 @@ export interface NfxSectionParts {
    * the browser uploads what it holds. Default: hidden; the desktop app has no browser mesh.
    */
   readonly meshNotice?: boolean | undefined;
+  /**
+   * Contracts v17 (ADR 0023): the switch for trading video with web browsers over WebRTC, and the
+   * line saying who then sees the user's IP address. Default: hidden until the desktop app can
+   * signal (Nostr, nfx #71): before that nobody could reach its WebRTC side, so it is not started
+   * and there is nothing to switch. The web client never shows it (it is a browser).
+   */
+  readonly webrtc?: boolean | undefined;
 }
 
 /** `base.nfx`, or the network's starting point (off, no scoped relays). */
@@ -240,13 +247,19 @@ export function NfxSection({
     irohRelays: parts?.irohRelays ?? true,
     trackers: parts?.trackers ?? false,
     meshNotice: parts?.meshNotice ?? false,
+    webrtc: parts?.webrtc ?? false,
   };
+  // Contracts v17: absent = on.
+  const webrtcOn = nfx.webrtc !== false;
 
   const update = (fn: (current: NfxSettings) => NfxSettings): Promise<boolean> =>
     save({ field: 'nfx', label: LABEL, patch: (base: Settings) => ({ nfx: fn(nfxOf(base)) }) });
 
   const toggle = (on: boolean): void => {
     void update((cur) => ({ ...cur, enabled: on }));
+  };
+  const toggleWebrtc = (on: boolean): void => {
+    void update((cur) => ({ ...cur, webrtc: on }));
   };
 
   const addScoped = (url: RelayUrl): Promise<boolean> =>
@@ -309,6 +322,23 @@ export function NfxSection({
           busy={pending.has('nfx')}
           onChange={toggle}
         />
+      ) : null}
+      {show.webrtc ? (
+        <SwitchRow
+          id={`${id}-webrtc`}
+          label="Trade video with web browsers"
+          description="Seeds the videos you keep to people watching in a web browser, and fetches parts of a video from them, over WebRTC. Off: no WebRTC at all."
+          checked={webrtcOn}
+          disabled={!nfx.enabled}
+          busy={pending.has('nfx')}
+          onChange={toggleWebrtc}
+        />
+      ) : null}
+      {show.webrtc && nfx.enabled && webrtcOn ? (
+        <Note tone="warning" id={`${id}-webrtc-notice`}>
+          The web viewers you trade video with see your IP address, and so does the network&apos;s
+          STUN server, which this app asks for its public address while it runs.
+        </Note>
       ) : null}
       {show.scopedRelays ? (
         <RelayList

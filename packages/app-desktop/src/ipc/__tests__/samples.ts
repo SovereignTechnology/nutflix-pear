@@ -224,6 +224,18 @@ export const VALID: Samples = {
         },
       },
     ],
+    // Contracts v17: WebRTC with browsers and its STUN servers (a name, IPv4, bracketed IPv6).
+    [
+      {
+        nfx: {
+          enabled: true,
+          network: 'nfx:testnet:1',
+          scopedRelays: [],
+          webrtc: false,
+          stunServers: ['web.nutflix.xyz:3478', '192.0.2.1:3478', '[2001:db8::1]:19302'] as never,
+        },
+      },
+    ],
   ],
   'desktop.ffmpeg': [[{ recheck: false }], [{ recheck: true }]],
   'desktop.signer.info': [[]],
@@ -396,6 +408,19 @@ export const INVALID: Partial<Record<Method, readonly unknown[][]>> = {
         },
       },
     ],
+    // Contracts v17: a scheme, no port, a port out of range, a repeat, five servers, a string.
+    ...[
+      ['stun:web.nutflix.xyz:3478'],
+      ['web.nutflix.xyz'],
+      ['web.nutflix.xyz:0'],
+      ['web.nutflix.xyz:65536'],
+      ['-web.example:3478'],
+      ['a.example:1', 'a.example:1'],
+      ['a:1', 'b:1', 'c:1', 'd:1', 'e:1'],
+    ].map((stunServers) => [
+      { nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [], stunServers } },
+    ]),
+    [{ nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [], webrtc: 'on' } }],
   ],
   'desktop.ffmpeg': [[{}], [{ recheck: 'yes' }], [{ recheck: true, path: '/usr/bin/ffmpeg' }]],
   // The renderer names a kind only: no NIP-07 on desktop, and never a URI, flow or passphrase.

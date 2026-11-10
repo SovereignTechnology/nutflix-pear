@@ -32,6 +32,7 @@ import type {
   Sats,
   Sha256Hex,
   SourceSizes,
+  StunServer,
   TrackerUrl,
   UnixSeconds,
   VideoManifest,
@@ -390,6 +391,22 @@ export const isTrackerUrl = safe(branded<TrackerUrl>(matches(TRACKER_RE, LIMITS.
 /** Contracts v14: unique trackers, at most `LIMITS.maxNfxTrackers`. */
 export const isTrackers: Guard<readonly TrackerUrl[]> = (x): x is readonly TrackerUrl[] =>
   arrayOf(isTrackerUrl, LIMITS.maxNfxTrackers)(x) && new Set(x).size === x.length;
+
+/**
+ * Contracts v17 (ADR 0023): a STUN server for the WebRTC side, `host:port` with no scheme: a DNS
+ * name (letters, digits, `.`, `-`, starting and ending with a letter or digit), a dotted IPv4
+ * address, or a bracketed IPv6 address; a port 1 to 65535. A subset of what the worker's guard
+ * takes, so what the host sends always passes there.
+ */
+const STUN_RE =
+  /^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]{2,45}\]):([1-9][0-9]{0,4})$/;
+export const isStunServer = safe(
+  (x: unknown): x is StunServer =>
+    matches(STUN_RE, 300)(x) && Number(STUN_RE.exec(x)?.[1] ?? '0') <= 65535,
+);
+/** Contracts v17: unique STUN servers, at most `LIMITS.maxNfxStunServers` (empty: none). */
+export const isStunServers: Guard<readonly StunServer[]> = (x): x is readonly StunServer[] =>
+  arrayOf(isStunServer, LIMITS.maxNfxStunServers)(x) && new Set(x).size === x.length;
 export const isMintUrl = safe(branded<MintUrl>(matches(HTTPS_SERVER_RE, LIMITS.maxServerUrl)));
 export const isNfMediaImgUrl = matches(NF_IMG_RE, 150) as Guard<NfMediaImgUrl>;
 export const isImageSource: Guard<string> = safe(
@@ -550,9 +567,10 @@ const isSettingsPatch = obj(
     // Contracts v10 (ADR 0020): one network, its scoped relays; `enabled: false` is "off".
     // v12 (ADR 0021): its iroh relays, optional so a stored v10/v11 value stays valid.
     // v14 (ADR 0022): its WebTorrent trackers, optional too (a v10 to v13 value stays valid).
+    // v17 (ADR 0023): WebRTC with browsers (absent = on) and its STUN servers (absent = default).
     nfx: obj(
       { enabled: bool, network: oneOf(NFX_NETWORK_IDS), scopedRelays: isScopedRelays },
-      { irohRelays: isIrohRelays, trackers: isTrackers },
+      { irohRelays: isIrohRelays, trackers: isTrackers, webrtc: bool, stunServers: isStunServers },
     ),
     // Contracts v16: Studio's next default sizes; at least one (absent = 720p).
     publishSizes: (x: unknown): x is readonly number[] => isUploadSizes(x) && x.length > 0,

@@ -10,6 +10,7 @@ import type {
   RelayUrl,
   Sats,
   Sha256Hex,
+  StunServer,
   TrackerUrl,
   UnixSeconds,
 } from './primitives.js';
@@ -327,6 +328,9 @@ export const MAX_NFX_IROH_RELAYS = 4 as const;
 /** v14: the most WebTorrent trackers (NFX-10 §1) a client uses for one network. */
 export const MAX_NFX_TRACKERS = 4 as const;
 
+/** v17: the most STUN servers (NFX-10 §1) the desktop app's WebRTC side uses. */
+export const MAX_NFX_STUN_SERVERS = 4 as const;
+
 /**
  * v10 (ADR 0020): taking part in an NFX network. Off unless `enabled`: no NFX query, listing,
  * seeding or beacon happens without it.
@@ -355,6 +359,21 @@ export interface NfxSettings {
    * desktop app has no browser mesh and does not use them. A stored v10 to v13 `nfx` stays valid.
    */
   readonly trackers?: readonly TrackerUrl[];
+  /**
+   * v17 (ADR 0023, pear #89): the desktop app trades video segments with web browsers over
+   * WebRTC, as a seeder and as a viewer. Absent = `true` (the maintainer's decision of 2026-11-09:
+   * on by default, with the disclosure that browser peers see the user's IP address and a STUN
+   * server learns when they watch). `false`: no WebRTC at all. It needs `enabled`, and at least one
+   * STUN server.
+   */
+  readonly webrtc?: boolean;
+  /**
+   * v17 (NFX-10 §1): the STUN servers the WebRTC side learns its public address from, the
+   * network's own first. Unique; at most `MAX_NFX_STUN_SERVERS`. Absent = the network's default
+   * (the shell's); empty = none, which leaves WebRTC off. A local setting, never taken from a
+   * beacon. A stored v10 to v16 `nfx` stays valid.
+   */
+  readonly stunServers?: readonly StunServer[];
 }
 
 export interface Settings {
