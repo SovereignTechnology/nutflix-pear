@@ -62,18 +62,37 @@ fn awkward(len: usize) -> Vec<u8> {
     v
 }
 
-/// Poll `h` until an event matching `want` arrives (events before it are dropped).
-async fn wait_for(h: &RtcHandle, want: impl Fn(&Value) -> bool) -> Value {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
-        assert!(!left.is_zero(), "no matching event in 20 s");
-        let (events, _) = h
-            .poll(left.min(Duration::from_secs(2)), 60_000)
-            .await
-            .unwrap();
-        if let Some(e) = events.into_iter().find(|e| want(e)) {
-            return e;
+/// A handle's events as a test reads them. One poll can return several events, so those after
+/// the one a wait took are kept for the next wait: dropping them lost a `have` that came back in
+/// the same poll as `open` on a slow runner.
+struct Feed<'a> {
+    h: &'a RtcHandle,
+    backlog: VecDeque<Value>,
+}
+
+impl<'a> Feed<'a> {
+    fn new(h: &'a RtcHandle) -> Self {
+        Self {
+            h,
+            backlog: VecDeque::new(),
+        }
+    }
+
+    /// The first event matching `want`, polling up to 20 s; events before it are dropped.
+    async fn wait_for(&mut self, what: &str, want: impl Fn(&Value) -> bool) -> Value {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(i) = self.backlog.iter().position(&want) {
+                return self.backlog.drain(..=i).next_back().unwrap();
+            }
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            assert!(!left.is_zero(), "no {what} event in 20 s");
+            let (events, _) = self
+                .h
+                .poll(left.min(Duration::from_secs(2)), 60_000)
+                .await
+                .unwrap();
+            self.backlog.extend(events);
         }
     }
 }
@@ -110,12 +129,14 @@ async fn a_browser_shaped_peer_fetches_what_is_served() {
 
     // The viewer dials the seeder, as a browser answering nobody but offering would.
     let (v_peer, s_peer) = connect(&viewer, &seeder, swarm).await;
-    let open = wait_for(&viewer, is("open", v_peer)).await;
+    let mut v_events = Feed::new(&viewer);
+    let mut s_events = Feed::new(&seeder);
+    let open = v_events.wait_for("open", is("open", v_peer)).await;
     assert_eq!(open["dir"], "out");
     assert_eq!(open["swarm"], swarm);
-    let have = wait_for(&viewer, is("have", v_peer)).await;
+    let have = v_events.wait_for("have", is("have", v_peer)).await;
     assert_eq!(have["ranges"], serde_json::json!([[0, 0], [3, 3]]));
-    let open = wait_for(&seeder, is("open", s_peer)).await;
+    let open = s_events.wait_for("open", is("open", s_peer)).await;
     assert_eq!(open["dir"], "in");
 
     let got = viewer.get(v_peer, 0, MAX_SEGMENT).await.unwrap();
@@ -144,12 +165,13 @@ async fn a_browser_shaped_peer_fetches_what_is_served() {
     let mut s5 = dir.file("s5", b"five");
     s5.id = 5;
     seeder.serve(swarm.into(), vec![s5], true).await.unwrap();
-    let have = wait_for(&viewer, |e| {
-        e["t"] == "have"
-            && e["peer"] == v_peer
-            && e["ranges"].as_array().is_some_and(|r| r.len() == 3)
-    })
-    .await;
+    let have = v_events
+        .wait_for("re-announced have", |e| {
+            e["t"] == "have"
+                && e["peer"] == v_peer
+                && e["ranges"].as_array().is_some_and(|r| r.len() == 3)
+        })
+        .await;
     assert_eq!(have["ranges"], serde_json::json!([[0, 0], [3, 3], [5, 5]]));
 
     // Either side may fetch: the seeder asks the viewer, which serves nothing.
@@ -160,7 +182,7 @@ async fn a_browser_shaped_peer_fetches_what_is_served() {
 
     // Hanging up closes it here at once.
     assert!(viewer.hangup(v_peer).await.unwrap());
-    let closed = wait_for(&viewer, is("closed", v_peer)).await;
+    let closed = v_events.wait_for("closed", is("closed", v_peer)).await;
     assert_eq!(closed["why"], "hangup");
     assert_eq!(
         viewer.get(v_peer, 0, 1024).await.unwrap_err().code,
@@ -335,7 +357,9 @@ async fn repeated_requests_never_pin_memory() {
         .await
         .unwrap();
     let (v_peer, s_peer) = connect(&viewer, &seeder, swarm).await;
-    wait_for(&viewer, is("have", v_peer)).await;
+    Feed::new(&viewer)
+        .wait_for("have", is("have", v_peer))
+        .await;
 
     // The same request number three times over, as a hostile peer could: each replaces the
     // last, and no read started for an older one may keep its bytes counted.
