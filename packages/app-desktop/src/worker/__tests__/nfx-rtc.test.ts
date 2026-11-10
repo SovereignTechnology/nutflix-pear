@@ -141,9 +141,13 @@ describe('RtcFetcher (#89)', () => {
     // A playlist before its hash list places nothing; a forged hash list is ignored.
     f.learn(playlistSha(v, '360p'), v.files.get(playlistSha(v, '360p'))!);
     f.learn(v.root, new Uint8Array([1]));
-    expect(f.placeOf(seg)).toBeUndefined();
+    expect(f.placesOf(seg)).toEqual([]);
     learnAll();
-    expect(f.placeOf(seg)).toEqual({ swarm, index: 2 });
+    // The fixture's renditions share their segments: each place is kept.
+    expect(f.placesOf(seg)).toEqual([
+      { swarm, index: 2 },
+      { swarm: addr(v).webStreamSwarmId('720p'), index: 2 },
+    ]);
     await expect(f.fetch(seg, bodies[2]!.length, true)).resolves.toEqual(bodies[2]);
     expect(client.gets).toEqual([
       { peer: 1, segment: 2, sha256: seg, maxBytes: bodies[2]!.length },
@@ -162,6 +166,14 @@ describe('RtcFetcher (#89)', () => {
     learnAll();
     await f.fetch(v.segmentShas[1]!, bodies[1]!.length, true);
     expect(client.gets.map((g) => g.peer)).toEqual([3]);
+    // The same file at its place in the other rendition's swarm is asked for there.
+    client.fail.set(3, new HelperError('absent', 'evicted'));
+    client.gets.length = 0;
+    await f.fetch(v.segmentShas[1]!, bodies[1]!.length, true);
+    expect(client.gets.map((g) => [g.peer, g.segment])).toEqual([
+      [3, 1],
+      [2, 1],
+    ]);
     expect(await reasons(f.fetch(v.segmentShas[2]!, bodies[2]!.length, true))).toEqual(['no-peer']);
     expect(
       holds(

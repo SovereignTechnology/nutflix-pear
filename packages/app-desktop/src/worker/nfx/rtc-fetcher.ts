@@ -8,7 +8,9 @@
  *   segments, numbered by their #EXTINF index (NFX-10 §2). The fetcher learns where each sha256
  *   sits as files pass (`learn`, as `./iroh-fetcher.ts` does): the hash list (the manifest `root`),
  *   then each rendition's playlist (`renditionMembers`). Anything else (the hash list itself,
- *   playlists, inits) is never in a web swarm, and fails `unmapped`: never a guess.
+ *   playlists, inits) is never in a web swarm, and fails `unmapped`: never a guess. A file that
+ *   sits at several places (repeated in a rendition, or shared by two) is asked for at any of
+ *   them, of whichever peer announced it there.
  * - **The peer's word is never taken for the bytes.** `rtcGetFile` returns a segment only when its
  *   sha256 is the one the signed hash list gives (NFX-05 §4), capped at its listed size.
  * - **Peers.** Those connected in the segment's swarm whose last announcement holds it, in the
@@ -63,6 +65,9 @@ export interface RtcFetcherOptions {
   readonly logger: Logger;
 }
 
+/** Places one segment is asked for at (identical segments repeat, e.g. black frames). */
+const MAX_PLACES = 8;
+
 interface Place {
   readonly swarm: string;
   readonly index: number;
@@ -106,7 +111,8 @@ export class RtcFetcher implements NfxFetcher {
   private readonly o: RtcFetcherOptions;
   private list: nfx.HashList | null = null;
   private readonly learned = new Set<string>();
-  private readonly places = new Map<string, Place>();
+  /** Every place a segment sits (a file may repeat in a rendition, or across renditions). */
+  private readonly places = new Map<string, Place[]>();
   /** Peers that sent what the hash list contradicts. */
   private readonly dropped = new Set<number>();
   /** The fetch each peer is serving (the helper allows one per peer). */
@@ -119,22 +125,29 @@ export class RtcFetcher implements NfxFetcher {
 
   async fetch(sha: string, size: number, exact: boolean): Promise<Uint8Array> {
     if (this.closed) throw new NfxFetchError(['closed']);
-    const place = this.places.get(sha);
-    if (place === undefined) throw new NfxFetchError(['unmapped']);
+    const places = this.places.get(sha);
+    if (places === undefined) throw new NfxFetchError(['unmapped']);
     if (!Number.isSafeInteger(size) || size < 1 || size > MAX_GET_BYTES)
       throw new NfxFetchError(['size']);
-    const peers = this.o
-      .connections(place.swarm)
-      .filter((c) => !this.dropped.has(c.peer) && holds(c.have, place.index));
-    if (peers.length === 0) throw new NfxFetchError(['no-peer']);
+    // Each connected peer that announced the segment at one of its places, asked once.
+    const asks: { readonly peer: number; readonly index: number }[] = [];
+    for (const place of places)
+      for (const c of this.o.connections(place.swarm))
+        if (
+          !this.dropped.has(c.peer) &&
+          holds(c.have, place.index) &&
+          !asks.some((a) => a.peer === c.peer)
+        )
+          asks.push({ peer: c.peer, index: place.index });
+    if (asks.length === 0) throw new NfxFetchError(['no-peer']);
     const client = await this.o.client();
     if (client === null) throw new NfxFetchError(['rtc-off']);
     const reasons: RtcFetchReason[] = [];
-    for (const c of peers) {
+    for (const c of asks) {
       if (this.isClosed()) throw new NfxFetchError(['closed']);
       try {
         const bytes = await this.turn(c.peer, () =>
-          client.rtcGetFile(c.peer, place.index, { sha256: sha, maxBytes: size }),
+          client.rtcGetFile(c.peer, c.index, { sha256: sha, maxBytes: size }),
         );
         // Its sha256 is the listed one, so its size is too; a short `exact` read is a lie.
         if (exact && bytes.length !== size) throw new PoisonedError('a segment of another size');
@@ -179,14 +192,16 @@ export class RtcFetcher implements NfxFetcher {
       this.learned.add(sha);
       const swarm = this.o.video.webStreamSwarmId(r.id);
       members.value.segments.forEach((f, index) => {
-        if (!this.places.has(f.sha256)) this.places.set(f.sha256, { swarm, index });
+        const at = this.places.get(f.sha256) ?? [];
+        if (at.length < MAX_PLACES) at.push({ swarm, index });
+        this.places.set(f.sha256, at);
       });
     }
   }
 
-  /** The web swarm and #EXTINF index of segment `sha`, once known. */
-  placeOf(sha: string): Place | undefined {
-    return this.places.get(sha);
+  /** The web swarms and #EXTINF indexes of segment `sha`, once known. */
+  placesOf(sha: string): readonly Place[] {
+    return this.places.get(sha) ?? [];
   }
 
   /** Read through a call: `close` may run while a fetch awaits, which narrowing cannot see. */
