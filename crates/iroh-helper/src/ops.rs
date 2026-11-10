@@ -21,6 +21,7 @@ use tokio::sync::{Mutex, OnceCell, Semaphore, mpsc};
 
 use crate::frames::{self, Frame, FrameError, MAX_PAYLOAD};
 use crate::node::{self, GetError, Node};
+use crate::rtc::{self, RtcHandle};
 use crate::{EXIT_IO, EXIT_PROTOCOL};
 
 /// Requests being answered at once; one more is refused `busy`, never queued.
@@ -92,7 +93,71 @@ enum Op {
         conn: u32,
     },
     Stats,
+    /// Start the WebRTC side (ADR 0023): bind its socket and learn the public mapping.
+    RtcInit {
+        #[serde(default)]
+        bind: Option<String>,
+        #[serde(default)]
+        stun: Vec<String>,
+        /// Tests and same-LAN runs only.
+        #[serde(default)]
+        allow_private: bool,
+        /// The directory every served file must lie under (the worker's NFX store).
+        #[serde(default)]
+        root: Option<String>,
+    },
+    RtcStop,
+    RtcServe {
+        swarm: String,
+        segments: Vec<RtcSegment>,
+        #[serde(default)]
+        append: bool,
+    },
+    RtcUnserve {
+        swarm: String,
+    },
+    RtcAnswer {
+        swarm: String,
+        offer: String,
+    },
+    RtcOffer {
+        swarm: String,
+    },
+    RtcAccept {
+        peer: u32,
+        answer: String,
+    },
+    /// `segment`, not `id`: the request's own `id` is the field beside it.
+    RtcGet {
+        peer: u32,
+        segment: u64,
+        max: u64,
+    },
+    RtcPoll {
+        #[serde(default)]
+        wait_ms: u64,
+    },
+    RtcHangup {
+        peer: u32,
+    },
+    RtcHave {
+        peer: u32,
+    },
+    RtcStatus,
 }
+
+/// One segment in `rtc-serve`: its id in the swarm and the file that holds it.
+#[derive(Deserialize)]
+struct RtcSegment {
+    id: u64,
+    path: String,
+    size: u64,
+}
+
+/// The longest an `rtc-poll` waits.
+pub const MAX_POLL_WAIT_MS: u64 = 30_000;
+/// The JSON an `rtc-poll` reply carries, under the frame limit with room for its envelope.
+const POLL_BYTES: usize = 48 * 1024;
 
 struct OpError {
     code: &'static str,
@@ -125,8 +190,17 @@ struct Shared {
     node: OnceCell<Node>,
     conns: Mutex<Conns>,
     inflight: Arc<Semaphore>,
-    /// [`GET_BUDGET_MIB`] permits, one per MiB of `max`.
+    /// [`GET_BUDGET_MIB`] permits, one per MiB of `max`, for `get` and `rtc-get` alike.
     get_budget: Arc<Semaphore>,
+    /// The WebRTC side, from `rtc-init` to `rtc-stop`.
+    rtc: Mutex<Option<Arc<RtcHandle>>>,
+}
+
+fn rtc_err(e: rtc::RtcError) -> OpError {
+    OpError {
+        code: e.code,
+        msg: e.msg,
+    }
 }
 
 type Out = mpsc::Sender<Vec<u8>>;
@@ -199,6 +273,172 @@ impl Shared {
         self.node
             .get()
             .ok_or_else(|| err("not-ready", "init first"))
+    }
+
+    async fn rtc(&self) -> Result<Arc<RtcHandle>, OpError> {
+        self.rtc
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| err("not-ready", "rtc-init first"))
+    }
+
+    /// Send `bytes` as data frames for request `id`, before its reply.
+    async fn send_data(out: &Out, id: u32, bytes: &[u8]) -> Result<(), OpError> {
+        for chunk in bytes.chunks(MAX_PAYLOAD) {
+            let frame =
+                frames::encode_data(id, chunk).ok_or_else(|| err("internal", "chunking"))?;
+            out.send(frame)
+                .await
+                .map_err(|_| err("io", "stdout is gone"))?;
+        }
+        Ok(())
+    }
+
+    fn budget(&self, max: u64) -> Result<tokio::sync::OwnedSemaphorePermit, OpError> {
+        // `max` is at most 64 MiB, so this is at most 64 permits.
+        let mib = u32::try_from(max.div_ceil(1024 * 1024)).unwrap_or(GET_BUDGET_MIB);
+        self.get_budget
+            .clone()
+            .try_acquire_many_owned(mib)
+            .map_err(|_| err("busy", "too many bytes in flight"))
+    }
+
+    async fn rtc_op(&self, id: u32, op: Op, out: &Out) -> OpResult {
+        match op {
+            Op::RtcInit {
+                bind,
+                stun,
+                allow_private,
+                root,
+            } => {
+                let bind = match bind {
+                    None => None,
+                    Some(b) => Some(
+                        b.parse::<SocketAddr>()
+                            .map_err(|_| err("bad-request", "bind is not ip:port"))?,
+                    ),
+                };
+                let mut slot = self.rtc.lock().await;
+                if slot.is_some() {
+                    return Err(err("bad-request", "rtc-init was already done"));
+                }
+                let h = RtcHandle::start(rtc::Config {
+                    bind,
+                    stun,
+                    allow_private,
+                    root: root.map(PathBuf::from),
+                })
+                .await
+                .map_err(rtc_err)?;
+                let answer = fields(json!({
+                    "local": h.local.to_string(),
+                    "mapped": h.mapped.map(|m| m.to_string()),
+                }));
+                *slot = Some(Arc::new(h));
+                Ok(answer)
+            }
+            Op::RtcStop => {
+                let h = self.rtc.lock().await.take();
+                let stopped = h.is_some();
+                if let Some(h) = h {
+                    // Now, even while a poll or a fetch still holds the handle: they fail
+                    // `not-ready` when the task ends.
+                    h.stop().await;
+                }
+                Ok(fields(json!({"stopped": stopped})))
+            }
+            Op::RtcServe {
+                swarm,
+                segments,
+                append,
+            } => {
+                let segments = segments
+                    .into_iter()
+                    .map(|s| rtc::Segment {
+                        id: s.id,
+                        path: PathBuf::from(s.path),
+                        size: s.size,
+                    })
+                    .collect();
+                let n = self
+                    .rtc()
+                    .await?
+                    .serve(swarm, segments, append)
+                    .await
+                    .map_err(rtc_err)?;
+                Ok(fields(json!({"segments": n})))
+            }
+            Op::RtcUnserve { swarm } => {
+                let removed = self.rtc().await?.unserve(swarm).await.map_err(rtc_err)?;
+                Ok(fields(json!({"removed": removed})))
+            }
+            Op::RtcAnswer { swarm, offer } => {
+                let a = self
+                    .rtc()
+                    .await?
+                    .answer(swarm, offer)
+                    .await
+                    .map_err(rtc_err)?;
+                Ok(fields(
+                    json!({"peer": a.peer, "sdp": a.sdp, "candidates": a.candidates}),
+                ))
+            }
+            Op::RtcOffer { swarm } => {
+                let o = self.rtc().await?.offer(swarm).await.map_err(rtc_err)?;
+                Ok(fields(
+                    json!({"peer": o.peer, "sdp": o.sdp, "candidates": o.candidates}),
+                ))
+            }
+            Op::RtcAccept { peer, answer } => {
+                let kept = self
+                    .rtc()
+                    .await?
+                    .accept(peer, answer)
+                    .await
+                    .map_err(rtc_err)?;
+                Ok(fields(json!({"candidates": kept})))
+            }
+            Op::RtcGet { peer, segment, max } => {
+                if max == 0 || max > MAX_GET_BYTES {
+                    return Err(err("bad-request", "max must be 1 to 64 MiB"));
+                }
+                let _budget = self.budget(max)?;
+                let bytes = self
+                    .rtc()
+                    .await?
+                    .get(peer, segment, max)
+                    .await
+                    .map_err(rtc_err)?;
+                Self::send_data(out, id, &bytes).await?;
+                Ok(fields(json!({"size": bytes.len()})))
+            }
+            Op::RtcPoll { wait_ms } => {
+                if wait_ms > MAX_POLL_WAIT_MS {
+                    return Err(err("bad-request", "wait_ms is at most 30000"));
+                }
+                let (events, lost) = self
+                    .rtc()
+                    .await?
+                    .poll(Duration::from_millis(wait_ms), POLL_BYTES)
+                    .await
+                    .map_err(rtc_err)?;
+                Ok(fields(json!({"events": events, "lost": lost})))
+            }
+            Op::RtcHangup { peer } => {
+                let closed = self.rtc().await?.hangup(peer).await.map_err(rtc_err)?;
+                Ok(fields(json!({"closed": closed})))
+            }
+            Op::RtcHave { peer } => {
+                let h = self.rtc().await?.have(peer).await.map_err(rtc_err)?;
+                Ok(fields(h))
+            }
+            Op::RtcStatus => {
+                let s = self.rtc().await?.status().await.map_err(rtc_err)?;
+                Ok(fields(s))
+            }
+            _ => Err(err("internal", "not a WebRTC request")),
+        }
     }
 
     async fn init(
@@ -334,13 +574,7 @@ impl Shared {
                 if max == 0 || max > MAX_GET_BYTES {
                     return Err(err("bad-request", "max must be 1 to 64 MiB"));
                 }
-                // `max` is at most 64 MiB, so this is at most 64 permits.
-                let mib = u32::try_from(max.div_ceil(1024 * 1024)).unwrap_or(GET_BUDGET_MIB);
-                let _budget = self
-                    .get_budget
-                    .clone()
-                    .try_acquire_many_owned(mib)
-                    .map_err(|_| err("busy", "too many bytes in flight"))?;
+                let _budget = self.budget(max)?;
                 let hash = node::parse_hash(&hash)
                     .ok_or_else(|| err("bad-request", "hash is not 64 hex"))?;
                 let connection = self
@@ -362,13 +596,7 @@ impl Shared {
                             }
                             GetError::Transfer(m) => err("transfer-failed", m),
                         })?;
-                for chunk in bytes.chunks(MAX_PAYLOAD) {
-                    let frame = frames::encode_data(id, chunk)
-                        .ok_or_else(|| err("internal", "chunking"))?;
-                    out.send(frame)
-                        .await
-                        .map_err(|_| err("io", "stdout is gone"))?;
-                }
+                Self::send_data(out, id, &bytes).await?;
                 Ok(fields(json!({"size": bytes.len()})))
             }
             Op::Hangup { conn } => {
@@ -383,6 +611,19 @@ impl Shared {
                     "store_bytes": node.store_bytes(),
                 })))
             }
+            // The WebRTC side needs no iroh `init`: it is its own socket (ADR 0023).
+            op @ (Op::RtcInit { .. }
+            | Op::RtcStop
+            | Op::RtcServe { .. }
+            | Op::RtcUnserve { .. }
+            | Op::RtcAnswer { .. }
+            | Op::RtcOffer { .. }
+            | Op::RtcAccept { .. }
+            | Op::RtcGet { .. }
+            | Op::RtcPoll { .. }
+            | Op::RtcHangup { .. }
+            | Op::RtcHave { .. }
+            | Op::RtcStatus) => self.rtc_op(id, op, out).await,
         }
     }
 }
@@ -423,6 +664,7 @@ pub async fn serve(state: &Path) -> u8 {
         }),
         inflight: Arc::new(Semaphore::new(MAX_INFLIGHT)),
         get_budget: Arc::new(Semaphore::new(GET_BUDGET_MIB as usize)),
+        rtc: Mutex::new(None),
     });
     let mut stdin = BufReader::new(tokio::io::stdin());
     let code = loop {
@@ -521,7 +763,66 @@ pub async fn serve(state: &Path) -> u8 {
     if let Some(node) = shared.node.get() {
         let _ = tokio::time::timeout(SHUTDOWN_GRACE, node.close()).await;
     }
+    if let Some(h) = shared.rtc.lock().await.take() {
+        h.stop().await;
+    }
     drop(tx);
     let _ = tokio::time::timeout(SHUTDOWN_GRACE, writer).await;
     code
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn parse(v: Value) -> Op {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn rtc_get_names_the_segment_apart_from_the_request_id() {
+        // Request 5 asks for segment 0: the two never share a field.
+        let op = parse(json!({"id": 5, "op": "rtc-get", "peer": 2, "segment": 0, "max": 10}));
+        assert!(matches!(
+            op,
+            Op::RtcGet {
+                peer: 2,
+                segment: 0,
+                max: 10
+            }
+        ));
+        // Without `segment` it is refused rather than taking the request id.
+        assert!(
+            serde_json::from_value::<Op>(json!({"id": 5, "op": "rtc-get", "peer": 2, "max": 10}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rtc_requests_parse() {
+        let op = parse(json!({"id": 1, "op": "rtc-init", "stun": ["web.nutflix.xyz:3478"]}));
+        assert!(matches!(
+            op,
+            Op::RtcInit {
+                bind: None,
+                allow_private: false,
+                ..
+            }
+        ));
+        let op = parse(json!({"id": 2, "op": "rtc-serve", "swarm": "s",
+            "segments": [{"id": 0, "path": "/a", "size": 1}], "append": true}));
+        assert!(matches!(op, Op::RtcServe { append: true, .. }));
+        for o in ["rtc-stop", "rtc-status"] {
+            parse(json!({"id": 3, "op": o}));
+        }
+        parse(json!({"id": 4, "op": "rtc-poll"}));
+        parse(json!({"id": 4, "op": "rtc-have", "peer": 1}));
+        parse(json!({"id": 4, "op": "rtc-hangup", "peer": 1}));
+        parse(json!({"id": 4, "op": "rtc-accept", "peer": 1, "answer": "v=0"}));
+        parse(json!({"id": 4, "op": "rtc-answer", "swarm": "s", "offer": "v=0"}));
+        parse(json!({"id": 4, "op": "rtc-offer", "swarm": "s"}));
+        parse(json!({"id": 4, "op": "rtc-unserve", "swarm": "s"}));
+    }
 }

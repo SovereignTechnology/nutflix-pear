@@ -12,6 +12,12 @@ files, in which order, and whether the bytes are right are the worker's: NFX-05 
 sha256 check before a file is used, the NFX file store, beacons and, in Phase 2, every money
 decision stay in JavaScript.
 
+Since [ADR 0023](../../docs/decisions/0023-webrtc-in-the-helper.md) it also has a **WebRTC side**
+(`rtc-*` requests, below): data-channel connections with browsers in an NFX web swarm (NFX-10 §2),
+speaking p2p-media-loader 4.0.0's peer protocol, so the app and web viewers trade segments
+directly. Same rule: it serves the files the worker names and hands fetched bytes back unchecked.
+It does not signal: offers and answers come and go through the worker.
+
 Status: from **spike S-D** (`docs/spikes/S-D-iroh-helper.md`). Since slice 5e-3 the worker runs
 one to serve its NFX videos (`packages/app-desktop/src/worker/nfx/iroh.ts` and `iroh-seeding.ts`);
 fetching through it is slice 5e-4. Since slice 5e-5 a packaged app ships one, built for its
@@ -46,11 +52,20 @@ for the target); the worker then never reads `NUTFLIX_IROH_HELPER`. Built and te
 4. **The network's relays only.** `presets::Minimal` (no n0 discovery), a custom relay map from
    `init`, and a dial filter: a relay URL not in that map is dropped, whoever named it (NFX-06
    §2), so a ticket cannot make this process contact a host of a peer's choosing.
-5. **No socket of its own** besides iroh's, no secret in argv or the environment (the iroh key,
-   if any, arrives in `init`), and nothing printed but short diagnostics on stderr.
+5. **No socket of its own** besides iroh's and, after `rtc-init`, the one WebRTC UDP socket (it
+   also carries the STUN requests); no secret in argv or the environment (the iroh key, if any,
+   arrives in `init`), and nothing printed but short diagnostics on stderr.
 6. **The worker's client makes the safe path the only one** (`worker/iroh/helper.ts`): `getFile`
    needs the sha256 a file must have and returns its bytes only if they match; `getSeq` returns
    member hashes, good only for asking; a dial goes through `dialTarget`.
+7. **WebRTC talks only to addresses it may reach** (ADR 0023): a remote SDP keeps only UDP
+   candidates at global unicast addresses other than the user's own public one (at most 16; no
+   `*.local` names), each line read exactly as str0m reads it, so an offer cannot point it at the
+   user's LAN, loopback, router or a cloud metadata address. The same rule holds every datagram
+   it sends or accepts (an egress and ingress check), whatever str0m learned. It shows no
+   private address of its own: its host candidate stays out of the SDP it hands out when private,
+   a server-reflexive candidate's `raddr` is zeroed and its foundation (a hash of the base
+   address) renumbered. Data channels only (no codecs), one per connection. No TURN.
 
 ## Running
 
@@ -73,7 +88,7 @@ u8  kind                 1 = ctl, 2 = data
 
 The worker sends only `ctl` frames; `data` from the worker is reserved for `nfx/pay/1` streams in
 Phase 2 and is a protocol violation today. The helper sends `ctl` replies and the `data` frames
-of `get`s.
+of `get`s and `rtc-get`s.
 
 **Backpressure:** the helper writes frames through one bounded queue (16 frames). A worker that
 stops reading stalls it there, and so every transfer behind it. The worker bounds what it buffers:
@@ -112,7 +127,64 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
   30 s fails `timeout`. The fetched blob is held by a temp tag while it is read, then left to the
   collector: the worker's store keeps the copy that counts.
 - Error codes: `bad-request`, `not-ready`, `busy`, `io`, `dial-failed`, `no-conn`, `timeout`,
-  `too-large`, `transfer-failed`, `internal`.
+  `too-large`, `transfer-failed`, `internal`, and for `rtc-*` also `no-peer`, `not-open`, `absent`.
+
+## WebRTC with browsers (ADR 0023)
+
+One UDP socket, full ICE ([str0m](https://github.com/algesten/str0m) 0.24.1, the version and
+crypto backend nfx's bridge builds), one data channel per connection carrying p2p-media-loader
+4.0.0's binary commands (`src/rtc/p2pml.rs`, written from the library's source). A connection
+belongs to one swarm, the NFX-10 §2 stream swarm id the worker gives. The `rtc-*` requests need no
+`init`; they need `rtc-init` first.
+
+| op | fields | reply |
+|---|---|---|
+| `rtc-init` | `bind?` (`ip:port`), `stun` (≤ 4 `host:port`), `root?` (absolute dir), `allow_private?` | `local`, `mapped` (the public address STUN saw, or null) |
+| `rtc-stop` | | `stopped` |
+| `rtc-serve` | `swarm`, `segments` (`[{id, path, size}]`), `append?` | `segments` (how many the swarm serves now) |
+| `rtc-unserve` | `swarm` | `removed` |
+| `rtc-answer` | `swarm`, `offer` (SDP, ≤ 16 KiB) | `peer`, `sdp`, `candidates` |
+| `rtc-offer` | `swarm` | `peer`, `sdp`, `candidates` |
+| `rtc-accept` | `peer`, `answer` (SDP) | `candidates` (remote ones kept) |
+| `rtc-get` | `peer`, `segment`, `max` (1 ..= 64 MiB) | `data` frames, then `size` |
+| `rtc-poll` | `wait_ms` (≤ 30000) | `events`, `lost` |
+| `rtc-have` | `peer` | `ranges`, `more`: what the peer last announced |
+| `rtc-hangup` | `peer` | `closed` |
+| `rtc-status` | | `local`, `mapped`, `peers` (`[{peer, swarm, dir, open}]`), `swarms`, `held` |
+
+- **`rtc-init`** binds `bind`, or, without a specific IP there, the address the default route to
+  the first STUN server leaves from (found without sending anything). It sends one Binding request
+  to each STUN server from that socket and waits up to 3 s for an answer; the mapping is refreshed
+  every 25 s (every 3 s while unknown). A STUN name that does not resolve in 3 s is skipped.
+  `rtc-stop` closes every connection at once; requests still in flight then fail `not-ready`.
+- **Serving.** `rtc-serve` names, per segment id (its position after `#EXTINF` in the rendition
+  playlist, NFX-10 §2), the file that holds it and its size; page a long table with `append`
+  (one frame is 64 KiB). With `root` (the worker passes its NFX store), every file must lie
+  under it once symlinks are resolved, checked when named and again when read, so no slip in the
+  worker can hand a peer another file. The helper reads a file only when a peer asks, from the offset it asks
+  for, refuses it (`Absent`) if it is not a regular file of the size named, and never computes or
+  claims a hash: the worker names only files its verified hash list includes, and the browser
+  checks every segment anyway. At most 64 swarms of 100 000 segments (a request over that changes
+  nothing). Open peers of the swarm get a new announcement on every change.
+- **Connecting.** `rtc-answer` takes a browser's offer and returns the answer to send back;
+  `rtc-offer` returns an offer, and `rtc-accept` completes it with the answer. Both wait for
+  nothing: candidates are in the SDP (browsers do not trickle). At most 32 connections, 8 per
+  swarm; a channel not open in 20 s, or idle 60 s, is closed.
+- **Fetching.** `rtc-get` sends a `Request` for `segment` (not `id`, which is the request's own)
+  and returns the bytes the peer sends after its `Data`
+  command, once its `Completed` arrives and their count matches. One fetch per peer at a time.
+  Fails `absent` (the peer does not hold it), `too-large` (above `max`), `timeout` (no `Data` in
+  5 s, a 5 s stall, or 30 s in all), `transfer-failed`, `not-open`, `no-peer`. The bytes are
+  unchecked: the worker checks their sha256.
+- **Events** (`rtc-poll`, one poll at a time, at most 256 queued; `lost` says older ones were
+  dropped): `{"t":"open","peer","swarm","dir":"in"|"out"}`, `{"t":"have","peer","ranges":[[a,b],…],
+  "more"}` (what the peer announced, as at most 512 inclusive ranges; at most 30, then 5 a second,
+  per peer: the newest state waits for the budget), `{"t":"closed","peer","why"}`. After `lost`,
+  `rtc-status` lists the live connections and `rtc-have` what each holds.
+- **Bounds:** 4 file reads at once and 64 waiting, 256 MiB of segment bytes held for uploads, 4 MiB
+  of queued commands per peer, 60 requests a peer then 20/s (above it the peer is dropped), 400
+  then 200/s for all (above it, `Absent`), 8 remote addresses learned per connection, one data
+  channel (a second drops the peer), error text cut to 200 bytes.
 
 ## Exit codes
 
