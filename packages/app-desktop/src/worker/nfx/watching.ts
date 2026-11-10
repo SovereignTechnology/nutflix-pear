@@ -10,6 +10,10 @@
  * worker serves cannot be linked to what it watches. It starts on the first fetch that needs it
  * and stops when no session that could use it is left.
  *
+ * #89 (ADR 0023): while the host has WebRTC on, a session also asks the peers the worker's WebRTC
+ * node is connected to in the video's web swarms (`./rtc-fetcher.ts`), after iroh and before
+ * HyperDHT, and only beside one of them: those connections come from the host's signaling.
+ *
  * Payment-independent: free NFX play needs no payment providers. With them the worker has a
  * legacy swarm, and sessions dial from its DHT node; without them (no swarm, no seeder) a DHT
  * node of this module's own is created on the first open — with the bootstrap the worker would
@@ -39,6 +43,9 @@ import { HyperdhtFetcher, NfxPeerPool } from './hyperdht-fetcher.js';
 import type { IrohFetchClient } from './iroh-fetcher.js';
 import { IrohFetcher } from './iroh-fetcher.js';
 import { NfxRangeServer } from './range-server.js';
+import type { RtcFetchClient } from './rtc-fetcher.js';
+import { RtcFetcher } from './rtc-fetcher.js';
+import type { NfxRtcConnection } from './rtc-node.js';
 import type { NfxFetcher } from './watch.js';
 import { NfxWatchSession } from './watch.js';
 
@@ -66,6 +73,16 @@ export interface NfxWatchingIroh {
   readonly networkRelays: readonly string[];
 }
 
+/** #89: the worker's WebRTC node (`NfxRtcNode`), as sessions use it. */
+export interface NfxWatchingRtc {
+  /** Whether the host turned WebRTC on. */
+  readonly on: boolean;
+  /** Its helper, started on first need; `null` when off or it cannot run. */
+  start(): Promise<RtcFetchClient | null>;
+  /** The open connections in a web swarm. */
+  connections(swarm: string): readonly NfxRtcConnection[];
+}
+
 export interface NfxWatchingDeps {
   /** The legacy swarm's DHT node while there is one (payment providers present), else `null`. */
   readonly swarmDht: () => NfxDht | null;
@@ -84,6 +101,8 @@ export interface NfxWatchingDeps {
   readonly logger: Logger;
   /** Slice 5e-4: the watching iroh node, or `null` without an iroh helper (HyperDHT only). */
   readonly iroh?: NfxWatchingIroh | null;
+  /** #89: the WebRTC node, or `null` without an iroh helper (it runs in that binary). */
+  readonly rtc?: NfxWatchingRtc | null;
   /** TESTS ONLY: shorter bounds (a read's wait, a dial). */
   readonly readWaitMs?: number;
   readonly dialTimeoutMs?: number;
@@ -160,6 +179,20 @@ export class NfxWatching {
         }),
       );
     }
+    // #89: then the peers the WebRTC node is connected to in this video's web swarms. Only beside
+    // another source: the connections come from the host's signaling, never from this session.
+    const rtc = this.d.rtc ?? null;
+    if (rtc?.on === true && (fetchers.length > 0 || peers.length > 0))
+      fetchers.push(
+        new RtcFetcher({
+          video: video.value,
+          root: a.root,
+          segs: a.segs,
+          client: () => rtc.start(),
+          connections: (swarm) => rtc.connections(swarm),
+          logger: this.d.logger,
+        }),
+      );
     if (peers.length > 0)
       fetchers.push(
         new HyperdhtFetcher({

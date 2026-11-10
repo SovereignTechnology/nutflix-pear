@@ -77,6 +77,7 @@ import {
   MAX_NFX_PLAY_IROH,
   MAX_NFX_PLAY_PEERS,
   MAX_NFX_RENDITIONS,
+  MAX_NFX_SDP,
   NFX_RESOLUTION,
   NFX_UPLOAD_FAILURES,
   WORKER_V,
@@ -122,7 +123,29 @@ const isPayments = obj({
  * normal form (`isIrohRelays`: iroh's own spelling, unique, at most 4), so the worker compares a
  * relay the helper reports as a string.
  */
-const isNfxConfigure = obj({ enabled: bool, irohRelays: isIrohRelays });
+const isNfxConfigure = obj(
+  { enabled: bool, irohRelays: isIrohRelays },
+  // #89: WebRTC with browsers, with 1-4 STUN servers (a name, IPv4 or bracketed IPv6, and a port).
+  {
+    rtc: nullable(
+      obj({
+        stun: arrayOf(
+          matches(/^(?:[A-Za-z0-9.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\]):[0-9]{1,5}$/, 300),
+          4,
+          1,
+        ),
+      }),
+    ),
+  },
+);
+
+/** #89: an NFX-10 web swarm id, `nfx/1/web/<namespace>:<video-id>/<rendition>`. */
+const isNfxWebSwarm = matches(/^nfx\/1\/web\/[\x21-\x7e]{3,246}$/, 256);
+/** #89: an SDP as browsers and the helper write it (CRLF lines), at most the helper's cap. */
+const isNfxSdp = safe(
+  (x: unknown): x is string => text(3, MAX_NFX_SDP, { multiline: true })(x) && x.startsWith('v=0'),
+);
+const isNfxRtcPeer = int(1, 0xffff_ffff);
 
 const isInit = safe(
   (x: unknown): x is WorkerMethodTable['init'][0] =>
@@ -292,6 +315,10 @@ export const validateWorkerArgs: {
   'nfx.videos': safe(obj({}) as Guard<Record<string, never>>),
   'nfx.play.open': isNfxPlayOpen,
   'nfx.play.close': safe(isSid),
+  'nfx.rtc.answer': safe(obj({ swarm: isNfxWebSwarm, offer: isNfxSdp })),
+  'nfx.rtc.offer': safe(obj({ swarm: isNfxWebSwarm })),
+  'nfx.rtc.accept': safe(obj({ peer: isNfxRtcPeer, answer: isNfxSdp })),
+  'nfx.rtc.hangup': safe(obj({ peer: isNfxRtcPeer })),
   'studio.ffmpeg': safe(obj({ recheck: bool }, { path: isAbsolutePath })),
   'studio.upload': safe(isStudioUpload),
   'studio.probe': safe(obj({ path: isAbsolutePath })),
@@ -375,6 +402,10 @@ export const validateWorkerResult: {
   'nfx.videos': safe(obj({ videos: arrayOf(isNfxStoredVideo, MAX_NFX_STORED_VIDEOS) })),
   'nfx.play.open': isNfxPlayOpenResult,
   'nfx.play.close': isVoid,
+  'nfx.rtc.answer': safe(obj({ peer: isNfxRtcPeer, sdp: isNfxSdp })),
+  'nfx.rtc.offer': safe(obj({ peer: isNfxRtcPeer, sdp: isNfxSdp })),
+  'nfx.rtc.accept': isVoid,
+  'nfx.rtc.hangup': isVoid,
   'studio.ffmpeg': safe(isFfmpegStatus),
   'studio.upload': safe(isVideoManifest),
   'studio.probe': safe(isSourceSizes),

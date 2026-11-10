@@ -36,6 +36,9 @@ const seeding = { enabled: true, diskCapBytes: 50 * 1024 ** 3 };
 const SHA = 'ef'.repeat(32) as Sha256Hex;
 /** Slice 5d: an NFX video and one seeder's beaconed endpoint. */
 const NFX_VIDEO = `nfx:testnet:1:nutflix-${'c'.repeat(32)}`;
+/** #89: a web swarm id and an SDP as a browser writes one (CRLF lines). */
+const RTC_SWARM = `nfx/1/web/${NFX_VIDEO}/720p`;
+const SDP = 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n';
 const ENDPOINT = { t: 'hyperdht' as const, peer: 'a'.repeat(64), bind: 'b'.repeat(128) };
 /** Slice 5e-4: a distinct 64-hex node id per `i`. */
 const hexPair = (i: number): string => i.toString(16).padStart(2, '0').repeat(32);
@@ -130,6 +133,13 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'nfx.configure': [
     { enabled: true, irohRelays: [] },
     { enabled: false, irohRelays: IROH_RELAYS },
+    // #89: WebRTC on, with STUN servers (a name, IPv4, bracketed IPv6), or off.
+    {
+      enabled: true,
+      irohRelays: [],
+      rtc: { stun: ['stun.nutflix.xyz:3478', '185.147.157.180:3478', '[2a01:4f8::1]:3478'] },
+    },
+    { enabled: true, irohRelays: [], rtc: null },
   ],
   'nfx.endpoint': [{ seeder: PUBKEY, video: NFX_VIDEO }],
   'nfx.videos': [{}],
@@ -161,6 +171,10 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
     { ...NFX_OPEN, held: { seeders: 1, all: 1, named: { $map: [] } } },
   ],
   'nfx.play.close': [{ sid: SID }],
+  'nfx.rtc.answer': [{ swarm: RTC_SWARM, offer: SDP }],
+  'nfx.rtc.offer': [{ swarm: RTC_SWARM }],
+  'nfx.rtc.accept': [{ peer: 1, answer: SDP }],
+  'nfx.rtc.hangup': [{ peer: 4_294_967_295 }],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
   'studio.probe': [{ path: '/home/u/Videos/a.mp4' }, { path: 'C:\\Users\\u\\a.mp4' }],
   'studio.upload': [
@@ -225,6 +239,10 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
     { ...NFX_OPENED, rendition: '360p', renditions: [{ id: '360p', bandwidth: 1 }] },
   ],
   'nfx.play.close': [undefined],
+  'nfx.rtc.answer': [{ peer: 2, sdp: SDP }],
+  'nfx.rtc.offer': [{ peer: 3, sdp: SDP }],
+  'nfx.rtc.accept': [undefined],
+  'nfx.rtc.hangup': [undefined],
   'studio.ffmpeg': [
     { found: false },
     { found: true, path: '/usr/bin/ffmpeg', version: '8.1.2', os: 'linux' },
@@ -1002,5 +1020,63 @@ describe('slice 5d: nfx.play.open / nfx.play.close', () => {
     ])
       expect(g(bad), JSON.stringify(bad).slice(0, 200)).toBe(false);
     expect(validateWorkerResult['nfx.play.close']({})).toBe(false);
+  });
+});
+
+describe('#89: the WebRTC side (nfx.configure rtc, nfx.rtc.*)', () => {
+  const cfg = validateWorkerArgs['nfx.configure'];
+  const base = { enabled: true, irohRelays: [] };
+
+  it('takes 1 to 4 STUN servers as host:port, and nothing else under rtc', () => {
+    for (const stun of [
+      [],
+      ['a:1', 'b:1', 'c:1', 'd:1', 'e:1'],
+      ['stun.example'],
+      ['stun.example:'],
+      ['http://stun.example:3478'],
+      ['stun example:3478'],
+      ['2a01:4f8::1:3478'],
+      [`${'a'.repeat(254)}:3478`],
+      [3478],
+    ])
+      expect(cfg({ ...base, rtc: { stun } }), JSON.stringify(stun).slice(0, 80)).toBe(false);
+    expect(cfg({ ...base, rtc: { stun: ['s:1'], bind: '0.0.0.0:0' } })).toBe(false);
+    expect(cfg({ ...base, rtc: { stun: ['s:1'], allowPrivate: true } })).toBe(false);
+    expect(cfg({ ...base, rtc: 'stun.example:3478' })).toBe(false);
+  });
+
+  it('refuses a swarm that is not a web swarm id, and an SDP that is not one', () => {
+    const answer = validateWorkerArgs['nfx.rtc.answer'];
+    for (const swarm of [
+      '',
+      'nfx/1/web/',
+      'nfx/1/hyper/x:y/r',
+      `nfx/1/web/${NFX_VIDEO}/720 p`,
+      `nfx/1/web/${NFX_VIDEO}/\n`,
+      `nfx/1/web/${'x'.repeat(247)}`,
+    ])
+      expect(answer({ swarm, offer: SDP }), swarm.slice(0, 40)).toBe(false);
+    for (const offer of [
+      '',
+      'o=- 1 2 IN IP4 127.0.0.1\r\n',
+      `v=0\r\n${'a'.repeat(16 * 1024)}`,
+      'v=0\r\n\u0000',
+      7,
+    ])
+      expect(answer({ swarm: RTC_SWARM, offer }), String(offer).slice(0, 40)).toBe(false);
+    expect(answer({ swarm: RTC_SWARM, offer: SDP, extra: 1 })).toBe(false);
+  });
+
+  it('a peer is a positive u32, and results are exact', () => {
+    for (const peer of [0, -1, 1.5, 2 ** 32, '1'])
+      expect(validateWorkerArgs['nfx.rtc.hangup']({ peer }), String(peer)).toBe(false);
+    expect(validateWorkerArgs['nfx.rtc.accept']({ peer: 1 })).toBe(false);
+    expect(validateWorkerArgs['nfx.rtc.offer']({ swarm: RTC_SWARM, offer: SDP })).toBe(false);
+    expect(validateWorkerResult['nfx.rtc.offer']({ peer: 1 })).toBe(false);
+    expect(validateWorkerResult['nfx.rtc.answer']({ peer: 0, sdp: SDP })).toBe(false);
+    expect(validateWorkerResult['nfx.rtc.answer']({ peer: 1, sdp: SDP, candidates: 1 })).toBe(
+      false,
+    );
+    expect(validateWorkerResult['nfx.rtc.accept']({})).toBe(false);
   });
 });

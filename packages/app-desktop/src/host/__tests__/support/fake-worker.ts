@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 
 import type { MintUrl, PeerSpend, Sats, VideoManifest } from '@sovit/core';
 
-import { toWireError, wireError } from '../../../ipc/errors.js';
+import { IpcError, toWireError, wireError } from '../../../ipc/errors.js';
 import { FrameDecoder, encodeFrame } from '../../../ipc/framing.js';
 import type { SeederStatusWire, SessionId, UploadId, WireError } from '../../../ipc/protocol.js';
 import { isHostToWorker } from '../../../ipc/worker-guards.js';
@@ -238,6 +238,12 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
       case 'nfx.play.close':
         this.nfxSessions.delete((a as { sid: string }).sid);
         return Promise.resolve(undefined);
+      // #89: the fake has no WebRTC side; it answers like a real one with WebRTC off.
+      case 'nfx.rtc.answer':
+      case 'nfx.rtc.offer':
+      case 'nfx.rtc.accept':
+      case 'nfx.rtc.hangup':
+        return Promise.reject(new IpcError('backend-down', 'backend-down: WebRTC is off'));
       case 'play.open': {
         const args = a as PlayOpenArgs;
         this.sessions.set(args.sid, args);

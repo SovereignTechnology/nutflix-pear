@@ -35,7 +35,7 @@ import type {
 } from '@sovit/core';
 import { MAX_IMAGE_BYTES, manifest, media } from '@sovit/core';
 import type { LogLevel, Logger, SeedCore } from '@sovit/seeder';
-import { Seeder, fromHex, toHex } from '@sovit/seeder';
+import { NFX_STORE_DIR, Seeder, fromHex, toHex } from '@sovit/seeder';
 
 import { fromHex as hexToBytes } from '../ipc/codec.js';
 import { IpcError } from '../ipc/errors.js';
@@ -45,6 +45,7 @@ import type {
   HostMethod,
   HostMethodTable,
   NfxPlayOpenArgs,
+  NfxRtcConfigWire,
   NfxStoredVideoWire,
   PlayOpenArgs,
   Req,
@@ -80,8 +81,13 @@ import {
   getWorkerProviders,
 } from './providers.js';
 import type { WorkerRuntime } from './runtime.js';
+import type { IrohHelper } from './iroh/helper.js';
+import { HelperError } from './iroh/helper.js';
 import { NFX_IROH_DIR, NFX_IROH_WATCH_DIR, NfxIrohNode } from './nfx/iroh.js';
 import { NfxIrohSeeding } from './nfx/iroh-seeding.js';
+import type { NfxRtcConfig } from './nfx/rtc-node.js';
+import { NFX_RTC_DIR, NfxRtcNode } from './nfx/rtc-node.js';
+import { NfxRtcSeeding } from './nfx/rtc-seeding.js';
 import { NfxSeeding } from './nfx/seeding.js';
 import { NFX_PLAY_DIR, NfxWatching } from './nfx/watching.js';
 import { NFX_DEFAULT_NAMESPACE } from './studio/nfx.js';
@@ -241,6 +247,12 @@ export class WorkerHost {
   private nfxWatch: NfxWatching | null = null;
   /** Slice 5e-4: the iroh node play sessions dial from (ephemeral id; with an iroh helper). */
   private nfxIrohWatch: NfxIrohNode | null = null;
+  /** #89: the WebRTC node (with an iroh helper), off until the host turns WebRTC on. */
+  private nfxRtc: NfxRtcNode | null = null;
+  /** #89: `nfx.configure`'s `rtc`, as the host last said (`null`: off). */
+  private nfxRtcWire: NfxRtcConfigWire | null = null;
+  /** #89: seeding the stored NFX videos to browsers (with the net and the WebRTC node). */
+  private nfxRtcSeeding: NfxRtcSeeding | null = null;
   private readonly sessions = new Map<string, Session>();
   private readonly corePolicies = new Map<CoreKeyHex, PricePolicy>();
   /**
@@ -341,10 +353,18 @@ export class WorkerHost {
       case 'nfx.configure':
         this.nfxEnabled = req.a.enabled;
         this.nfxIrohRelays = req.a.irohRelays;
-        // Slice 5e-4: the watching node too (a change of relays stops its helper).
-        await Promise.all([this.applyNfxSeeding(), this.nfxIrohWatch?.setRelays(req.a.irohRelays)]);
+        this.nfxRtcWire = req.a.rtc ?? null;
+        // Slice 5e-4: the watching node too (a change of relays stops its helper). #89: and the
+        // WebRTC node (a change of STUN servers restarts it).
+        await Promise.all([
+          this.nfxRtc?.set(this.rtcConfig()),
+          this.applyNfxSeeding(),
+          this.nfxIrohWatch?.setRelays(req.a.irohRelays),
+        ]);
         return undefined;
       case 'nfx.endpoint':
+        // #89: the beacon round is WebRTC seeding's clock too (what was stored since).
+        this.nfxRtcSeeding?.refresh();
         return {
           hyperdht: (await this.nfxSeeding?.endpoint(req.a.seeder)) ?? null,
           iroh: this.nfxIroh?.endpoint(req.a.video) ?? null,
@@ -355,6 +375,16 @@ export class WorkerHost {
         return this.nfxPlayOpen(req.a);
       case 'nfx.play.close':
         await this.nfxWatch?.close(req.a.sid);
+        return undefined;
+      case 'nfx.rtc.answer':
+        return this.rtcStep(req.a.swarm, (h) => h.rtcAnswer(req.a.swarm, req.a.offer));
+      case 'nfx.rtc.offer':
+        return this.rtcStep(req.a.swarm, (h) => h.rtcOffer(req.a.swarm));
+      case 'nfx.rtc.accept':
+        await this.rtcStep(null, (h) => h.rtcAccept(req.a.peer, req.a.answer));
+        return undefined;
+      case 'nfx.rtc.hangup':
+        await this.rtcStep(null, (h) => h.rtcHangup(req.a.peer));
         return undefined;
       case 'studio.ffmpeg':
         return this.probe(req.a.recheck, req.a.path);
@@ -421,12 +451,29 @@ export class WorkerHost {
         NFX_DEFAULT_NAMESPACE,
       );
       await this.nfxIrohWatch.setRelays(this.nfxIrohRelays);
+      // #89 (ADR 0023): the WebRTC node, its own helper process, off until `nfx.configure` turns
+      // it on. It may read served files only under the NFX store, which `rtc-init` resolves, so
+      // the store's directory exists from here (the store makes it anyway).
+      const nfxRoot = fs.join(a.storage, 'seeder', NFX_STORE_DIR);
+      await fs.mkdir(nfxRoot, { recursive: true });
+      this.nfxRtc = new NfxRtcNode({
+        file: a.irohHelper,
+        spawn: runtime.spawnHelper,
+        isExecutable: (p) => runtime.isExecutable(p),
+        stateDir: fs.join(tmpDir, NFX_RTC_DIR),
+        rmTree: (p) => runtime.mediaFs(a.storage).rm(p, { recursive: true }),
+        root: nfxRoot,
+        logger: log,
+      });
+      this.nfxRtcWire = a.nfx?.rtc ?? null;
+      await this.nfxRtc.set(this.rtcConfig());
     }
     // Slice 5d: before the providers, which free NFX play does not need. The swarm's DHT and the
     // seeder's key derivation are read when a session dials, so a worker with payment providers
     // dials from its swarm and one without dials from a node of its own (`nfx/watching.ts`).
     this.nfxWatch = new NfxWatching({
       iroh: this.nfxIrohWatch,
+      rtc: this.nfxRtc,
       swarmDht: () => this.net?.node.dht ?? null,
       bootstrap: dev?.bootstrap ?? this.o.testBootstrap ?? null,
       seederKeyPair: (name) => this.net?.seeder.blobs.store.createKeyPair(name) ?? null,
@@ -585,6 +632,9 @@ export class WorkerHost {
         store: seeder.nfx,
         logger: log,
       });
+    // #89: and to browsers over WebRTC, from the same store, while WebRTC is on.
+    if (this.nfxRtc !== null)
+      this.nfxRtcSeeding = new NfxRtcSeeding({ node: this.nfxRtc, store: seeder.nfx, logger: log });
     // Listening announces on the DHT, which can take a while: `ready` does not wait for it.
     void this.applyNfxSeeding();
     // ADR 0015: our own profile core (avatar, thumbnails) is served free while seeding.
@@ -1123,7 +1173,44 @@ export class WorkerHost {
    */
   private async applyNfxSeeding(): Promise<void> {
     const on = this.seeding.enabled && this.nfxEnabled;
-    await Promise.all([this.nfxSeeding?.set(on), this.nfxIroh?.set(on, this.nfxIrohRelays)]);
+    await Promise.all([
+      this.nfxSeeding?.set(on),
+      this.nfxIroh?.set(on, this.nfxIrohRelays),
+      // #89: to browsers as well, while WebRTC is on too.
+      this.nfxRtcSeeding?.set(on && this.rtcConfig() !== null),
+    ]);
+  }
+
+  /** #89: the WebRTC node's config: the host's STUN servers while NFX and WebRTC are on. */
+  private rtcConfig(): NfxRtcConfig | null {
+    return this.nfxEnabled && this.nfxRtcWire !== null ? { stun: this.nfxRtcWire.stun } : null;
+  }
+
+  /**
+   * #89: one signaling step on the WebRTC side (the host carries offers and answers). Only web
+   * swarms of this network; the helper's failures become IPC errors by code alone, never its
+   * text (which may quote a remote SDP).
+   */
+  private async rtcStep<T>(swarm: string | null, step: (h: IrohHelper) => Promise<T>): Promise<T> {
+    if (swarm !== null && !swarm.startsWith(`nfx/1/web/${NFX_DEFAULT_NAMESPACE}:`))
+      fail('invalid-argument', 'not a web swarm of this network');
+    const helper = this.nfxRtc?.on === true ? await this.nfxRtc.start() : null;
+    if (helper === null) fail('backend-down', 'WebRTC is off');
+    try {
+      return await step(helper);
+    } catch (err) {
+      if (!(err instanceof HelperError)) throw err;
+      switch (err.code) {
+        case 'bad-request':
+          return fail('invalid-argument', 'the WebRTC side refused it');
+        case 'busy':
+          return fail('rate-limited', 'too many WebRTC connections');
+        case 'no-peer':
+          return fail('not-found', 'no such WebRTC connection');
+        default:
+          return fail('backend-down', `the WebRTC side failed (${err.code})`);
+      }
+    }
   }
 
   /** Slice 5b: what the store holds, for the host's beacons (a `segs` past 2^53 is skipped). */
@@ -1248,6 +1335,9 @@ export class WorkerHost {
       await this.nfxSeeding?.close();
       // Slice 5e-3: the iroh helper (its stdin ends, it exits), before the store it reads.
       await this.nfxIroh?.close();
+      // #89: the WebRTC helper too (its connections close), before the store it reads.
+      await this.nfxRtcSeeding?.close();
+      await this.nfxRtc?.close();
       try {
         await this.net?.node.destroy();
       } finally {

@@ -498,3 +498,251 @@ describe('dialTarget', () => {
     expect(dialTarget(ticket({ format: 'raw' }), NODE, [])).toBeNull();
   });
 });
+
+describe('IrohHelper, WebRTC side (ADR 0023)', () => {
+  const RTC = { stun: ['stun.example:3478'], root: '/data/nfx' };
+  const REACH = { local: '192.0.2.1:5000', mapped: '198.51.100.1:6000' };
+
+  /** Answers `rtc-init`; everything else goes to `then`. */
+  function rtcSetup(
+    then: Responder = () => undefined,
+    options: Partial<IrohHelperOptions> = {},
+  ): { helper: IrohHelper; children: FakeChild[]; events: HelperEvent[] } {
+    const children: FakeChild[] = [];
+    const events: HelperEvent[] = [];
+    const helper = new IrohHelper({
+      spawn: () => {
+        const c = new FakeChild((msg, child) => {
+          if (msg['op'] === 'rtc-init') child.reply({ id: msg['id'], ok: true, ...REACH });
+          else then(msg, child);
+        });
+        children.push(c);
+        return c;
+      },
+      file: '/opt/helper',
+      stateDir: '/tmp/state',
+      init: { rtc: RTC },
+      restart: { minMs: 50, maxMs: 100 },
+      onEvent: (e) => events.push(e),
+      ...options,
+    });
+    return { helper, children, events };
+  }
+
+  it('starts with rtc-init and no iroh init, and sends it again after a restart', async () => {
+    const { helper, children, events } = rtcSetup();
+    await expect(helper.startRtc()).resolves.toEqual(REACH);
+    expect(children[0]!.requests).toEqual([
+      { op: 'rtc-init', stun: RTC.stun, root: RTC.root, id: children[0]!.requests[0]!['id'] },
+    ]);
+    expect(helper.reach).toBeNull();
+    children[0]!.exit(70, null);
+    await vi.waitFor(() => {
+      expect(helper.restarts).toBe(1);
+    });
+    expect(children[1]!.requests[0]).toMatchObject({ op: 'rtc-init', stun: RTC.stun });
+    expect(events.find((e) => e.type === 'restarted')).toMatchObject({ reach: null });
+    await helper.close();
+  });
+
+  it('passes bind and allow_private only when given, and a null mapping through', async () => {
+    const children: FakeChild[] = [];
+    const helper = new IrohHelper({
+      spawn: () => {
+        const c = new FakeChild((msg, child) => {
+          child.reply({ id: msg['id'], ok: true, local: '127.0.0.1:9', mapped: null });
+        });
+        children.push(c);
+        return c;
+      },
+      file: '/opt/helper',
+      stateDir: '/tmp/state',
+      init: { rtc: { stun: [], root: '/r', bind: '127.0.0.1:0', allowPrivate: true } },
+    });
+    await expect(helper.startRtc()).resolves.toEqual({ local: '127.0.0.1:9', mapped: null });
+    expect(children[0]!.requests[0]).toMatchObject({ bind: '127.0.0.1:0', allow_private: true });
+    await helper.close();
+  });
+
+  it('each kind starts only its own way, and a bad rtc init is refused up front', async () => {
+    const rtc = rtcSetup().helper;
+    expect(await rejection(rtc.start())).toBe('bad-request');
+    const iroh = setup().helper;
+    expect(await rejection(iroh.startRtc())).toBe('bad-request');
+    const base = {
+      spawn: (): HelperChild => new FakeChild(responder()),
+      file: '/h',
+      stateDir: '/s',
+    };
+    expect(
+      () =>
+        new IrohHelper({
+          ...base,
+          init: { rtc: { stun: ['a:1', 'b:1', 'c:1', 'd:1', 'e:1'], root: '/r' } },
+        }),
+    ).toThrow(RangeError);
+    expect(() => new IrohHelper({ ...base, init: { rtc: { stun: [], root: '' } } })).toThrow(
+      RangeError,
+    );
+  });
+
+  it('a malformed rtc-init reply kills the helper and fails the start', async () => {
+    const children: FakeChild[] = [];
+    const helper = new IrohHelper({
+      spawn: () => {
+        const c = new FakeChild((msg, child) => {
+          child.reply({ id: msg['id'], ok: true, local: 7 });
+        });
+        children.push(c);
+        return c;
+      },
+      file: '/opt/helper',
+      stateDir: '/tmp/state',
+      init: { rtc: RTC },
+    });
+    expect(await rejection(helper.startRtc())).toBe('violation');
+    // Killed for the violation, and again by the failed start's cleanup (as an iroh init).
+    expect(children[0]!.kills).toContain('SIGKILL');
+    expect(new Set(children[0]!.kills)).toEqual(new Set(['SIGKILL']));
+  });
+
+  it('serves, connects and hangs up with typed, checked replies', async () => {
+    const { helper, children } = rtcSetup((msg, child) => {
+      const id = msg['id'];
+      switch (msg['op']) {
+        case 'rtc-serve':
+          child.reply({ id, ok: true, segments: (msg['segments'] as unknown[]).length });
+          return;
+        case 'rtc-unserve':
+          child.reply({ id, ok: true, removed: true });
+          return;
+        case 'rtc-offer':
+        case 'rtc-answer':
+          child.reply({ id, ok: true, peer: 4, sdp: 'v=0\r\n', candidates: 1 });
+          return;
+        case 'rtc-accept':
+          child.reply({ id, ok: true, candidates: 1 });
+          return;
+        case 'rtc-have':
+          child.reply({
+            id,
+            ok: true,
+            ranges: [
+              [0, 2],
+              [5, 5],
+            ],
+            more: false,
+          });
+          return;
+        case 'rtc-hangup':
+          child.reply({ id, ok: true, closed: true });
+          return;
+        case 'rtc-status':
+          child.reply({
+            id,
+            ok: true,
+            peers: [{ peer: 4, swarm: 'nfx/1/web/x:y/r', dir: 'out', open: true }],
+          });
+          return;
+        default:
+          child.reply({ id, ok: false, err: 'bad-request', msg: 'unknown' });
+      }
+    });
+    await helper.startRtc();
+    const seg = { id: 3, path: '/data/nfx/files/ab/abcd', size: 10 };
+    await expect(helper.rtcServe('nfx/1/web/x:y/r', [seg], true)).resolves.toBe(1);
+    expect(children[0]!.requests.at(-1)).toMatchObject({
+      op: 'rtc-serve',
+      segments: [seg],
+      append: true,
+    });
+    await expect(helper.rtcUnserve('nfx/1/web/x:y/r')).resolves.toBe(true);
+    await expect(helper.rtcOffer('nfx/1/web/x:y/r')).resolves.toEqual({ peer: 4, sdp: 'v=0\r\n' });
+    await expect(helper.rtcAnswer('nfx/1/web/x:y/r', 'v=0')).resolves.toEqual({
+      peer: 4,
+      sdp: 'v=0\r\n',
+    });
+    await expect(helper.rtcAccept(4, 'v=0')).resolves.toBeUndefined();
+    await expect(helper.rtcHave(4)).resolves.toEqual({
+      ranges: [
+        [0, 2],
+        [5, 5],
+      ],
+      more: false,
+    });
+    await expect(helper.rtcHangup(4)).resolves.toBe(true);
+    await expect(helper.rtcStatus()).resolves.toEqual([
+      { peer: 4, swarm: 'nfx/1/web/x:y/r', dir: 'out', open: true },
+    ]);
+    await helper.close();
+  });
+
+  it('rtcGetFile returns a segment only under its sha256, and passes absent through', async () => {
+    let body = new Uint8Array([7, 8, 9]);
+    const { helper, children } = rtcSetup((msg, child) => {
+      if (msg['segment'] === 99) {
+        child.reply({ id: msg['id'], ok: false, err: 'absent', msg: 'the peer does not hold it' });
+        return;
+      }
+      child.send(encodeData(msg['id'] as number, body));
+      child.reply({ id: msg['id'], ok: true, size: body.length });
+    });
+    await helper.startRtc();
+    await expect(helper.rtcGetFile(4, 0, { sha256: sha(body), maxBytes: 3 })).resolves.toEqual(
+      body,
+    );
+    expect(children[0]!.requests.at(-1)).toMatchObject({
+      op: 'rtc-get',
+      peer: 4,
+      segment: 0,
+      max: 3,
+    });
+    expect(await rejection(helper.rtcGetFile(4, 0, { sha256: 'ee'.repeat(32), maxBytes: 3 }))).toBe(
+      'poisoned',
+    );
+    expect(children[0]!.kills).toEqual([]);
+    expect(await rejection(helper.rtcGetFile(4, 99, { sha256: sha(body), maxBytes: 3 }))).toBe(
+      'absent',
+    );
+    expect(await rejection(helper.rtcGetFile(4, 0, { sha256: 'x', maxBytes: 3 }))).toBe(
+      'bad-request',
+    );
+    // More bytes than asked for: the helper broke the protocol.
+    body = new Uint8Array(5);
+    expect(await rejection(helper.rtcGetFile(4, 0, { sha256: sha(body), maxBytes: 3 }))).toBe(
+      'violation',
+    );
+    expect(children[0]!.kills).toEqual(['SIGKILL']);
+    await helper.close();
+  });
+
+  it('parses events, caps the wait, and kills a helper whose event is malformed', async () => {
+    let events: unknown[] = [
+      { t: 'open', peer: 1, swarm: 'nfx/1/web/x:y/r', dir: 'in' },
+      { t: 'have', peer: 1, ranges: [[0, 4]], more: false },
+      { t: 'closed', peer: 1, why: 'idle' },
+    ];
+    const { helper, children } = rtcSetup((msg, child) => {
+      child.reply({ id: msg['id'], ok: true, events, lost: false });
+    });
+    await helper.startRtc();
+    await expect(helper.rtcPoll(90_000)).resolves.toEqual({ events, lost: false });
+    expect(children[0]!.requests.at(-1)).toMatchObject({ op: 'rtc-poll', wait_ms: 30_000 });
+    for (const bad of [
+      [{ t: 'open', peer: 1, swarm: 'has space', dir: 'in' }],
+      [{ t: 'have', peer: 1, ranges: [[4, 0]] }],
+      [{ t: 'warp', peer: 1 }],
+      [{ t: 'closed', peer: -1, why: 'x' }],
+      new Array(257).fill({ t: 'closed', peer: 1, why: 'x' }),
+    ]) {
+      events = bad;
+      const before = children.length;
+      expect(await rejection(helper.rtcPoll(0))).toBe('violation');
+      expect(children[before - 1]!.kills).toEqual(['SIGKILL']);
+      await vi.waitFor(() => {
+        expect(helper.running).toBe(true);
+      });
+    }
+    await helper.close();
+  });
+});

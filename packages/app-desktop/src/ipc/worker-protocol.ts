@@ -113,6 +113,26 @@ export interface NfxConfigureArgs {
   readonly enabled: boolean;
   /** The only relays the iroh helper uses and beacons name (NFX-06 §1); at most 4, unique. */
   readonly irohRelays: readonly IrohRelayUrl[];
+  /**
+   * #89 (ADR 0023): WebRTC with browsers, on with these STUN servers; absent or `null`: off. Its
+   * connections come from the host's signaling (`nfx.rtc.*`), never from the worker itself.
+   */
+  readonly rtc?: NfxRtcConfigWire | null;
+}
+
+/** #89: the WebRTC side, as the host turns it on. */
+export interface NfxRtcConfigWire {
+  /** STUN servers, `host:port`, 1 to 4: the network's own first (NFX-10 §1). */
+  readonly stun: readonly string[];
+}
+
+/** #89: the largest SDP that crosses to the worker (the helper's own cap). */
+export const MAX_NFX_SDP = 16 * 1024;
+
+/** #89: a new WebRTC connection, and the SDP to send to the other side. */
+export interface NfxRtcSdpWire {
+  readonly peer: number;
+  readonly sdp: string;
 }
 
 /** Slice 5b: an NFX-12 endpoint as a beacon carries it (NFX-03 §4, NFX-12 §2). */
@@ -320,6 +340,19 @@ export interface WorkerMethodTable {
   ];
   /** Slice 5d: closes the session (its link 404s, its fetches stop, its spool goes). Idempotent. */
   'nfx.play.close': [args: { readonly sid: SessionId }, result: undefined];
+  /**
+   * #89 (ADR 0023): the host's signaling hands the worker's WebRTC side a remote offer for an
+   * NFX-10 web swarm (`nfx/1/web/<video>/<rendition>`) of this network; the answer goes back the
+   * same way. Fails `unavailable` while WebRTC is off.
+   */
+  'nfx.rtc.answer': [
+    args: { readonly swarm: string; readonly offer: string },
+    result: NfxRtcSdpWire,
+  ];
+  /** #89: an offer to a peer in `swarm`, completed by `nfx.rtc.accept` with its answer. */
+  'nfx.rtc.offer': [args: { readonly swarm: string }, result: NfxRtcSdpWire];
+  'nfx.rtc.accept': [args: { readonly peer: number; readonly answer: string }, result: undefined];
+  'nfx.rtc.hangup': [args: { readonly peer: number }, result: undefined];
   /** Probes the binary (`path` = the configured one, when set). */
   'studio.ffmpeg': [
     args: { readonly recheck: boolean; readonly path?: string },
