@@ -10,6 +10,7 @@
     { "path": "packages/app-web/site" },
     { "path": "packages/app-web/scripts" },
     { "path": "packages/app-web/e2e" },
+    { "path": "crates/iroh-helper/e2e" },
     { "path": "tsconfig.scripts.json" }
   ]
 }
