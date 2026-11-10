@@ -15,7 +15,7 @@ publish = false
 [dependencies]
 # The series NFX-11 §4 pins, at the versions nfx's own lock builds (nfx main 29019d2).
 iroh = "1.2.0"
-iroh-blobs = "0.103.1"
+iroh-blobs = "0.104.0"
 hex = "0.4.3"
 # Already in iroh's tree; named here for `CertificateDer` (a relay CA given in `init`).
 rustls-pki-types = "1.15.1"
