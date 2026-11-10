@@ -167,6 +167,41 @@ describe('IPC gate — SE-1 file tokens', () => {
     );
   });
 
+  it('contracts v16: studio.probe swaps its own token, once, and asks nothing', async () => {
+    const h = createHarness();
+    const seen: unknown[] = [];
+    const gate = h.gate as unknown as {
+      deps: { moneyGate: { confirm: (r: unknown) => Promise<boolean> } };
+    };
+    gate.deps.moneyGate.confirm = (r) => {
+      seen.push(r);
+      return Promise.resolve(false);
+    };
+    h.files.set('/home/u/Videos/clip.mp4', fileStat('file', 1234));
+    const g = await h.gate.grant(h.ev(), { v: 1, path: '/home/u/Videos/clip.mp4' });
+    const token = g.ok ? (g.result as string) : '';
+    const r = await h.gate.call(h.ev(), callMsg('studio.probe', [token]));
+    expect(r.ok).toBe(true);
+    expect(h.host.lastProbe).toEqual({
+      path: '/home/u/Videos/clip.mp4',
+      name: 'clip.mp4',
+      size: 1234,
+    });
+    // Nothing is published, so nothing is asked.
+    expect(seen).toEqual([]);
+    // Single use: the upload needs a token of its own.
+    expectError(await h.gate.call(h.ev(), callMsg('studio.probe', [token])), 'file-token-invalid');
+    expectError(
+      await h.gate.call(h.ev(), callMsg('studio.upload', uploadArgs(token))),
+      'file-token-invalid',
+    );
+    // A raw path is never a probe's file.
+    expectError(
+      await h.gate.call(h.ev(), callMsg('studio.probe', ['/home/u/Videos/clip.mp4'])),
+      'invalid-argument',
+    );
+  });
+
   it('a token from another webContents is refused (and burnt)', async () => {
     const h = createHarness();
     h.files.set('/home/u/a.mp4', fileStat('file'));

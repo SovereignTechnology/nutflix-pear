@@ -39,20 +39,26 @@ import {
   TYPICAL_RENDITIONS,
   describeStudioError,
   formatBytes,
+  ladderShortcut,
   looksLikeImage,
   looksLikeVideo,
   normalizeMintUrl,
   nfxEligible,
+  offeredSizes,
   parsePrice,
   parseSplit,
   parseTags,
   renditionKbps,
+  sameSizes,
   satsPerGigabyte,
   satsPerMinute,
+  sizeBytes,
+  sizeLabel,
   splitPayment,
   uploadSteps,
   validateDraft,
   type DraftErrors,
+  type SourceState,
   type StudioDraft,
   type StudioFile,
   type StudioFileSource,
@@ -68,6 +74,8 @@ export interface UploadPanelProps {
   readonly draft: StudioDraft;
   readonly onDraft: (patch: Partial<StudioDraft>) => void;
   readonly onChooseFile: (file: StudioFile) => void;
+  /** Contracts v16 (pear #97): the chosen file's sizes, as the shell read them. */
+  readonly source: SourceState;
   /** Mints offered as chips: `Settings.defaultMints` ∪ wallet mints ∪ added ones. */
   readonly knownMints: readonly MintUrl[];
   readonly onAddMint: (mint: MintUrl) => void;
@@ -444,6 +452,16 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
           </div>
         </fieldset>
 
+        <SizesField
+          id={id}
+          source={props.source}
+          sizes={draft.sizes}
+          errors={errors}
+          onChange={(sizes) => {
+            onDraft({ sizes });
+          }}
+        />
+
         <fieldset className="nf-studio__fieldset">
           <legend className="nf-studio__legend">Price</legend>
           <div className="nf-studio__field" role="group" aria-labelledby={`${id}-mints`}>
@@ -751,6 +769,112 @@ function DetailsForm(props: UploadPanelProps): ReactElement {
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Pear #97 (the maintainer, 2026-11-09): the sizes viewers can stream. One size is the default
+ * while the network is small; the creator may pick any sizes the file can make, up to 2160p.
+ */
+function SizesField({
+  id,
+  source,
+  sizes,
+  errors,
+  onChange,
+}: {
+  readonly id: string;
+  readonly source: SourceState;
+  readonly sizes: readonly number[] | undefined;
+  readonly errors: DraftErrors;
+  readonly onChange: (sizes: readonly number[]) => void;
+}): ReactElement {
+  const offered = offeredSizes(source);
+  const chosen = new Set(sizes ?? []);
+  const duration = source.status === 'ready' ? source.source.durationSec : undefined;
+  const shortcut = ladderShortcut(source);
+  const toggle = (h: number): void => {
+    const next = chosen.has(h) ? [...chosen].filter((x) => x !== h) : [...chosen, h];
+    onChange(next.sort((a, b) => b - a));
+  };
+  const total = offered
+    .filter((o) => chosen.has(o.height))
+    .reduce((n, o) => n + (duration === undefined ? 0 : sizeBytes(o.kbps, duration)), 0);
+  const hintIds = [`${id}-sizes-hint`, errors.sizes ? `${id}-sizes-error` : '']
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <fieldset className="nf-studio__fieldset">
+      <legend className="nf-studio__legend">Sizes</legend>
+      <div
+        className="nf-studio__field"
+        role="group"
+        aria-labelledby={`${id}-sizes`}
+        aria-describedby={hintIds}
+        aria-busy={source.status === 'probing' || source.status === 'none'}
+      >
+        <span id={`${id}-sizes`} className="nf-studio__label">
+          Sizes viewers can stream
+        </span>
+        {source.status === 'probing' || source.status === 'none' ? (
+          <p className="nf-studio__hint" role="status">
+            Reading your file’s size…
+          </p>
+        ) : source.status === 'unknown' ? (
+          <p className="nf-studio__hint" role="status">
+            Studio could not read this file’s size, so it makes one size: 720p, or the file’s own
+            size when it is smaller.
+          </p>
+        ) : (
+          <>
+            <div className="nf-studio__choices">
+              {offered.map((o) => (
+                <label key={o.height} className="nf-studio__choice">
+                  <input
+                    type="checkbox"
+                    name="sizes"
+                    value={String(o.height)}
+                    checked={chosen.has(o.height)}
+                    onChange={() => {
+                      toggle(o.height);
+                    }}
+                    {...(errors.sizes ? { 'aria-invalid': true as const } : {})}
+                  />
+                  <span>
+                    <span className="nf-studio__choice-title">{sizeLabel(o)}</span>
+                    <span className="nf-studio__choice-text">
+                      {duration === undefined
+                        ? `${(o.kbps / 1000).toFixed(1)} Mbit/s`
+                        : `About ${formatBytes(sizeBytes(o.kbps, duration))} for this video`}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {shortcut.length > 1 && !sameSizes(shortcut, sizes) ? (
+              <div className="nf-studio__inline">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    onChange(shortcut);
+                  }}
+                >
+                  {shortcut.map((h) => `${String(h)}p`).join(' + ')}
+                </Button>
+              </div>
+            ) : null}
+          </>
+        )}
+        <p id={`${id}-sizes-hint`} className="nf-studio__hint">
+          Each size is a full copy of the video: every extra size adds storage for you and for every
+          seeder who keeps it. While the network is small, one size is the default, so seeders keep
+          less and viewers share one swarm.
+          {total > 0 && chosen.size > 1 ? ` Together: about ${formatBytes(total)}.` : ''}
+        </p>
+        <FieldError id={id} field="sizes" errors={errors} />
+      </div>
+    </fieldset>
   );
 }
 

@@ -161,6 +161,8 @@ export function adapterFromBridge(b: NutflixBridge): NetworkAdapter {
     image: (url, sha) => settle(sha === undefined ? b.image(url) : b.image(url, sha)),
     wallet,
     studio: {
+      // Contracts v16: the DOM File goes to the preload as it is (SE-1), as for `upload`.
+      probe: (file) => settle(b.studio.probe(file as unknown as File)),
       // The DOM File (and thumbnail Blob) go to the preload as they are (SE-1).
       upload: (input: UploadInput, onProgress) =>
         settle(

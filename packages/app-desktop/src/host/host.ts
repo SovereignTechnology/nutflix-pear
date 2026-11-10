@@ -264,12 +264,12 @@ export class Host {
       });
       return;
     }
-    if (file !== undefined && msg.method !== 'studio.upload') {
+    if (file !== undefined && msg.method !== 'studio.upload' && msg.method !== 'studio.probe') {
       reply({
         v: IPC_V,
         id: msg.id,
         ok: false,
-        error: wireError('invalid-argument', 'a file may only accompany studio.upload'),
+        error: wireError('invalid-argument', 'a file may only accompany studio.upload or probe'),
       });
       return;
     }

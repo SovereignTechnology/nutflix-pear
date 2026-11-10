@@ -265,6 +265,18 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
         return Promise.reject(
           new Error('not-found: the fake worker needs a studio.upload handler'),
         );
+      // Contracts v16: a 1080p source, unless a test sets a handler.
+      case 'studio.probe':
+        return Promise.resolve({
+          height: 1080,
+          sizes: [
+            { height: 1080, original: false, kbps: 5128 },
+            { height: 720, original: false, kbps: 2628 },
+            { height: 480, original: false, kbps: 1328 },
+            { height: 360, original: false, kbps: 896 },
+          ],
+          durationSec: 10,
+        });
       case 'image.fetch':
         return Promise.reject(new Error('not-found: the fake worker needs an image.fetch handler'));
       case 'profile.putImage':

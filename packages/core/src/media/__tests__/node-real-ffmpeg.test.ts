@@ -172,7 +172,9 @@ describe.skipIf(!ffmpegAvailable)('real ffmpeg end-to-end', () => {
   it('transcodes the ladder: faststart verified by box order, sha256, dims, aligned keyframes, thumbs, placeholder, storyboard', async () => {
     const p = createNodeMediaPipeline({ binaries: bins!, tmpDir: base, preset: 'ultrafast' });
     const probe = await p.probe(input);
-    const plan = p.plan(probe);
+    // Pear #97: one 720p rendition by default; the old ladder is still `'all'`.
+    expect(p.plan(probe).renditions.map((r) => r.label)).toEqual(['720p']);
+    const plan = p.plan(probe, { sizes: 'all' });
     expect(plan.renditions.map((r) => r.label)).toEqual(['720p', '360p']);
     const progress: TranscodeProgress[] = [];
     const out = await p.transcode(input, plan, (e) => progress.push(e));

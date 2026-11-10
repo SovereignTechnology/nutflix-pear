@@ -424,6 +424,7 @@ export class WebNetworkAdapter implements NetworkAdapter {
   };
 
   readonly studio: NetworkAdapter['studio'] = {
+    probe: () => unsupported('uploading'),
     upload: () => unsupported('uploading'),
     myVideos: () => unsupported('Studio'),
     analytics: () => unsupported('Studio'),

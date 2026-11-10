@@ -337,6 +337,151 @@ describe('Studio — details form', () => {
   });
 });
 
+/** The size checkboxes: `[label, checked]`, in the order shown. */
+function sizeChoices(r: Rendered): [string, boolean][] {
+  return r
+    .all('input[name="sizes"]')
+    .map((el) => [
+      el.closest('label')?.querySelector('.nf-studio__choice-title')?.textContent ?? '',
+      (el as HTMLInputElement).checked,
+    ]);
+}
+
+describe('Studio — sizes (pear #97)', () => {
+  it("offers only sizes at or below the file, 720p pre-selected (or the file's own)", async () => {
+    const cases: [number, [string, boolean][]][] = [
+      [
+        1080,
+        [
+          ['1080p', false],
+          ['720p', true],
+          ['480p', false],
+          ['360p', false],
+        ],
+      ],
+      [
+        720,
+        [
+          ['720p', true],
+          ['480p', false],
+          ['360p', false],
+        ],
+      ],
+      [
+        480,
+        [
+          ['480p', true],
+          ['360p', false],
+        ],
+      ],
+      [360, [['360p', true]]],
+      [
+        576,
+        [
+          ['480p', false],
+          ['360p', false],
+          ['Original (576p)', true],
+        ],
+      ],
+    ];
+    for (const [height, want] of cases) {
+      const a = adapterWith({ sourceHeight: height });
+      const probe = vi.spyOn(a.studio, 'probe');
+      const { r } = await withForm(a);
+      expect(probe).toHaveBeenCalledWith(FILE.source);
+      expect(sizeChoices(r), String(height)).toEqual(want);
+      expect(r.container.textContent).toContain(
+        'every extra size adds storage for you and for every',
+      );
+    }
+  });
+
+  it('a 4K file offers 2160p; picking sizes sends them tallest first and remembers them', async () => {
+    const a = adapterWith({ sourceHeight: 2160 });
+    const upload = vi.spyOn(a.studio, 'upload');
+    const save = vi.spyOn(a, 'updateSettings');
+    const { r } = await withForm(a);
+    expect(sizeChoices(r).map(([l]) => l)).toEqual([
+      '2160p',
+      '1440p',
+      '1080p',
+      '720p',
+      '480p',
+      '360p',
+    ]);
+    click(r.get('input[name="sizes"][value="360"]'));
+    click(r.get('input[name="sizes"][value="2160"]'));
+    click(r.get('input[name="sizes"][value="720"]'));
+    expect(
+      sizeChoices(r)
+        .filter(([, on]) => on)
+        .map(([l]) => l),
+    ).toEqual(['2160p', '360p']);
+    // The estimate names this video's storage, per size and together.
+    expect(r.container.textContent).toContain('About');
+    expect(r.container.textContent).toContain('Together: about');
+    click(r.get('button[type="submit"]'));
+    await flush();
+    expect(upload.mock.calls[0]?.[0]).toMatchObject({ sizes: [2160, 360] });
+    expect(save).toHaveBeenCalledWith({ publishSizes: [2160, 360] });
+    expect((await a.settings()).publishSizes).toEqual([2160, 360]);
+  });
+
+  it('the remembered sizes are pre-selected, mapped onto what a smaller file offers', async () => {
+    const a = adapterWith({ sourceHeight: 576 });
+    await a.updateSettings({ publishSizes: [1080, 360] });
+    const upload = vi.spyOn(a.studio, 'upload');
+    const save = vi.spyOn(a, 'updateSettings');
+    const { r } = await withForm(a);
+    expect(sizeChoices(r)).toEqual([
+      ['480p', false],
+      ['360p', true],
+      ['Original (576p)', true],
+    ]);
+    click(r.get('button[type="submit"]'));
+    await flush();
+    expect(upload.mock.calls[0]?.[0]).toMatchObject({ sizes: [576, 360] });
+    // Not picked by hand this time: the remembered default stays as it was.
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('the 1080p + 720p + 360p shortcut picks the old ladder', async () => {
+    const a = adapterWith();
+    const { r } = await withForm(a);
+    click(button(r, '1080p + 720p + 360p'));
+    expect(
+      sizeChoices(r)
+        .filter(([, on]) => on)
+        .map(([l]) => l),
+    ).toEqual(['1080p', '720p', '360p']);
+    expect(hasButton(r, '1080p + 720p + 360p')).toBe(false);
+  });
+
+  it('a file the shell cannot read offers no choice and names no size (the default)', async () => {
+    const a = adapterWith({ sourceHeight: null });
+    await a.updateSettings({ publishSizes: [1080] });
+    const upload = vi.spyOn(a.studio, 'upload');
+    const { r } = await withForm(a);
+    expect(sizeChoices(r)).toEqual([]);
+    expect(r.container.textContent).toContain('could not read this file’s size');
+    click(r.get('button[type="submit"]'));
+    await flush();
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[0]).not.toHaveProperty('sizes');
+  });
+
+  it('unticking every size is refused', async () => {
+    const a = adapterWith();
+    const upload = vi.spyOn(a.studio, 'upload');
+    const { r } = await withForm(a);
+    click(r.get('input[name="sizes"][value="720"]'));
+    click(r.get('button[type="submit"]'));
+    await flush();
+    expect(upload).not.toHaveBeenCalled();
+    expect(r.container.textContent).toContain('Pick at least one size.');
+  });
+});
+
 describe('Studio — publishing', () => {
   it('sends exactly the form to studio.upload and lands on Published', async () => {
     const a = adapterWith();
@@ -361,6 +506,8 @@ describe('Studio — publishing', () => {
       mints: [MINTS.a],
       satsPerBlock: 3,
       split: { seeder: 40, creator: 60 },
+      // Pear #97: one size by default, 720p for the mock's 1080p file.
+      sizes: [720],
     });
     // v6: media on Pear only — no mirror field, no mirror list.
     expect(r.all('textarea[name="mirrors"]')).toHaveLength(0);

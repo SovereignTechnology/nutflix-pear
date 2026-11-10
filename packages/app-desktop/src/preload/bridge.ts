@@ -16,7 +16,7 @@
  * Nothing else: no `ipcRenderer`, no generic `invoke`, no Node. Errors are `IpcError`s whose
  * message starts with `"<code>: "` (all `contextBridge` keeps); the renderer rebuilds `.code`.
  */
-import type { NfxAddress, NostrEventId } from '@sovit/core';
+import type { NfxAddress, NostrEventId, SourceSizes } from '@sovit/core';
 import type {
   ExcludedMethod,
   ImageMime,
@@ -189,15 +189,8 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
     return { bytes: new Uint8Array(await choice.arrayBuffer()), type: choice.type as ImageMime };
   }
 
-  async function upload(
-    input: BridgeUploadInput,
-    onProgress: Parameters<NutflixBridge['studio']['upload']>[1],
-  ): ReturnType<NutflixBridge['studio']['upload']> {
-    if (typeof input !== 'object' || (input as unknown) === null) {
-      return reject('invalid-argument', 'upload needs an input');
-    }
-    const file: unknown = input.file;
-    // SE-1: the renderer never names a file by path.
+  /** The file's path for a token, or a rejection (SE-1: never a path from the page). */
+  function pathOrReject(file: unknown): string | Promise<never> {
     if (typeof file === 'string') {
       return reject('file-token-invalid', 'files are chosen with the file picker, never by path');
     }
@@ -208,6 +201,27 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
     const path = pathOf(deps, file);
     if (path === '')
       return reject('unsupported-input', 'that file has no location on this computer');
+    return path;
+  }
+
+  /** Contracts v16: ffprobe a file the user chose, through a token of its own (single use). */
+  async function probe(file: File): Promise<SourceSizes> {
+    const path = pathOrReject(file);
+    if (typeof path !== 'string') return path;
+    const token = await t.grantFile(path);
+    return t.call('studio.probe', [token]);
+  }
+
+  async function upload(
+    input: BridgeUploadInput,
+    onProgress: Parameters<NutflixBridge['studio']['upload']>[1],
+  ): ReturnType<NutflixBridge['studio']['upload']> {
+    if (typeof input !== 'object' || (input as unknown) === null) {
+      return reject('invalid-argument', 'upload needs an input');
+    }
+    // SE-1: the renderer never names a file by path.
+    const path = pathOrReject(input.file);
+    if (typeof path !== 'string') return path;
     // Thumbnail first: a refused thumbnail must not leave a granted token behind.
     const thumb = await thumbnailOf(input.thumbnailChoice);
     const token = await t.grantFile(path);
@@ -224,6 +238,8 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
       split: input.split,
       // Contracts v8 (free videos only; the host and the worker refuse it on a priced one).
       ...(input.nfx === true ? { nfx: true } : {}),
+      // Contracts v16: the rendition heights (the guards check them).
+      ...(input.sizes === undefined ? {} : { sizes: input.sizes }),
       ...(thumb === undefined ? {} : { thumbnailChoice: thumb }),
     };
     const unsubscribe = await t.subscribeAcked({ t: 'upload.progress', uploadId }, (p) => {
@@ -293,6 +309,7 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
       keyset: forbidden('wallet.keyset'),
     },
     studio: {
+      probe,
       upload,
       myVideos: call('studio.myVideos'),
       analytics: call('studio.analytics'),

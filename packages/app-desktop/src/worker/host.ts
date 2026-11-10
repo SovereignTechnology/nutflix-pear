@@ -29,6 +29,7 @@ import type {
   PricePolicy,
   Sats,
   Sha256Hex,
+  SourceSizes,
   UploadProgress,
   VideoManifest,
 } from '@sovit/core';
@@ -359,6 +360,8 @@ export class WorkerHost {
         return this.probe(req.a.recheck, req.a.path);
       case 'studio.upload':
         return this.upload(req.a);
+      case 'studio.probe':
+        return this.probeSource(req.a.path);
       case 'image.fetch':
         return this.imageFetch(req.a);
       case 'profile.putImage':
@@ -1160,6 +1163,26 @@ export class WorkerHost {
     this.ffmpegStatus = { key, status: r.status };
     if (r.paths !== null) this.ffmpeg = r.paths;
     return r.status;
+  }
+
+  /**
+   * Contracts v16 (pear #97): the sizes the file at `path` may be published in. ffprobe reads it
+   * (the same probe the upload starts with); nothing is written or kept.
+   */
+  private async probeSource(path: string): Promise<SourceSizes> {
+    const live = this.live;
+    if (live === null) fail('backend-down', 'worker is not initialised');
+    if (this.ffmpeg === null) await this.probe(false);
+    const binaries = this.ffmpeg;
+    if (binaries === null)
+      throw new media.MediaError('ffmpeg-not-found', 'ffmpeg/ffprobe not found on this computer');
+    const pipeline = media.createMediaPipeline({
+      runner: this.o.runtime.runner,
+      fs: this.o.runtime.mediaFs(live.tmpDir),
+      sha256: sodiumSha256,
+      binaries,
+    });
+    return media.sourceSizes(await pipeline.probe(path));
   }
 
   private async upload(a: StudioUploadArgs): Promise<VideoManifest> {

@@ -8,8 +8,9 @@
  *      allowlist = `MethodTable`, per-method argument guards, `LIMITS`);
  *   3. the per-webContents CAPS — `LIMITS.inflightPerWc` calls in flight, `LIMITS.subsPerWc`
  *      live subscriptions, a small grant concurrency cap (`rate-limited` beyond);
- *   4. SE-1 — `studio.upload`'s `FileToken` is swapped for `{ path, name, size }` (single use,
- *      same webContents, unexpired) or the call is answered `file-token-invalid`;
+ *   4. SE-1 — `studio.upload`'s `FileToken` (and, contracts v16, `studio.probe`'s) is swapped
+ *      for `{ path, name, size }` (single use, same webContents, unexpired) or the call is
+ *      answered `file-token-invalid`;
  *   5. the confirm gate (`money-gate.ts`, a native dialog in main) — `wallet.melt`,
  *      `seeder.melt`, `nutzap`; an `updateSettings` patch that adds trusted mints or turns an
  *      auto top-up on; `studio.upload`, naming the file the token resolved to (security
@@ -294,8 +295,10 @@ export class IpcGate {
 
   private async relay(st: WcState, msg: AnyCallMsg): Promise<void> {
     let file: { path: string; name: string; size: number } | undefined;
-    if (msg.method === 'studio.upload') {
-      file = this.deps.tokens.consume(st.wc.id, msg.args[0].file);
+    // Contracts v16: `studio.probe` names its file by a token too (its own, single use).
+    if (msg.method === 'studio.upload' || msg.method === 'studio.probe') {
+      const token = msg.method === 'studio.upload' ? msg.args[0].file : msg.args[0];
+      file = this.deps.tokens.consume(st.wc.id, token);
       if (file === undefined) {
         this.log('warn', 'gate.refused', { code: 'file-token-invalid' });
         this.settle(
@@ -307,7 +310,8 @@ export class IpcGate {
       }
     }
     let question: ConfirmRequest | undefined;
-    if (file !== undefined)
+    // A probe only reads the file (ffprobe); publishing it is what is asked about (F7).
+    if (file !== undefined && msg.method === 'studio.upload')
       question = {
         wc: st.wc.id,
         method: 'studio.upload',

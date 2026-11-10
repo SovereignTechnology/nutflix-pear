@@ -9,8 +9,10 @@ import type {
   DEFAULT_BLOCK_SIZE,
   FileLike,
   MintUrl,
+  OfferedSize,
   Rendition,
   Sats,
+  SourceSizes,
   UploadInput,
   UploadProgress,
   VideoManifest,
@@ -22,16 +24,98 @@ import type {
 export const BLOCK_SIZE: typeof DEFAULT_BLOCK_SIZE = 65_536;
 
 /**
- * The standard encode targets (video + audio kbps) of core's rendition ladder
- * (`media.LADDER_TIERS`, H.264). Used ONLY for the pre-upload "typical cost to watch"
- * estimate: the real renditions are not known until the file is probed and transcoded (the
- * ladder never upscales, so a 720p source has no 1080p). A test keeps this in sync with core.
+ * The standard encode targets (video + audio kbps) of the old ladder's sizes (core's
+ * `media.ALL_SIZES_PRESET` at `media.LADDER_TIERS`' rates, H.264). Used ONLY for the pre-upload
+ * "typical cost to watch" estimate: the real renditions are not known until the file is
+ * transcoded. A test keeps this in sync with core.
  */
 export const TYPICAL_RENDITIONS: readonly { readonly label: string; readonly kbps: number }[] = [
   { label: '1080p', kbps: 5128 },
   { label: '720p', kbps: 2628 },
   { label: '360p', kbps: 896 },
 ];
+
+// ---- sizes (pear #97) ----------------------------------------------------------------------
+
+/** The default size (pear #97): one rendition, 720p, or the file's own height when shorter. */
+export const DEFAULT_SIZE = 720;
+
+/** The one-click shortcut for the old ladder (core's `media.ALL_SIZES_PRESET`). */
+export const LADDER_SHORTCUT: readonly number[] = [1080, 720, 360];
+
+/** What Studio knows of the chosen file's sizes. */
+export type SourceState =
+  | { readonly status: 'none' }
+  | { readonly status: 'probing' }
+  | { readonly status: 'ready'; readonly source: SourceSizes }
+  /**
+   * The shell could not read it: nothing is offered and the upload names no size, so the
+   * pipeline makes its default (720p, or the file's own size when smaller). A size the file
+   * does not offer would fail the upload.
+   */
+  | { readonly status: 'unknown' };
+
+/** The sizes offered for the chosen file, tallest first (its original, if any, last). */
+export function offeredSizes(state: SourceState): readonly OfferedSize[] {
+  return state.status === 'ready' ? state.source.sizes : [];
+}
+
+/** `720p`, or `Original (576p)` for the file's own height. */
+export function sizeLabel(size: Pick<OfferedSize, 'height' | 'original'>): string {
+  const p = `${String(size.height)}p`;
+  return size.original ? `Original (${p})` : p;
+}
+
+/**
+ * The sizes pre-selected for a file, tallest first: the creator's remembered choice
+ * (`Settings.publishSizes`), each size this file does not offer replaced by the tallest offered
+ * size at or below it (the shortest offered one when none is); with nothing remembered, 720p, or
+ * the file's own size when it is smaller. Core's `media.chooseSizes` applies the same rule.
+ * `undefined` for a file whose sizes are not known: the upload then names none.
+ */
+export function initialSizes(
+  state: SourceState,
+  remembered: readonly number[] | undefined,
+): readonly number[] | undefined {
+  if (state.status !== 'ready') return undefined;
+  const offered = offeredSizes(state).map((o) => o.height);
+  if (remembered === undefined || remembered.length === 0) {
+    const h = state.source.height;
+    return [h >= DEFAULT_SIZE ? DEFAULT_SIZE : h];
+  }
+  const out = new Set<number>();
+  for (const r of remembered) {
+    if (offered.includes(r)) {
+      out.add(r);
+      continue;
+    }
+    const below = offered.filter((o) => o <= r);
+    out.add(below.length > 0 ? Math.max(...below) : Math.min(...offered));
+  }
+  return [...out].sort((a, b) => b - a);
+}
+
+/** The offered heights of `LADDER_SHORTCUT` for this file (the old ladder, capped at it). */
+export function ladderShortcut(state: SourceState): readonly number[] {
+  const offered = offeredSizes(state).map((o) => o.height);
+  return LADDER_SHORTCUT.filter((h) => offered.includes(h));
+}
+
+/** About how many bytes `kbps` takes for `durationSec` (kbps × 125 bytes a second). */
+export function sizeBytes(kbps: number, durationSec: number): number {
+  return Math.max(0, kbps) * 125 * Math.max(0, durationSec);
+}
+
+/** Two size lists hold the same heights (order aside). */
+export function sameSizes(
+  a: readonly number[] | undefined,
+  b: readonly number[] | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (b.length !== a.length) return false;
+  const set = new Set(b);
+  return a.every((h) => set.has(h));
+}
 
 export const TITLE_MAX = 100;
 export const DESCRIPTION_MAX = 5000;
@@ -210,6 +294,11 @@ export interface StudioDraft {
   readonly seeder: string;
   readonly creator: string;
   readonly thumbnail: ThumbnailDraft;
+  /**
+   * Contracts v16 (pear #97): the rendition heights to make, tallest first. `undefined` until
+   * Studio picked the defaults for the chosen file (then the upload sends none: one, 720p).
+   */
+  readonly sizes?: readonly number[] | undefined;
 }
 
 /** Slice 5d-4: what Studio knows of the NFX network while drafting. */
@@ -237,7 +326,7 @@ export const EMPTY_DRAFT: StudioDraft = {
 };
 
 export type DraftField =
-  'file' | 'title' | 'description' | 'tags' | 'mints' | 'price' | 'split' | 'thumbnail';
+  'file' | 'title' | 'description' | 'tags' | 'mints' | 'price' | 'split' | 'thumbnail' | 'sizes';
 
 export type DraftErrors = Partial<Record<DraftField, string>>;
 
@@ -291,6 +380,7 @@ export function validateDraft(d: StudioDraft, ctx: DraftContext = NFX_OFF): Draf
   if (d.thumbnail.mode === 'custom' && d.thumbnail.image === undefined) {
     e.thumbnail = 'Choose an image, or let Studio pick a frame.';
   }
+  if (d.sizes?.length === 0) e.sizes = 'Pick at least one size.';
   return e;
 }
 
@@ -323,6 +413,10 @@ export function toUploadInput(
     split,
     // Contracts v8: a free draft only, always (slice 5d-4); the host and the worker check again.
     ...(price === 0 ? { nfx: true } : {}),
+    // Contracts v16: the creator's sizes, tallest first (none: one rendition, 720p).
+    ...(d.sizes !== undefined && d.sizes.length > 0
+      ? { sizes: [...d.sizes].sort((a, b) => b - a) }
+      : {}),
     ...(d.thumbnail.mode === 'custom' && d.thumbnail.image !== undefined
       ? { thumbnailChoice: d.thumbnail.image }
       : {}),

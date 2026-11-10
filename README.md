@@ -41,9 +41,10 @@ implementation built on iroh lives in [nfx](https://github.com/SovereignTechnolo
   Opening a video does not start it: you see the price first.
 - **Pay per block.** Seeders send the video in blocks (64 KiB by default) and are paid as they go.
   Pausing stops the payments. Auto top-up is off until you turn it on.
-- **Publish.** Studio transcodes an upload to 1080p, 720p and 360p (never upscaled), signs a Nostr
-  video event with your key, and lets you set the price per block, the mints you accept and how
-  each payment is split between the seeder and you (50/50 by default).
+- **Publish.** Studio transcodes an upload to one size, 720p by default, or to the sizes you pick
+  from 2160p down to 360p (never upscaled; issue #97), signs a Nostr video event with your key, and
+  lets you set the price per block, the mints you accept and how each payment is split between the
+  seeder and you (50/50 by default).
 - **Seed.** Turn seeding on to serve videos from your own disk and earn the seeder's share. It is
   off by default, with a 10 GiB cap.
 - **Wallet.** A NIP-60 Cashu wallet with a balance per mint. Fund it by paying a Lightning invoice;

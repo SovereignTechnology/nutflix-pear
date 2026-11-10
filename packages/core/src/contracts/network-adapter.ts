@@ -245,8 +245,42 @@ export interface UploadInput {
    * fails the legacy upload.
    */
   readonly nfx?: boolean;
+  /**
+   * v16 (pear #97): the rendition sizes to make, each one of the source's offered sizes
+   * (`SourceSizes.sizes`; a size is the short side's lines, so a portrait 1080x1920 video's 720p
+   * is 720x1280): whole numbers, unique, at most `MAX_UPLOAD_SIZES`. A size the source does not
+   * offer fails the upload (`unsupported-input`, naming the offered ones) before anything is
+   * encoded. Absent or empty: one rendition, 720p, or the source's own size when it is smaller.
+   * Never upscaled, never above 2160p. NIP-71 and NFX publish the same renditions (one encode
+   * serves both).
+   */
+  readonly sizes?: readonly number[];
   // v6: no `mirrorTo` — media lives on Pear only (Cameron, 2026-09-25); nothing is mirrored to
   // Blossom servers and our manifests name none.
+}
+
+/** v16: the most sizes one upload names (every tier, 2160p to 360p, and the source's own). */
+export const MAX_UPLOAD_SIZES = 7 as const;
+/** v16: the tallest rendition height (and the most `SourceSizes.height` reads). */
+export const MAX_UPLOAD_HEIGHT = 2160 as const;
+
+/** v16 (pear #97): one size Studio offers for a source. */
+export interface OfferedSize {
+  /** Lines of the short side (`720` for 720p). */
+  readonly height: number;
+  /** The source's own size, which is no tier (Studio labels it "Original"). */
+  readonly original: boolean;
+  /** H.264 video + audio target, kbps: what a minute of it costs to store and stream. */
+  readonly kbps: number;
+}
+
+/** v16 (pear #97): what `studio.probe` learns of a video file before it is uploaded. */
+export interface SourceSizes {
+  /** The source's size: its display short side (rotation applied), even, at most `MAX_UPLOAD_HEIGHT`. */
+  readonly height: number;
+  /** The sizes it may be published in, tallest first, the original (if any) last. */
+  readonly sizes: readonly OfferedSize[];
+  readonly durationSec?: number;
 }
 
 export type UploadProgress =
@@ -347,6 +381,13 @@ export interface Settings {
   readonly theme: 'dark' | 'light' | 'system';
   /** v10 (ADR 0020): absent = off. */
   readonly nfx?: NfxSettings;
+  /**
+   * v16 (pear #97): the rendition sizes Studio pre-selects for the next upload, the creator's
+   * last choice: whole numbers from 2 to `MAX_UPLOAD_HEIGHT`, unique, 1 to `MAX_UPLOAD_SIZES` of
+   * them. Studio turns a size a smaller source does not offer into the tallest offered size at or
+   * below it. Absent: 720p (or the source's own size when it is smaller).
+   */
+  readonly publishSizes?: readonly number[];
   /**
    * v5 (L5-Settings/Wallet, L6-B, SE-4) — normative: `belowSats <= 0` means DISABLED (a patch
    * cannot remove the key, so "off" is written as 0). `belowSats` is compared with the balance
@@ -459,6 +500,14 @@ export interface NetworkAdapter {
 
   // ---- studio --------------------------------------------------------------------
   studio: {
+    /**
+     * v16 (pear #97): the sizes `file` may be published in (`UploadInput.file`'s form), read with
+     * ffprobe before anything is uploaded or published. Rejects as `upload` would for a file it
+     * cannot read (`unsupported-input`, `no-video-stream`, `ffmpeg-not-found`); a shell that
+     * cannot probe (the web client) rejects `unsupported`, and Studio then offers every size (the
+     * pipeline never upscales).
+     */
+    probe(file: string | FileLike): Promise<SourceSizes>;
     upload(input: UploadInput, onProgress: (p: UploadProgress) => void): Promise<VideoManifest>;
     myVideos(cursor?: string): Promise<Page<VideoManifest>>;
     analytics(

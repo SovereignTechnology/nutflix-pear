@@ -454,7 +454,8 @@ describe.skipIf(!TWO_HOST)(`slice 5f two-host run, role ${ROLE}`, () => {
       const runner = nodeProcessRunner();
       const binaries = { ffmpeg: BIN.ffmpeg, ffprobe: BIN.ffprobe };
       const pipeline = media.createMediaPipeline({ runner, fs, sha256: nodeSha256, binaries });
-      const plan = pipeline.plan(await pipeline.probe(clip), { codec: 'h264' });
+      // The old ladder (pear #97: `'all'`), as the gate's first run was made.
+      const plan = pipeline.plan(await pipeline.probe(clip), { codec: 'h264', sizes: 'all' });
       await mkdir(join(work, 'transcode-b'), { recursive: true });
       const output = await pipeline.transcode(clip, plan, () => undefined, {
         workDir: join(work, 'transcode-b'),
