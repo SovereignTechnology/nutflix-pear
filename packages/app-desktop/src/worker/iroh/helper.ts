@@ -17,6 +17,10 @@
  *   does not run is dropped; the helper drops it again);
  * - the iroh secret, if any, is held in a private field and only ever sent in `init`.
  *
+ * A helper started with `init: { rtc }` runs only its WebRTC side (ADR 0023): `rtc-init` is its
+ * handshake, no iroh endpoint is made, and its `rtc*` requests follow the same rules (a segment's
+ * bytes come back only under the sha256 the hash list names, `rtcGetFile`).
+ *
  * Slice 5e-3 wires it: the worker's one helper is `../nfx/iroh.ts`'s. `spawn` is injected, as
  * `bare-process-runner.ts`'s is: `bare-subprocess` under Bare (`WorkerRuntime.spawnHelper`),
  * `node:child_process` in tests.
@@ -65,6 +69,66 @@ export interface HelperInit {
    * anything a peer or a beacon says.
    */
   readonly relayCas?: readonly string[];
+}
+
+/**
+ * The start of a helper that runs only its WebRTC side (ADR 0023): `rtc-init` is its handshake,
+ * sent at every (re)start as `init` is for an iroh node, and no iroh endpoint is made.
+ */
+export interface HelperRtcInit {
+  /** STUN servers, `host:port`, at most 4: browsers are shown the mapping they report. */
+  readonly stun: readonly string[];
+  /** Absolute: every file `rtc-serve` names must lie under it (the NFX store). */
+  readonly root: string;
+  /** `ip:port` to bind; default the address the route to the first STUN server leaves from. */
+  readonly bind?: string;
+  /** Private and loopback addresses count as reachable: tests and same-LAN runs only. */
+  readonly allowPrivate?: boolean;
+}
+
+/** Where the WebRTC side's socket is, and the public mapping STUN reported (if any). */
+export interface HelperRtcReach {
+  readonly local: string;
+  readonly mapped: string | null;
+}
+
+/** One segment the WebRTC side serves: its #EXTINF index, the file holding it, its size. */
+export interface HelperRtcSegment {
+  readonly id: number;
+  readonly path: string;
+  readonly size: number;
+}
+
+/** A new connection: its id, and the SDP to send to the other side. */
+export interface HelperRtcSdp {
+  readonly peer: number;
+  readonly sdp: string;
+}
+
+/** Inclusive ranges of segment ids. */
+export type HelperRtcRanges = readonly (readonly [number, number])[];
+
+/** What the WebRTC side reports (`rtc-poll`). Untrusted until parsed here. */
+export type HelperRtcEvent =
+  | {
+      readonly t: 'open';
+      readonly peer: number;
+      readonly swarm: string;
+      readonly dir: 'in' | 'out';
+    }
+  | {
+      readonly t: 'have';
+      readonly peer: number;
+      readonly ranges: HelperRtcRanges;
+      readonly more: boolean;
+    }
+  | { readonly t: 'closed'; readonly peer: number; readonly why: string };
+
+export interface HelperRtcPeer {
+  readonly peer: number;
+  readonly swarm: string;
+  readonly dir: 'in' | 'out';
+  readonly open: boolean;
 }
 
 /** Where the helper's node can be reached, as a beacon's iroh endpoint carries it. */
@@ -127,7 +191,8 @@ export type HelperEvent =
   | { readonly type: 'stderr'; readonly line: string }
   | { readonly type: 'exit'; readonly code: number | null; readonly signal: string | null }
   | { readonly type: 'violation'; readonly reason: string }
-  | { readonly type: 'restarted'; readonly attempt: number; readonly reach: HelperReach }
+  /** `reach` is `null` for a helper that runs only its WebRTC side. */
+  | { readonly type: 'restarted'; readonly attempt: number; readonly reach: HelperReach | null }
   | { readonly type: 'restart-failed'; readonly attempt: number; readonly error: string };
 
 export interface IrohHelperOptions {
@@ -136,7 +201,8 @@ export interface IrohHelperOptions {
   readonly file: string;
   /** Absolute; the helper keeps its iroh-blobs store under it. */
   readonly stateDir: string;
-  readonly init: HelperInit;
+  /** An iroh node's `init`, or `{ rtc }`: a helper that runs only its WebRTC side (`startRtc`). */
+  readonly init: HelperInit | { readonly rtc: HelperRtcInit };
   /** Requests waiting for a reply at once; one more is refused `busy`. Default 8. */
   readonly maxInflight?: number;
   /** The `max` of every `get` in flight, together. Default 128 MiB. */
@@ -157,6 +223,13 @@ const HEALTHY_MS = 30_000;
 const CLOSE_GRACE_MS = 5_000;
 const MAX_STDERR_LINE = 512;
 const MAX_LIST = 64;
+/** The helper's own bounds (crates/iroh-helper/README.md, "WebRTC with browsers"). */
+const MAX_RTC_EVENTS = 256;
+const MAX_RTC_RANGES = 512;
+const MAX_RTC_PEERS = 32;
+const MAX_SDP = 32 * 1024;
+const MAX_SEGMENT_ID = Number.MAX_SAFE_INTEGER;
+const SWARM = /^[\x21-\x7e]{1,256}$/;
 
 type Timer = ReturnType<typeof setTimeout>;
 
@@ -216,6 +289,52 @@ function reachOf(m: Readonly<Record<string, unknown>>): HelperReach {
   };
 }
 
+function rtcReachOf(m: Readonly<Record<string, unknown>>): HelperRtcReach {
+  const mapped = m['mapped'];
+  return {
+    local: str(m['local'], 'local', 64),
+    mapped: mapped === null || mapped === undefined ? null : str(mapped, 'mapped', 64),
+  };
+}
+
+function swarmOf(v: unknown): string {
+  const s = str(v, 'swarm', 256);
+  if (!SWARM.test(s)) throw new TypeError('swarm is not 1-256 printable ASCII');
+  return s;
+}
+
+function dirOf(v: unknown): 'in' | 'out' {
+  if (v !== 'in' && v !== 'out') throw new TypeError('dir is not in or out');
+  return v;
+}
+
+function rangesOf(v: unknown): HelperRtcRanges {
+  if (!Array.isArray(v) || v.length > MAX_RTC_RANGES) throw new TypeError('ranges is not a list');
+  return v.map((r, i) => {
+    if (!Array.isArray(r) || r.length !== 2) throw new TypeError(`ranges[${String(i)}]`);
+    const a = uint(r[0], 'range start');
+    const b = uint(r[1], 'range end');
+    if (a > b || b > MAX_SEGMENT_ID) throw new TypeError(`ranges[${String(i)}] is not a range`);
+    return [a, b] as const;
+  });
+}
+
+function rtcEventOf(v: unknown): HelperRtcEvent {
+  if (typeof v !== 'object' || v === null) throw new TypeError('an event is not an object');
+  const e = v as Readonly<Record<string, unknown>>;
+  const peer = uint(e['peer'], 'peer');
+  switch (e['t']) {
+    case 'open':
+      return { t: 'open', peer, swarm: swarmOf(e['swarm']), dir: dirOf(e['dir']) };
+    case 'have':
+      return { t: 'have', peer, ranges: rangesOf(e['ranges']), more: e['more'] === true };
+    case 'closed':
+      return { t: 'closed', peer, why: str(e['why'], 'why', 64) };
+    default:
+      throw new TypeError('an event of no known kind');
+  }
+}
+
 function concat(chunks: readonly Uint8Array[], n: number): Uint8Array {
   const out = new Uint8Array(n);
   let o = 0;
@@ -245,10 +364,17 @@ export function dialTarget(
   } as unknown as HelperDialTarget;
 }
 
+interface Launched {
+  readonly reach: HelperReach | null;
+  readonly rtc: HelperRtcReach | null;
+}
+
 export class IrohHelper {
   private readonly o: IrohHelperOptions;
   /** Never in `o`, never logged, never serialised: only the `init` frame carries it. */
   readonly #secret: string | undefined;
+  /** Set for a helper that runs only its WebRTC side. */
+  private readonly rtcInit: HelperRtcInit | null;
   private readonly maxInflight: number;
   private readonly maxGetBytes: number;
   private readonly timeoutMs: number;
@@ -272,15 +398,27 @@ export class IrohHelper {
   restarts = 0;
 
   constructor(options: IrohHelperOptions) {
-    const { secret, ...init } = options.init;
-    // The message never repeats the value.
-    if (secret !== undefined && !HEX64.test(secret))
-      throw new RangeError('init.secret must be 64 lowercase hex');
-    this.#secret = secret;
-    const cas = init.relayCas ?? [];
-    if (cas.length > 4 || cas.some((c) => !/^(?:[0-9a-f]{2}){1,8192}$/.test(c)))
-      throw new RangeError('init.relayCas must be at most 4 DER certificates in lowercase hex');
-    this.o = { ...options, init };
+    if ('rtc' in options.init) {
+      const rtc = options.init.rtc;
+      if (rtc.stun.length > 4 || rtc.stun.some((s) => s.length < 3 || s.length > 300))
+        throw new RangeError('init.rtc.stun must be at most 4 host:port');
+      if (rtc.root.length < 1 || rtc.root.length > 4096)
+        throw new RangeError('init.rtc.root must be a path');
+      this.#secret = undefined;
+      this.rtcInit = { ...rtc, stun: [...rtc.stun] };
+      this.o = options;
+    } else {
+      const { secret, ...init } = options.init;
+      // The message never repeats the value.
+      if (secret !== undefined && !HEX64.test(secret))
+        throw new RangeError('init.secret must be 64 lowercase hex');
+      this.#secret = secret;
+      this.rtcInit = null;
+      const cas = init.relayCas ?? [];
+      if (cas.length > 4 || cas.some((c) => !/^(?:[0-9a-f]{2}){1,8192}$/.test(c)))
+        throw new RangeError('init.relayCas must be at most 4 DER certificates in lowercase hex');
+      this.o = { ...options, init };
+    }
     this.maxInflight = positive(options.maxInflight, 8, 'maxInflight');
     this.maxGetBytes = positive(
       options.maxGetBytesInflight,
@@ -312,10 +450,27 @@ export class IrohHelper {
 
   /** Spawn and `init`. Rejects if either fails; then nothing is restarted. */
   async start(): Promise<HelperReach> {
+    if (this.rtcInit !== null)
+      throw new HelperError('bad-request', 'a WebRTC-only helper starts with startRtc');
     if (this.run !== null || this.closing) throw new HelperError('bad-request', 'already started');
-    const reach = await this.launch();
+    const { reach } = await this.launch();
     this.started = true;
+    if (reach === null) throw new HelperError('violation', 'no reach');
     return reach;
+  }
+
+  /**
+   * Spawn a helper that runs only its WebRTC side, with `rtc-init` (sent again at every restart).
+   * Rejects if either fails; then nothing is restarted.
+   */
+  async startRtc(): Promise<HelperRtcReach> {
+    if (this.rtcInit === null)
+      throw new HelperError('bad-request', 'an iroh helper starts with start');
+    if (this.run !== null || this.closing) throw new HelperError('bad-request', 'already started');
+    const { rtc } = await this.launch();
+    this.started = true;
+    if (rtc === null) throw new HelperError('violation', 'no WebRTC reach');
+    return rtc;
   }
 
   async addr(): Promise<HelperReach> {
@@ -426,14 +581,19 @@ export class IrohHelper {
   }
 
   /** At most `max` bytes of a blob, unchecked: private, so no caller can skip `getFile`. */
-  private async getRaw(conn: number, hash: string, max: number): Promise<Uint8Array> {
+  private getRaw(conn: number, hash: string, max: number): Promise<Uint8Array> {
+    return this.getBytes({ op: 'get', conn, hash }, max);
+  }
+
+  /** A `get`-shaped request's bytes (at most `max`), unchecked: private, as `getRaw`. */
+  private async getBytes(msg: Readonly<Record<string, unknown>>, max: number): Promise<Uint8Array> {
     if (!Number.isSafeInteger(max) || max < 1 || max > MAX_GET_BYTES)
       throw new HelperError('bad-request', 'max must be 1 to 64 MiB');
     if (this.getBytesInflight + max > this.maxGetBytes)
       throw new HelperError('busy', 'too many bytes in flight');
     this.getBytesInflight += max;
     try {
-      const m = await this.request({ op: 'get', conn, hash, max }, max);
+      const m = await this.request({ ...msg, max }, max);
       const bytes = m['bytes'];
       if (!(bytes instanceof Uint8Array)) throw new HelperError('violation', 'no bytes');
       return bytes;
@@ -453,6 +613,112 @@ export class IrohHelper {
       rssHwmKib: rss === null ? null : uint(rss, 'rss_hwm_kib'),
       storeBytes: uint(m['store_bytes'], 'store_bytes'),
     }));
+  }
+
+  // ---- The WebRTC side (ADR 0023; crates/iroh-helper/README.md, "WebRTC with browsers") ----
+
+  /** Serve `segments` of `swarm`, replacing what it served unless `append`; how many it serves now. */
+  async rtcServe(
+    swarm: string,
+    segments: readonly HelperRtcSegment[],
+    append = false,
+  ): Promise<number> {
+    const m = await this.request({
+      op: 'rtc-serve',
+      swarm,
+      segments: segments.map((s) => ({ id: s.id, path: s.path, size: s.size })),
+      append,
+    });
+    return this.believe(() => uint(m['segments'], 'segments'));
+  }
+
+  async rtcUnserve(swarm: string): Promise<boolean> {
+    return (await this.request({ op: 'rtc-unserve', swarm }))['removed'] === true;
+  }
+
+  /** Answer a remote offer for `swarm`: the other side asked to connect. */
+  async rtcAnswer(swarm: string, offer: string): Promise<HelperRtcSdp> {
+    const m = await this.request({ op: 'rtc-answer', swarm, offer });
+    return this.believe(() => ({
+      peer: uint(m['peer'], 'peer'),
+      sdp: str(m['sdp'], 'sdp', MAX_SDP),
+    }));
+  }
+
+  /** An offer to a peer in `swarm`, completed by `rtcAccept`. */
+  async rtcOffer(swarm: string): Promise<HelperRtcSdp> {
+    const m = await this.request({ op: 'rtc-offer', swarm });
+    return this.believe(() => ({
+      peer: uint(m['peer'], 'peer'),
+      sdp: str(m['sdp'], 'sdp', MAX_SDP),
+    }));
+  }
+
+  async rtcAccept(peer: number, answer: string): Promise<void> {
+    await this.request({ op: 'rtc-accept', peer, answer });
+  }
+
+  /**
+   * Segment `segment` from `peer` — at most `maxBytes`, and only if their sha256 is `sha256` (the
+   * hash list's entry, NFX-05 §4). Anything else is a `PoisonedError`, as `getFile`'s.
+   */
+  async rtcGetFile(
+    peer: number,
+    segment: number,
+    expect: { readonly sha256: string; readonly maxBytes: number },
+  ): Promise<Uint8Array> {
+    if (!HEX64.test(expect.sha256))
+      throw new HelperError('bad-request', 'sha256 must be 64 lowercase hex');
+    const bytes = await this.getBytes({ op: 'rtc-get', peer, segment }, expect.maxBytes);
+    if (!nfx.verifyFile(expect.sha256, bytes).ok)
+      throw new PoisonedError(`a segment whose sha256 is not ${expect.sha256.slice(0, 16)}…`);
+    return bytes;
+  }
+
+  /** The WebRTC side's events, waiting up to `waitMs` (at most 30 s) for the first. */
+  async rtcPoll(
+    waitMs: number,
+  ): Promise<{ readonly events: readonly HelperRtcEvent[]; readonly lost: boolean }> {
+    const wait = Math.min(Math.max(0, Math.floor(waitMs)), 30_000);
+    const m = await this.request({ op: 'rtc-poll', wait_ms: wait });
+    return this.believe(() => {
+      const events = m['events'];
+      if (!Array.isArray(events) || events.length > MAX_RTC_EVENTS)
+        throw new TypeError('events is not a list');
+      return { events: events.map(rtcEventOf), lost: m['lost'] === true };
+    });
+  }
+
+  /** What `peer` last announced it holds. */
+  async rtcHave(
+    peer: number,
+  ): Promise<{ readonly ranges: HelperRtcRanges; readonly more: boolean }> {
+    const m = await this.request({ op: 'rtc-have', peer });
+    return this.believe(() => ({ ranges: rangesOf(m['ranges']), more: m['more'] === true }));
+  }
+
+  async rtcHangup(peer: number): Promise<boolean> {
+    return (await this.request({ op: 'rtc-hangup', peer }))['closed'] === true;
+  }
+
+  /** The live connections (to resync after `lost`). */
+  async rtcStatus(): Promise<readonly HelperRtcPeer[]> {
+    const m = await this.request({ op: 'rtc-status' });
+    return this.believe(() => {
+      const peers = m['peers'];
+      if (!Array.isArray(peers) || peers.length > MAX_RTC_PEERS)
+        throw new TypeError('peers is not a list');
+      return peers.map((v: unknown) => {
+        if (typeof v !== 'object' || v === null) throw new TypeError('a peer is not an object');
+        const p = v as Readonly<Record<string, unknown>>;
+        return {
+          peer: uint(p['peer'], 'peer'),
+          swarm: swarmOf(p['swarm']),
+          dir: dirOf(p['dir']),
+          open: p['open'] === true,
+        };
+      });
+    });
   }
 
   /** End the helper's stdin (it exits 0), then kill it if it has not within 5 s. */
@@ -477,7 +743,7 @@ export class IrohHelper {
     clearTimeout(killTimer);
   }
 
-  private async launch(): Promise<HelperReach> {
+  private async launch(): Promise<Launched> {
     let child: HelperChild;
     try {
       child = this.o.spawn(this.o.file, ['--state', this.o.stateDir]);
@@ -510,24 +776,41 @@ export class IrohHelper {
     child.on('exit', (code, signal) => {
       this.onExit(run, code, signal);
     });
-    const init: Record<string, unknown> = { op: 'init', relays: [...this.o.init.relays] };
-    if (this.#secret !== undefined) init['secret'] = this.#secret;
-    if (this.o.init.relayOnly === true) init['relay_only'] = true;
-    if (this.o.init.portmapper === true) init['portmapper'] = true;
-    if (this.o.init.relayCas !== undefined && this.o.init.relayCas.length > 0)
-      init['relay_cas'] = [...this.o.init.relayCas];
-    let reach: HelperReach;
+    let launched: Launched;
     try {
-      const m = await this.send(run, init, null);
-      reach = this.believe(() => reachOf(m));
+      const rtc = this.rtcInit;
+      if (rtc === null) {
+        const m = await this.send(run, this.irohInit(), null);
+        launched = { reach: this.believe(() => reachOf(m)), rtc: null };
+      } else {
+        const init: Record<string, unknown> = {
+          op: 'rtc-init',
+          stun: [...rtc.stun],
+          root: rtc.root,
+        };
+        if (rtc.bind !== undefined) init['bind'] = rtc.bind;
+        if (rtc.allowPrivate === true) init['allow_private'] = true;
+        const m = await this.send(run, init, null);
+        launched = { reach: null, rtc: this.believe(() => rtcReachOf(m)) };
+      }
     } catch (e) {
       // A helper that cannot init is of no use: it goes, and a restart (if any) tries again.
       if (this.run === run) this.kill(run, 'init');
       throw e;
     }
     this.ready = true;
-    this.lastReach = reach;
-    return reach;
+    if (launched.reach !== null) this.lastReach = launched.reach;
+    return launched;
+  }
+
+  private irohInit(): Record<string, unknown> {
+    const o = this.o.init as HelperInit;
+    const init: Record<string, unknown> = { op: 'init', relays: [...o.relays] };
+    if (this.#secret !== undefined) init['secret'] = this.#secret;
+    if (o.relayOnly === true) init['relay_only'] = true;
+    if (o.portmapper === true) init['portmapper'] = true;
+    if (o.relayCas !== undefined && o.relayCas.length > 0) init['relay_cas'] = [...o.relayCas];
+    return init;
   }
 
   /** A reply's fields, or a protocol violation: the helper is killed and the call fails. */
@@ -718,7 +1001,7 @@ export class IrohHelper {
       this.attempt += 1;
       const attempt = this.attempt;
       this.launch().then(
-        (reach) => {
+        ({ reach }) => {
           this.restarts += 1;
           this.o.onEvent?.({ type: 'restarted', attempt, reach });
         },

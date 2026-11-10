@@ -247,7 +247,7 @@ export class NfxIrohNode {
         });
         return;
       case 'restarted':
-        if (node !== null && e.reach.node !== node) {
+        if (e.reach === null || (node !== null && e.reach.node !== node)) {
           this.d.logger.error('nfx: the restarted iroh helper reported another node id');
           void this.stop();
           return;
