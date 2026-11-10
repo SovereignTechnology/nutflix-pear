@@ -11,16 +11,25 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 - **Uploads make one rendition by default, and the creator picks the sizes** (issue #97, the
   maintainer's decisions of 2026-11-09). Until the network grows, Studio pre-selects one size:
-  720p, or the file's own height when it is shorter. The Upload form's new **Sizes** field offers
-  every size the file can make, never upscaled: 2160p, 1440p, 1080p, 720p, 480p and 360p at or
-  below the file, plus the file's own height ("Original") when it is none of those. Tick one or
-  more; "1080p + 720p + 360p" picks the old ladder in one click. Each extra size is a full copy:
-  it adds storage for you and for every seeder that keeps it. Studio reads the file's size with
+  720p, or the file's own size when it is smaller. A size is the lines of the picture's short
+  side, so a portrait 1080x1920 phone video is a 1080 file and its 720p is 720x1280. The Upload
+  form's new **Sizes** field offers every size the file can make, never upscaled: 2160p, 1440p,
+  1080p, 720p, 480p and 360p at or below the file, plus the file's own size ("Original") when it
+  is none of those. Tick one or more; "1080p + 720p + 360p" picks the old ladder in one click.
+  Each extra size is a full copy: it adds storage for you and for every seeder that keeps it. Studio reads the file's size with
   ffprobe before anything is uploaded (`studio.probe`, a single-use file token like the upload's
   own, no confirmation: it publishes nothing), and remembers the sizes you picked as your default
   for the next upload. The NIP-71 event and the NFX copy carry the same renditions (one encode
   serves both). The labels and bitrates are nfx's (`ladder.rs`): 2160p 16 Mbit/s, 1440p 8, 1080p
   5, 720p 2.5, 480p 1.2, 360p 0.8, an original between two sizes interpolated (contracts v16).
+- **NFX play picks only renditions seeders hold, the best-seeded first** (issue #97). The
+  beacons say which renditions each seeder holds (an iroh ticket per rendition; a `webrtc` or
+  `https` endpoint's `renditions`, absent meaning all; a HyperDHT seeder holds whole videos).
+  The desktop app never plays a rendition nobody it can reach holds, lists only those in the
+  quality menu, and by default starts on the one most seeders hold (at equal holders, the higher
+  bandwidth, as before). The web client starts its player on that rendition too when its
+  seeders hold different ones (reading the video's hash list from an origin first, checked
+  against the manifest); when every seeder holds every rendition, nothing changes.
 - **NFX's SHA-256 and the NFX-12 `hyperdht` bind check come from `@noble/hashes` and
   `@noble/curves`** instead of libsodium, so that the same code runs in the web client (ADR 0022).
   The digests are the same bytes. The bind check gives libsodium's answers, except for a signature

@@ -73,6 +73,7 @@ import { beaconEndpoints, playEndpoints } from './endpoints.js';
 import type { FetchFn } from './http.js';
 import { WebImages } from './images.js';
 import { browserRelayInfoFetch } from './relay-info.js';
+import { startFor, webAvailability } from './renditions.js';
 import { WebNfxSession, levelOf } from './session.js';
 import { WebWallet } from './wallet.js';
 
@@ -315,13 +316,20 @@ export class WebNetworkAdapter implements NetworkAdapter {
       this.#settings().nfx?.trackers ?? [],
       WEB_FALLBACK_ORIGIN,
     );
+    // Pear #97: when the seeders hold different renditions, start on the one most of them hold
+    // (never one nobody this page can reach holds). A rendition the viewer picked is theirs.
+    const start =
+      level === undefined
+        ? await startFor(this.#o.fetch, video, origins, webAvailability(video, events, now()))
+        : undefined;
     const session = new WebNfxSession({
       videoId: a,
       manifestJson: JSON.stringify(toWire(video.event)),
       origins,
       trackers,
       iceServers: WEB_ICE_SERVERS,
-      level,
+      level: level ?? start?.level,
+      ...(start === undefined ? {} : { expect: start.rendition }),
       player: () => this.#playerReady(),
       onClose: (s) => {
         this.#sessions.delete(s);

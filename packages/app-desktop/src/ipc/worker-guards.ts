@@ -60,6 +60,7 @@ import type {
   HostMethod,
   HostMethodTable,
   HostToWorker,
+  NfxHeldWire,
   NfxIrohEndpointWire,
   NfxPlayOpenArgs,
   PublishDraft,
@@ -70,6 +71,8 @@ import type {
   WorkerToHost,
 } from './worker-protocol.js';
 import {
+  MAX_NFX_HELD_RENDITIONS,
+  MAX_NFX_HELD_SEEDERS,
   MAX_NFX_IROH_ADDRS,
   MAX_NFX_PLAY_IROH,
   MAX_NFX_PLAY_PEERS,
@@ -238,14 +241,36 @@ const isNfxPlayOpenArgsShape = obj(
     iroh: arrayOf(isNfxIrohEndpointWire, MAX_NFX_PLAY_IROH),
     prefetchSeconds: isPrefetch,
   },
-  { rendition: isLabel },
+  {
+    rendition: isLabel,
+    // Pear #97: who holds which rendition (counts bounded by the seeders counted).
+    held: obj({
+      seeders: int(1, MAX_NFX_HELD_SEEDERS),
+      all: int(0, MAX_NFX_HELD_SEEDERS),
+      named: wireMap(isLabel, int(1, MAX_NFX_HELD_SEEDERS), MAX_NFX_HELD_RENDITIONS),
+    }),
+  },
 );
-/** At least one source, and each iroh node once (its tickets would otherwise disagree). */
+/** Pear #97: counts that add up (a named holder is not one of `all`), each id once. */
+function heldAddsUp(h: NfxHeldWire): boolean {
+  const named = h.named.$map;
+  return (
+    h.all <= h.seeders &&
+    named.every(([, n]) => n <= h.seeders - h.all) &&
+    new Set(named.map(([k]) => k)).size === named.length
+  );
+}
+
+/**
+ * At least one source, and each iroh node once (its tickets would otherwise disagree); `held`
+ * counts that add up.
+ */
 const isNfxPlayOpen = safe(
   (x: unknown): x is NfxPlayOpenArgs =>
     isNfxPlayOpenArgsShape(x) &&
     x.peers.length + x.iroh.length > 0 &&
-    new Set(x.iroh.map((e) => e.node)).size === x.iroh.length,
+    new Set(x.iroh.map((e) => e.node)).size === x.iroh.length &&
+    (x.held === undefined || heldAddsUp(x.held)),
 );
 
 /** Arguments of every host → worker request. */

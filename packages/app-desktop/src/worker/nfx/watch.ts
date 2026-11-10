@@ -74,8 +74,16 @@ export interface NfxWatchSessionOptions {
   /** The manifest `root` and `segs`. */
   readonly root: string;
   readonly segs: number;
-  /** A rendition id; absent: the highest-bandwidth one. */
+  /**
+   * A rendition id; absent: the one most of the session's seeders hold (`held`), at equal
+   * holders the highest bandwidth; without `held`, the highest-bandwidth one.
+   */
   readonly rendition?: string;
+  /**
+   * Pear #97: which renditions the session's seeders hold. With it, a rendition nobody holds is
+   * never played (asked for by id, it is `not-found`) and is not reported. Absent: all are held.
+   */
+  readonly held?: nfx.RenditionAvailability;
   readonly prefetchSeconds: number;
   readonly fetcher: NfxFetcher;
   readonly fs: SeederFs;
@@ -195,15 +203,26 @@ export class NfxWatchSession {
       throw coded('invalid-argument', 'the hash list does not verify against its manifest');
     }
     const list = verified.value;
-    const renditions = wireRenditions(list.renditions);
+    const all = wireRenditions(list.renditions);
+    // Pear #97: only renditions someone holds, the most-held first (the bandwidth breaks ties);
+    // the menu keeps its highest-bandwidth-first order.
+    const held = this.o.held;
+    const preferred = held === undefined ? all : nfx.preferRenditions(all, held);
+    const renditions = held === undefined ? all : all.filter((r) => preferred.includes(r));
     const chosen =
       this.o.rendition === undefined
-        ? renditions[0]
+        ? preferred[0]
         : renditions.find((r) => r.id === this.o.rendition);
     if (chosen === undefined)
       throw coded(
         'not-found',
-        this.o.rendition === undefined ? 'no playable rendition' : 'no such rendition',
+        this.o.rendition !== undefined
+          ? all.some((r) => r.id === this.o.rendition)
+            ? 'nobody online holds that rendition'
+            : 'no such rendition'
+          : held === undefined
+            ? 'no playable rendition'
+            : 'nobody online holds a rendition of this video',
       );
     const rendition = list.renditions.find((r) => r.id === chosen.id);
     const playlist = list.files.find(

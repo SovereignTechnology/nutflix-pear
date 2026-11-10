@@ -27,6 +27,7 @@ import {
   isNfxTicketKey,
 } from '../../ipc/worker-guards.js';
 import type {
+  NfxHeldWire,
   NfxHyperdhtEndpointWire,
   NfxIrohEndpointWire,
   NfxRenditionWire,
@@ -44,6 +45,18 @@ export { MAX_NFX_PLAY_IROH, MAX_NFX_PLAY_PEERS };
 export interface NfxPlaySources {
   readonly hyperdht: NfxHyperdhtEndpointWire[];
   readonly iroh: NfxIrohEndpointWire[];
+  /**
+   * Pear #97: which renditions the seeders of these endpoints hold (core's `nfx.countHolders`):
+   * a `hyperdht` endpoint every rendition (NFX-12 serves whole videos), an `iroh` one those it
+   * kept a ticket for. Only endpoints kept above count, so a rendition counted is one the worker
+   * can fetch from someone it is given.
+   */
+  readonly held: NfxHeldWire;
+}
+
+/** Pear #97: core's counts as the worker takes them. */
+export function heldWire(a: nfx.RenditionAvailability): NfxHeldWire {
+  return { seeders: a.seeders, all: a.all, named: { $map: [...a.named] } };
 }
 
 /** The beacon filter for one video (NFX-04 §5, "Live availability"): core's, since ADR 0022. */
@@ -84,7 +97,8 @@ export function irohWire(
 /**
  * The endpoints of the free seeders `events` announce for `video`, newest beacon first, one
  * beacon per seeder: unique HyperDHT peers (at most `MAX_NFX_PLAY_PEERS`) and unique iroh nodes
- * (at most `MAX_NFX_PLAY_IROH`, in the wire form `irohWire` gives, against `networkRelays`).
+ * (at most `MAX_NFX_PLAY_IROH`, in the wire form `irohWire` gives, against `networkRelays`), and
+ * which renditions their seeders hold (pear #97).
  */
 export function beaconPeers(
   video: NfxVideo,
@@ -96,6 +110,8 @@ export function beaconPeers(
   const seeders = new Set<string>();
   const peers = new Map<string, NfxHyperdhtEndpointWire>();
   const nodes = new Map<string, NfxIrohEndpointWire>();
+  // Pear #97: what each seeder holds through the endpoints kept for it.
+  const holds: nfx.SeederHolds[] = [];
   for (const ev of newestFirst) {
     const parsed = nfx.parseBeacon(ev, now);
     if (!parsed.ok) continue;
@@ -104,19 +120,30 @@ export function beaconPeers(
     seeders.add(b.seeder);
     const address = `${String(nfx.KIND_MANIFEST)}:${b.creator}:${b.content.video.toString()}`;
     if (b.creator !== video.author || address !== video.id || !b.content.free) continue;
+    let every = false;
+    const ids = new Set<string>();
     for (const e of b.content.endpoints) {
       if (e.t === 'hyperdht') {
         if (peers.has(e.peer) || peers.size >= MAX_NFX_PLAY_PEERS) continue;
         peers.set(e.peer, { t: 'hyperdht', peer: e.peer, bind: e.bind });
+        every = true;
       } else if (e.t === 'iroh') {
         if (nodes.has(e.node) || nodes.size >= MAX_NFX_PLAY_IROH) continue;
         const wire = irohWire(e, networkRelays);
-        if (wire !== null) nodes.set(e.node, wire);
+        if (wire === null) continue;
+        nodes.set(e.node, wire);
+        for (const [k] of wire.tickets.$map) if (k !== nfx.RESERVED_RENDITION_ID) ids.add(k);
       }
     }
+    if (every) holds.push('all');
+    else if (ids.size > 0) holds.push(ids);
     if (peers.size >= MAX_NFX_PLAY_PEERS && nodes.size >= MAX_NFX_PLAY_IROH) break;
   }
-  return { hyperdht: [...peers.values()], iroh: [...nodes.values()] };
+  return {
+    hyperdht: [...peers.values()],
+    iroh: [...nodes.values()],
+    held: heldWire(nfx.countHolders(holds)),
+  };
 }
 
 /** The manifest's `d` (`<namespace>:<video-id>`) of an NFX address. */

@@ -196,6 +196,27 @@ export interface NfxPlayOpenArgs {
    */
   readonly iroh: readonly NfxIrohEndpointWire[];
   readonly prefetchSeconds: number;
+  /**
+   * Pear #97: which renditions the seeders of `peers` and `iroh` hold (core's `nfx.countHolders`
+   * over the endpoints above). With it, the worker plays only a rendition someone holds, the one
+   * most of them hold when `rendition` is absent. Absent: every rendition counts as held.
+   */
+  readonly held?: NfxHeldWire;
+}
+
+/** Pear #97: the most named renditions `NfxHeldWire` carries (core's `MAX_AVAILABILITY_RENDITIONS`). */
+export const MAX_NFX_HELD_RENDITIONS = 32;
+/** Pear #97: the most seeders it counts (core's `MAX_AVAILABILITY_SEEDERS`). */
+export const MAX_NFX_HELD_SEEDERS = 64;
+
+/** Pear #97: core's `RenditionAvailability` as it crosses (a `WireMap` for the counts). */
+export interface NfxHeldWire {
+  /** Seeders counted. */
+  readonly seeders: number;
+  /** Of those, the ones holding every rendition. */
+  readonly all: number;
+  /** Rendition id → seeders holding it by name. */
+  readonly named: WireMap<string, number>;
 }
 
 /** Slice 5d: one rendition of an NFX video, as the player's quality menu needs it. */

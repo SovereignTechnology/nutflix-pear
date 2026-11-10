@@ -4,6 +4,8 @@
  * network feed's merge, NIP-50 routing by NIP-11, images by signed sha256 only, and `playNfx`
  * handing the player exactly the endpoints it resolved.
  */
+import { createHash } from 'node:crypto';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type {
@@ -14,6 +16,7 @@ import type {
   Sha256Hex,
   TrackerUrl,
 } from '@sovit/core';
+import { renderHashList } from '@sovit/core/nfx';
 
 import {
   Key,
@@ -661,6 +664,104 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     await tick();
     expect(r.player.last.options.level).toBe(1);
     expect(again).toBeInstanceOf(WebNfxSession);
+  });
+
+  it('pear #97: seeders holding different renditions start the player on the most-held', async () => {
+    const creator = new Key();
+    const sha = (x: string): string => createHash('sha256').update(x).digest('hex');
+    const ladder = [
+      { id: '1080p', bandwidth: 5_400_000, size: '1920x1080' },
+      { id: '720p', bandwidth: 2_800_000, size: '1280x720' },
+      { id: '360p', bandwidth: 950_000, size: '640x360' },
+    ];
+    const listBytes = renderHashList({
+      v: 1,
+      video: `${NS}:held-video`,
+      files: [
+        {
+          name: 'master.m3u8',
+          role: 'playlist-master',
+          sha256: sha('m'),
+          size: 1n,
+          durMs: undefined,
+        },
+        ...ladder.map((x) => ({
+          name: `r${x.id}.m3u8`,
+          role: 'playlist' as const,
+          sha256: sha(x.id),
+          size: 1n,
+          durMs: undefined,
+        })),
+      ],
+      renditions: ladder.map((x) => ({
+        id: x.id,
+        playlist: `r${x.id}.m3u8`,
+        bandwidth: BigInt(x.bandwidth),
+        codecs: undefined,
+        resolution: x.size,
+      })),
+    });
+    const root = createHash('sha256').update(listBytes).digest('hex');
+    const served: string[] = [];
+    const fetchFn: FetchFn = (url) => {
+      served.push(url);
+      return Promise.resolve(
+        url === `https://seed-1.example/o/${root}`
+          ? new Response(new Uint8Array(listBytes), { status: 200 })
+          : new Response('no', { status: 404 }),
+      );
+    };
+    const r = make({ fetch: fetchFn });
+    const at = T - 3600;
+    put(
+      r.relays,
+      [READ_A],
+      creator.sign({
+        kind: 38504,
+        created_at: at,
+        content: 'Held renditions.',
+        tags: [
+          ['d', `${NS}:held-video`],
+          ['n', NS],
+          ['title', 'held-video'],
+          ['published_at', String(at)],
+          ['license', 'open'],
+          ['root', root],
+          ['segs', '4'],
+        ],
+      }),
+    );
+    const addr = addrOf(creator, 'held-video');
+    await r.adapter.nfxVideo(addr);
+    // Two origins hold 360p, one of them 720p too; nobody this page can reach holds 1080p.
+    put(
+      r.relays,
+      [SCOPED],
+      beacon(new Key(), addr, [{ ...https('https://seed-1.example/o'), renditions: ['360p'] }]),
+      beacon(new Key(), addr, [
+        { ...https('https://seed-2.example/o'), renditions: ['360p', '720p'] },
+      ]),
+    );
+    const session = await r.adapter.playNfx(addr);
+    if (session.source.kind !== 'element') throw new Error('not an element source');
+    session.source.attach(document.createElement('video'));
+    await tick();
+    // hls.js lists 360p, 720p, 1080p: 360p is level 0.
+    expect(r.player.last.options.level).toBe(0);
+    expect(served).toContain(`https://seed-1.example/o/${root}`);
+    expect(session.rendition).toBe('l0');
+    await session.close();
+
+    // A rendition the viewer picked is theirs: no hash list is read for it.
+    served.length = 0;
+    put(
+      r.relays,
+      [SCOPED],
+      beacon(new Key(), addr, [{ ...https('https://seed-1.example/o'), renditions: ['360p'] }]),
+    );
+    const picked = await r.adapter.playNfx(addr, 'l2');
+    expect(picked.rendition).toBe('l2');
+    expect(served).toEqual([]);
   });
 
   it('close() of the adapter closes every play', async () => {

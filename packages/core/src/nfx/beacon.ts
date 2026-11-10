@@ -48,8 +48,11 @@ export type Endpoint =
       readonly addrs: readonly string[];
       readonly tickets: ReadonlyMap<string, string>;
     }
-  /** NFX-05 §6: an origin's base URL. */
-  | { readonly t: 'https'; readonly url: string }
+  /**
+   * NFX-05 §6: an origin's base URL. `renditions` (optional, as nfx adds it for `nfxd
+   * --renditions`, pear #97): the renditions it holds; absent means every rendition.
+   */
+  | { readonly t: 'https'; readonly url: string; readonly renditions?: readonly string[] }
   /** NFX-10 §2: a bridge. Swarm ids are derived per rendition, never carried. */
   | {
       readonly t: 'webrtc';
@@ -359,7 +362,16 @@ function parseEndpoint(raw: JsonValue): NfxResult<Endpoint | string> {
       const url = stringField(raw, 'url');
       if (!url.ok) return url;
       if (!isHttpsUrl(url.value)) return bad('https endpoint `url` must be an https URL');
-      return ok<Endpoint>({ t: 'https', url: url.value });
+      // Pear #97: the renditions an origin holds, checked as a `webrtc` endpoint's are; absent = all.
+      const rawRenditions = raw.get('renditions');
+      if (rawRenditions === undefined) return ok<Endpoint>({ t: 'https', url: url.value });
+      const renditions = strings(
+        rawRenditions,
+        'renditions',
+        (r) => r !== '' && r !== RESERVED_RENDITION_ID,
+      );
+      if (!renditions.ok) return renditions;
+      return ok<Endpoint>({ t: 'https', url: url.value, renditions: renditions.value });
     }
     case 'webrtc': {
       const rawTrackers = raw.get('tracker_urls');
@@ -423,8 +435,11 @@ function endpointText(e: Endpoint): string {
       ];
       return `{${members.join(',')}}`;
     }
-    case 'https':
-      return `{"t":"https","url":${q(e.url)}}`;
+    case 'https': {
+      const renditions =
+        e.renditions === undefined ? '' : `,"renditions":${JSON.stringify(e.renditions)}`;
+      return `{"t":"https","url":${q(e.url)}${renditions}}`;
+    }
     case 'webrtc': {
       const renditions =
         e.renditions.length > 0 ? `,"renditions":${JSON.stringify(e.renditions)}` : '';

@@ -178,6 +178,16 @@ export class NfxWatching {
       root: a.root,
       segs: a.segs,
       ...(a.rendition === undefined ? {} : { rendition: a.rendition }),
+      // Pear #97: only renditions these seeders hold, the most-held first.
+      ...(a.held === undefined
+        ? {}
+        : {
+            held: {
+              seeders: a.held.seeders,
+              all: a.held.all,
+              named: new Map(a.held.named.$map),
+            },
+          }),
       prefetchSeconds: a.prefetchSeconds,
       fetcher,
       fs: this.d.fs,

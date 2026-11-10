@@ -165,6 +165,53 @@ describe('NfxWatchSession', () => {
     expect(new Set(fetcher.asked).size).toBe(fetcher.asked.length);
   });
 
+  it('pear #97: plays only a held rendition, the most-held first, and lists only those', async () => {
+    const v = testNfxVideo();
+    const held = (named: [string, number][], all = 0): nfx.RenditionAvailability => ({
+      seeders: all + Math.max(0, ...named.map(([, n]) => n)),
+      all,
+      named: new Map(named),
+    });
+    // Nobody holds 720p: 360p plays, and the menu lists only what can play.
+    const only360 = await session(v, await spoolDir(), memoryFetcher(v.files), {
+      held: held([['360p', 1]]),
+    }).open();
+    expect(only360.rendition).toBe('360p');
+    expect(only360.renditions.map((r) => r.id)).toEqual(['360p']);
+    // More seeders hold 360p than 720p: the most-held wins over the higher bandwidth.
+    const most = await session(v, await spoolDir(), memoryFetcher(v.files), {
+      held: held([
+        ['720p', 1],
+        ['360p', 2],
+      ]),
+    }).open();
+    expect(most.rendition).toBe('360p');
+    expect(most.renditions.map((r) => r.id)).toEqual(['720p', '360p']);
+    // Held alike (here by whole-video seeders): the higher bandwidth, as before.
+    const alike = await session(v, await spoolDir(), memoryFetcher(v.files), {
+      held: held([], 2),
+    }).open();
+    expect(alike.rendition).toBe('720p');
+    // Asked for by id: a rendition nobody holds is refused, one that is not listed too.
+    await expect(
+      session(v, await spoolDir(), memoryFetcher(v.files), {
+        rendition: '720p',
+        held: held([['360p', 1]]),
+      }).open(),
+    ).rejects.toThrow('not-found: nobody online holds that rendition');
+    await expect(
+      session(v, await spoolDir(), memoryFetcher(v.files), {
+        rendition: '1080p',
+        held: held([['360p', 1]]),
+      }).open(),
+    ).rejects.toThrow('not-found: no such rendition');
+    await expect(
+      session(v, await spoolDir(), memoryFetcher(v.files), {
+        held: held([['1080p', 1]]),
+      }).open(),
+    ).rejects.toThrow('not-found: nobody online holds a rendition of this video');
+  });
+
   it('a segment whose tfdt is not where the plan put it fails the session', async () => {
     // Segment 1 starts one tick late: the sidx promised 25 600.
     const v = testNfxVideo([segment(0, 30), segment(25_601, 37), segment(51_200, 44)]);

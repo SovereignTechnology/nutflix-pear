@@ -2,7 +2,7 @@ import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import type { Sha256Hex } from '@sovit/core';
-import { mocks, payProtocol } from '@sovit/core';
+import { mocks, nfx, payProtocol } from '@sovit/core';
 
 import { toHex } from '../codec.js';
 import { FrameDecoder, encodeFrame } from '../framing.js';
@@ -17,7 +17,7 @@ import {
   validateWorkerEvent,
   validateWorkerResult,
 } from '../worker-guards.js';
-import { WORKER_V } from '../worker-protocol.js';
+import { MAX_NFX_HELD_RENDITIONS, MAX_NFX_HELD_SEEDERS, WORKER_V } from '../worker-protocol.js';
 import type {
   HostMethod,
   HostMethodTable,
@@ -144,6 +144,21 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
     // Slice 5e-4: iroh only (an nfxd seeder), and both kinds.
     { ...NFX_OPEN, peers: [], iroh: [IROH] },
     { ...NFX_OPEN, iroh: [IROH, { ...IROH, node: 'e2'.repeat(32), relay: '' }] },
+    // Pear #97: which renditions the seeders hold.
+    {
+      ...NFX_OPEN,
+      held: {
+        seeders: 3,
+        all: 1,
+        named: {
+          $map: [
+            ['720p', 2],
+            ['360p', 1],
+          ],
+        },
+      },
+    },
+    { ...NFX_OPEN, held: { seeders: 1, all: 1, named: { $map: [] } } },
   ],
   'nfx.play.close': [{ sid: SID }],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
@@ -902,6 +917,11 @@ describe('slice 5e-3: the iroh helper, the iroh relays and the iroh endpoint', (
 });
 
 describe('slice 5d: nfx.play.open / nfx.play.close', () => {
+  it("pear #97: the held bounds are core's", () => {
+    expect(MAX_NFX_HELD_RENDITIONS).toBe(nfx.MAX_AVAILABILITY_RENDITIONS);
+    expect(MAX_NFX_HELD_SEEDERS).toBe(nfx.MAX_AVAILABILITY_SEEDERS);
+  });
+
   it('refuses malformed open args', () => {
     const g = validateWorkerArgs['nfx.play.open'];
     for (const bad of [
@@ -928,6 +948,35 @@ describe('slice 5d: nfx.play.open / nfx.play.close', () => {
       { ...NFX_OPEN, iroh: [{ ...IROH, node: 'E1'.repeat(32) }] },
       { ...NFX_OPEN, iroh: [ENDPOINT] },
       { ...NFX_OPEN, peers: [IROH] },
+      // Pear #97: counts that add up, each id once, within the bounds.
+      { ...NFX_OPEN, held: { seeders: 0, all: 0, named: { $map: [] } } },
+      { ...NFX_OPEN, held: { seeders: 1, all: 2, named: { $map: [] } } },
+      { ...NFX_OPEN, held: { seeders: 2, all: 1, named: { $map: [['720p', 2]] } } },
+      {
+        ...NFX_OPEN,
+        held: {
+          seeders: 2,
+          all: 0,
+          named: {
+            $map: [
+              ['720p', 1],
+              ['720p', 1],
+            ],
+          },
+        },
+      },
+      { ...NFX_OPEN, held: { seeders: 2, all: 0, named: { $map: [['720p', 0]] } } },
+      { ...NFX_OPEN, held: { seeders: 2, all: 0, named: { $map: [['', 1]] } } },
+      { ...NFX_OPEN, held: { seeders: 65, all: 65, named: { $map: [] } } },
+      {
+        ...NFX_OPEN,
+        held: {
+          seeders: 1,
+          all: 0,
+          named: { $map: Array.from({ length: 33 }, (_, i) => [`r${String(i)}`, 1]) },
+        },
+      },
+      { ...NFX_OPEN, held: { seeders: 1, all: 1, named: { $map: [] }, extra: 1 } },
     ])
       expect(g(bad), JSON.stringify(bad).slice(0, 200)).toBe(false);
     expect(validateWorkerArgs['nfx.play.close']({ sid: SID, extra: 1 })).toBe(false);
