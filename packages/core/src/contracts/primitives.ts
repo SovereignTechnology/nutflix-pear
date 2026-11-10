@@ -58,6 +58,13 @@ export type IrohRelayUrl = Branded<string, 'IrohRelayUrl'>;
  */
 export type TrackerUrl = Branded<string, 'TrackerUrl'>;
 
+/**
+ * v17 (NFX-10 §1, ADR 0023): a STUN server as the desktop app's WebRTC side takes one, `host:port`
+ * with no scheme: a DNS name (letters, digits, `.`, `-`), a dotted IPv4 address, or a bracketed IPv6
+ * address, and a port 1 to 65535. Compared as strings.
+ */
+export type StunServer = Branded<string, 'StunServer'>;
+
 /** Satoshis. Always an integer. Never a float, never a string on the wire. */
 export type Sats = Branded<number, 'Sats'>;
 

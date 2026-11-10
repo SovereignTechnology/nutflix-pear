@@ -41,6 +41,7 @@ import {
   isRelayUrl,
   isSats,
   isSeederStatusWire,
+  isStunServers,
   isTrackers,
   isUnixSeconds,
   isVideoManifest,
@@ -173,13 +174,14 @@ const isSettings = obj(
     autoTopUp: obj({ belowSats: isSats, fromMint: isMintUrl }, { amountSats: int(1, 10_000) }),
     // Contracts v10/v12: the NFX network, on by default since ADR 0020's 2026-11-08 amendment.
     // v14 (ADR 0022): `trackers` may be present; neither side writes it by default.
+    // v17 (ADR 0023): `webrtc` and `stunServers` may be present; the desktop defaults write both.
     nfx: obj(
       {
         enabled: bool,
         network: oneOf(['nfx:testnet:1'] as const),
         scopedRelays: arrayOf(isRelayUrl, 8),
       },
-      { irohRelays: isIrohRelays, trackers: isTrackers },
+      { irohRelays: isIrohRelays, trackers: isTrackers, webrtc: bool, stunServers: isStunServers },
     ),
   },
 );

@@ -45,7 +45,13 @@ const WEB: ShellOffer = {
   sections: ['home', 'settings'],
   homeTabs: ['network', 'tags'],
   settingsSections: ['appearance', 'playback', 'relays', 'nfx'],
-  nfxParts: { toggle: false, irohRelays: false, trackers: true, meshNotice: true },
+  nfxParts: {
+    toggle: false,
+    irohRelays: false,
+    trackers: true,
+    meshNotice: true,
+    webrtc: false,
+  },
   appearanceParts: { remoteImages: false },
   signIn: false,
 };

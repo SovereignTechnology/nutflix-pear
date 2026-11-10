@@ -122,12 +122,44 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parseStoredSettings({ v: 1, settings: { theme: 'neon', nfx } })).toBeNull();
   });
 
+  it('contracts v17: WebRTC and its STUN servers are kept; unreadable, only WebRTC goes off', () => {
+    const nfx = { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] };
+    const rtc = {
+      ...nfx,
+      webrtc: false,
+      stunServers: ['stun.example:3478', '[2001:db8::1]:19302'],
+    };
+    expect(parseStoredSettings({ v: 1, settings: { nfx: rtc } })?.settings.nfx).toEqual(rtc);
+    // A stored v16 value (neither field) stays as it is: absent WebRTC is on, at the default STUN.
+    expect(parseStoredSettings({ v: 1, settings: { nfx } })?.settings.nfx).toEqual(nfx);
+    for (const bad of [
+      { ...nfx, webrtc: 'yes' },
+      { ...nfx, stunServers: ['stun:stun.example:3478'] },
+      { ...nfx, stunServers: ['stun.example'] },
+      { ...nfx, stunServers: ['stun.example:70000'] },
+      { ...nfx, stunServers: ['a.example:1', 'a.example:1'] },
+      { ...nfx, stunServers: ['a:1', 'b:1', 'c:1', 'd:1', 'e:1'] },
+    ]) {
+      const parsed = parseStoredSettings({ v: 1, settings: { nfx: bad } });
+      // NFX stays on; WebRTC, which this build could not read, is off.
+      expect(parsed?.settings.nfx, JSON.stringify(bad)).toEqual({ ...nfx, webrtc: false });
+    }
+    // Anything else wrong still turns NFX off, WebRTC fields or not.
+    expect(
+      parseStoredSettings({ v: 1, settings: { nfx: { ...nfx, network: 'x', webrtc: 'yes' } } })
+        ?.settings.nfx,
+    ).toEqual({ ...DEFAULT_NFX, enabled: false });
+  });
+
   it("ADR 0020 2026-11-08: NFX is on by default, on the test network's public relays, and every part is the user's to change", () => {
     expect(DEFAULT_SETTINGS.nfx).toEqual({
       enabled: true,
       network: 'nfx:testnet:1',
       scopedRelays: ['wss://relay.nutflix.xyz'],
       irohRelays: ['https://iroh.nutflix.xyz/'],
+      // ADR 0023: WebRTC with browsers on, from the network's own STUN server.
+      webrtc: true,
+      stunServers: ['web.nutflix.xyz:3478'],
     });
     // The defaults pass the same checks a user's settings do (wss://, the iroh relay's form).
     expect(parseStoredSettings({ v: 1, settings: { nfx: DEFAULT_NFX } })?.settings.nfx).toEqual(

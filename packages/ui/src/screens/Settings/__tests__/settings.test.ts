@@ -867,6 +867,44 @@ describe('Settings — NFX network (contracts v10)', () => {
   });
 });
 
+describe('Settings — WebRTC with web browsers (contracts v17)', () => {
+  const ON = { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } as const;
+
+  it('is on when absent, says who sees the IP address, and switches off and on', async () => {
+    const adapter = adapterWith({}, { nfx: ON });
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter, { nfxParts: { webrtc: true } });
+    expect(section(r, 'NFX network').textContent).toContain('Trade video with web browsers');
+    expect(input(r, '-nfx-webrtc').checked).toBe(true);
+    const notice = r.get('[id$="-nfx-webrtc-notice"]');
+    expect(notice.textContent).toContain('see your IP address');
+    expect(notice.textContent).toContain('STUN server');
+    click(input(r, '-nfx-webrtc'));
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: { ...ON, webrtc: false } });
+    expect(input(r, '-nfx-webrtc').checked).toBe(false);
+    expect(r.container.querySelector('[id$="-nfx-webrtc-notice"]')).toBeNull();
+    click(input(r, '-nfx-webrtc'));
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: { ...ON, webrtc: true } });
+  });
+
+  it('is greyed out, with no notice, while NFX is off; hidden unless a shell shows it', async () => {
+    const { r } = await ready(adapterWith(), { nfxParts: { webrtc: true } });
+    expect(input(r, '-nfx-webrtc').disabled).toBe(true);
+    expect(r.container.querySelector('[id$="-nfx-webrtc-notice"]')).toBeNull();
+    const web = await ready(adapterWith({}, { nfx: ON }), {
+      sections: ['nfx'],
+      nfxParts: { toggle: false, irohRelays: false, trackers: true, webrtc: false },
+    });
+    expect(web.r.container.querySelector('[id$="-nfx-webrtc"]')).toBeNull();
+    expect(web.r.container.querySelector('[id$="-nfx-webrtc-notice"]')).toBeNull();
+    // Until the desktop app can signal (nfx #71), its default parts leave the switch out too.
+    const desktop = await ready(adapterWith({}, { nfx: ON }));
+    expect(desktop.r.container.querySelector('[id$="-nfx-webrtc"]')).toBeNull();
+  });
+});
+
 describe('Settings — NFX iroh relays (contracts v12)', () => {
   const OFF = { enabled: false, network: 'nfx:testnet:1', scopedRelays: [] } as const;
 
@@ -1008,7 +1046,13 @@ describe('Settings — the web client’s parts (ADR 0022)', () => {
   it('the mesh notice: shown when a shell asks for it, never on the desktop', async () => {
     const web = await ready(adapterWith(), {
       sections: ['nfx'],
-      nfxParts: { toggle: false, irohRelays: false, trackers: true, meshNotice: true },
+      nfxParts: {
+        toggle: false,
+        irohRelays: false,
+        trackers: true,
+        meshNotice: true,
+        webrtc: false,
+      },
     });
     const notice = web.r.get('[id$="-nfx-mesh-notice"]');
     expect(notice.textContent).toContain('Trackers and the peers you meet see your IP address.');
