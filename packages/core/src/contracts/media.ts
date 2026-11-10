@@ -124,9 +124,20 @@ export interface TranscodeOutput {
 
 export interface MediaPipeline {
   probe(path: string): Promise<MediaProbe>;
+  /**
+   * v16 (pear #97): `sizes` picks the renditions, `'all'` (the old 1080p / 720p / 360p ladder,
+   * capped at the source) or sizes from the source's offered ones (`media.offeredSizes`; a size
+   * not offered throws `unsupported-input`). A size is the short side's lines. Absent or empty:
+   * one rendition, 720p or the source's own size when it is smaller. Never upscaled, never above
+   * 2160p.
+   */
   plan(
     probe: MediaProbe,
-    opts?: { readonly maxHeight?: number; readonly codec?: RenditionSpec['codec'] },
+    opts?: {
+      readonly maxHeight?: number;
+      readonly codec?: RenditionSpec['codec'];
+      readonly sizes?: 'all' | readonly number[];
+    },
   ): LadderPlan;
   /** Runs the plan. Every output MP4 is verified faststart before it is returned. */
   transcode(

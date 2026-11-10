@@ -162,7 +162,7 @@ export function FfmpegMissing({
   readonly onRetry?: (() => void) | undefined;
 }): ReactElement {
   const description =
-    'Studio makes the 1080p, 720p and 360p versions viewers stream with ffmpeg, the free video tool. It is not bundled with the app: install it once, or tell Settings where it is, and uploading works.';
+    'Studio makes the versions viewers stream (720p, or the sizes you pick) with ffmpeg, the free video tool. It is not bundled with the app: install it once, or tell Settings where it is, and uploading works.';
   const body: ReactNode = (
     <>
       {status?.path ? (
@@ -219,9 +219,9 @@ export function WebUploadNotice(): ReactElement {
           Your gateway stores web uploads as-is
         </p>
         <p className="nf-studio__notice-text">
-          In the browser your file goes to your gateway exactly as it is: one version, no
-          1080p/720p/360p ladder, so the cost to watch follows your file’s own bitrate. Upload an
-          MP4 (H.264) so every viewer can play it. The desktop app transcodes before publishing.
+          In the browser your file goes to your gateway exactly as it is: one version, at your
+          file’s own size, so the cost to watch follows your file’s own bitrate. Upload an MP4
+          (H.264) so every viewer can play it. The desktop app transcodes before publishing.
         </p>
       </div>
     </aside>

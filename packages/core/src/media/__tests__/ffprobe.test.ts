@@ -33,6 +33,12 @@ describe('ffprobeArgv', () => {
     expect(argv).toContain('json');
     expect(argv.filter((a) => a.includes('rm -rf'))).toHaveLength(1);
   });
+
+  it('reads local files only: no protocol but `file`', () => {
+    const argv = ffprobeArgv('/home/u/a.m3u8');
+    expect(argv[argv.indexOf('-protocol_whitelist') + 1]).toBe('file');
+    expect(argv.indexOf('-protocol_whitelist')).toBeLessThan(argv.indexOf('/home/u/a.m3u8'));
+  });
 });
 
 describe('parseFfprobeJson', () => {

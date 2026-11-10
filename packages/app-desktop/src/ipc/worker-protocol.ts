@@ -32,6 +32,7 @@ import type {
   Sats,
   Settings,
   Sha256Hex,
+  SourceSizes,
   UnixSeconds,
   UploadInput,
   UploadProgress,
@@ -305,6 +306,11 @@ export interface WorkerMethodTable {
   ];
   /** Progress arrives as `upload.progress` events; the worker calls `studio.publish` on the host. */
   'studio.upload': [args: StudioUploadArgs, result: VideoManifest];
+  /**
+   * Contracts v16 (pear #97): ffprobe the file at `path` (main resolved it from the renderer's
+   * `FileToken`, SE-1) and answer the sizes it may be published in. Nothing is written.
+   */
+  'studio.probe': [args: { readonly path: string }, result: SourceSizes];
   /**
    * ADR 0015: read one image from a creator's profile core over Pear. The worker checks the
    * length and sha256; the bytes come back as hex.

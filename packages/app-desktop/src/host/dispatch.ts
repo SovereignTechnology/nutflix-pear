@@ -101,6 +101,11 @@ export function handlers(a: DesktopNetworkAdapter): HandlerTable {
             }),
       });
     },
+    // Contracts v16: the path comes ONLY from main's swap of the probe's own token (SE-1).
+    'studio.probe': (c) => {
+      if (c.file === undefined) fail('file-token-invalid', 'no file was granted for this probe');
+      return a.probe(c.file.path);
+    },
     'studio.myVideos': (_c, [cursor]) => a.studio.myVideos(cursor),
     'studio.analytics': (_c, [id]) => a.studio.analytics(id),
     'seeder.status': () => a.seeder.status(),

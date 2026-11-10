@@ -147,8 +147,16 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   ],
   'nfx.play.close': [{ sid: SID }],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
+  'studio.probe': [{ path: '/home/u/Videos/a.mp4' }, { path: 'C:\\Users\\u\\a.mp4' }],
   'studio.upload': [
     { uploadId: UPLOAD_ID, path: '/home/u/Videos/a.mp4', name: 'a.mp4', meta },
+    // Contracts v16: rendition heights.
+    {
+      uploadId: UPLOAD_ID,
+      path: '/home/u/Videos/a.mp4',
+      name: 'a.mp4',
+      meta: { ...meta, sizes: [720, 360] },
+    },
     {
       uploadId: UPLOAD_ID,
       path: 'C:\\Users\\u\\a.mp4',
@@ -207,6 +215,19 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
     { found: true, path: '/usr/bin/ffmpeg', version: '8.1.2', os: 'linux' },
   ],
   'studio.upload': [VIDEO],
+  'studio.probe': [
+    {
+      height: 1080,
+      sizes: [
+        { height: 1080, original: false, kbps: 5128 },
+        { height: 720, original: false, kbps: 2628 },
+        { height: 480, original: false, kbps: 1328 },
+        { height: 360, original: false, kbps: 896 },
+      ],
+      durationSec: 12.5,
+    },
+    { height: 240, sizes: [{ height: 240, original: true, kbps: 629 }] },
+  ],
   'image.fetch': [{ hex: 'ffd8ffe0' }],
   'profile.putImage': [{ url: HYPER_IMG, sha256: R.sha256, size: 4 }],
 };
@@ -435,6 +456,11 @@ describe('host → worker', () => {
       ['studio.upload', { ...up, meta: { ...meta, satsPerBlock: sats(0), nfx: 'yes' } }],
       ['seeder.status', { extra: 1 }],
       ['studio.ffmpeg', { recheck: true, path: 'ffmpeg' }],
+      // Contracts v16: an absolute path only, and sizes within the caps.
+      ['studio.probe', { path: 'a.mp4' }],
+      ['studio.probe', { path: '/a.mp4', extra: 1 }],
+      ['studio.upload', { ...up, meta: { ...meta, sizes: [4320] } }],
+      ['studio.upload', { ...up, meta: { ...meta, sizes: [720, 720] } }],
       // ADR 0015: only a profile-core reference, within the image cap.
       ['image.fetch', { url: 'https://x.example/a.jpg', sha256: R.sha256, size: 10 }],
       ['image.fetch', { url: HYPER_IMG, sha256: R.sha256, size: 0 }],
@@ -460,6 +486,18 @@ describe('host → worker', () => {
       { unpaid: 1, extra: true },
     ])
       expect(validateWorkerResult['play.close'](bad), JSON.stringify(bad)).toBe(false);
+    // Contracts v16: a probe's answer is bounded: heights 2 to 2160, 1 to 7 sizes, exact keys.
+    const probed = RESULTS['studio.probe'][0]!;
+    for (const bad of [
+      { ...probed, height: 4320 },
+      { ...probed, sizes: [] },
+      { ...probed, sizes: Array.from({ length: 8 }, () => probed.sizes[0]) },
+      { ...probed, sizes: [{ height: 720, original: false }] },
+      { ...probed, sizes: [{ height: 720, original: 'no', kbps: 1 }] },
+      { ...probed, durationSec: -1 },
+      { ...probed, path: '/home/u/a.mp4' },
+    ])
+      expect(validateWorkerResult['studio.probe'](bad), JSON.stringify(bad)).toBe(false);
     expect(validateWorkerResult['image.fetch']({ hex: 'abc' })).toBe(false); // odd length
     expect(validateWorkerResult['image.fetch']({ hex: 'ZZ' })).toBe(false);
     expect(isHostToWorker({ op: 'req', id: 1, m: 'studio.publish', a: draft })).toBe(false); // wrong direction

@@ -214,6 +214,31 @@ export const UploadDetails: Story = {
   ),
 };
 
+/** Pear #97: a 4K file, two sizes picked (each extra size is storage for creator and seeders). */
+export const UploadSizes4k: Story = {
+  name: 'Upload — sizes, a 4K file',
+  render: () => (
+    <Screen
+      adapter={storyAdapter({ sourceHeight: 2160 })}
+      tab="upload"
+      pendingFile={FILE}
+      steps={[
+        { wait: 'input[name="sizes"][value="2160"]' },
+        { click: 'input[name="sizes"][value="2160"]' },
+        { click: 'input[name="sizes"][value="360"]' },
+      ]}
+    />
+  ),
+};
+
+/** Pear #97: a 576-line file offers its own height ("Original"), pre-selected. */
+export const UploadSizesOriginal: Story = {
+  name: 'Upload — sizes, a smaller file',
+  render: () => (
+    <Screen adapter={storyAdapter({ sourceHeight: 576 })} tab="upload" pendingFile={FILE} />
+  ),
+};
+
 export const UploadValidation: Story = {
   name: 'Upload — validation errors',
   render: () => (

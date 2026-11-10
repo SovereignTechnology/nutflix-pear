@@ -15,6 +15,7 @@ import type {
   NostrEventId,
   Notification,
   PricePolicy,
+  SourceSizes,
   UploadInput,
   VideoManifest,
 } from '@sovit/core';
@@ -117,6 +118,8 @@ export interface NutflixBridge {
       input: BridgeUploadInput,
       onProgress: (p: UploadProgressWire) => void,
     ): Promise<VideoManifest>;
+    /** Contracts v16: ffprobe the DOM `File` the user picked (SE-1: by its own token). */
+    probe(file: File): Promise<SourceSizes>;
     myVideos: Call<'studio.myVideos'>;
     analytics: Call<'studio.analytics'>;
   };

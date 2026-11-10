@@ -8,41 +8,145 @@ import { DEFAULT_BLOCK_SIZE, media, mocks } from '@sovit/core';
 import type { MintUrl, UploadProgress } from '@sovit/core';
 import {
   BLOCK_SIZE,
+  DEFAULT_SIZE,
   EMPTY_DRAFT,
   INITIAL_PROGRESS,
+  LADDER_SHORTCUT,
   TYPICAL_RENDITIONS,
   classifyStudioError,
   describeBanReason,
   describeStudioError,
   failProgress,
   formatBytes,
+  initialSizes,
+  ladderShortcut,
   looksLikeVideo,
   nfxEligible,
+  offeredSizes,
   normalizeHttpsUrl,
   normalizeInvoice,
   parseSplit,
   parseTags,
   reduceUploadProgress,
   renditionKbps,
+  sameSizes,
   satsPerGigabyte,
   satsPerMinute,
+  sizeBytes,
+  sizeLabel,
   splitPayment,
   titleFromFileName,
   toUploadInput,
   uploadSteps,
   validateDraft,
+  type SourceState,
   type StudioDraft,
 } from '../model.js';
+
+/** What `studio.probe` answers for a source `height` lines tall (core's own answer). */
+function probed(height: number): SourceState {
+  return {
+    status: 'ready',
+    source: media.sourceSizes({
+      container: 'mov,mp4',
+      durationSec: 60,
+      video: { codec: 'h264', width: Math.round((height * 16) / 9), height, fps: 30 },
+    }),
+  };
+}
+
+describe('sizes (pear #97)', () => {
+  it('offers only sizes at or below the source, a shorter source its own, tallest first', () => {
+    const labels = (h: number): string[] => offeredSizes(probed(h)).map(sizeLabel);
+    expect(labels(1080)).toEqual(['1080p', '720p', '480p', '360p']);
+    expect(labels(720)).toEqual(['720p', '480p', '360p']);
+    expect(labels(480)).toEqual(['480p', '360p']);
+    expect(labels(360)).toEqual(['360p']);
+    expect(labels(2160)).toEqual(['2160p', '1440p', '1080p', '720p', '480p', '360p']);
+    expect(labels(576)).toEqual(['480p', '360p', 'Original (576p)']);
+    expect(labels(240)).toEqual(['Original (240p)']);
+    // A file the shell could not read offers nothing: the upload names no size.
+    expect(offeredSizes({ status: 'unknown' })).toEqual([]);
+    // Portrait: the short side (a 1080x1920 phone video is a 1080 source).
+    const portrait: SourceState = {
+      status: 'ready',
+      source: media.sourceSizes({
+        container: 'mov,mp4',
+        durationSec: 60,
+        video: { codec: 'h264', width: 1080, height: 1920, fps: 30 },
+      }),
+    };
+    expect(offeredSizes(portrait).map(sizeLabel)).toEqual(['1080p', '720p', '480p', '360p']);
+    expect(initialSizes(portrait, undefined)).toEqual([720]);
+  });
+
+  it("pre-selects 720p, or the source's own height when it is shorter", () => {
+    expect(initialSizes(probed(2160), undefined)).toEqual([720]);
+    expect(initialSizes(probed(1080), undefined)).toEqual([720]);
+    expect(initialSizes(probed(720), [])).toEqual([720]);
+    expect(initialSizes(probed(576), undefined)).toEqual([576]);
+    expect(initialSizes(probed(480), undefined)).toEqual([480]);
+    expect(initialSizes(probed(360), undefined)).toEqual([360]);
+    expect(initialSizes({ status: 'unknown' }, undefined)).toBeUndefined();
+    expect(initialSizes({ status: 'unknown' }, [1080])).toBeUndefined();
+  });
+
+  it('a remembered choice is kept where offered, else the tallest offered size at or below it', () => {
+    expect(initialSizes(probed(2160), [2160])).toEqual([2160]);
+    expect(initialSizes(probed(1080), [1080, 360])).toEqual([1080, 360]);
+    expect(initialSizes(probed(720), [1080])).toEqual([720]);
+    expect(initialSizes(probed(576), [1080, 720, 360])).toEqual([576, 360]);
+    expect(initialSizes(probed(480), [1080])).toEqual([480]);
+    expect(initialSizes(probed(360), [1080, 480])).toEqual([360]);
+    // A remembered original this file does not offer, and one below every offered size.
+    expect(initialSizes(probed(1080), [576])).toEqual([480]);
+    expect(initialSizes(probed(1080), [240])).toEqual([360]);
+    // Core's planner applies the same rule to the same answer.
+    for (const h of [2160, 1080, 720, 576, 480, 360, 240])
+      for (const r of [[2160], [1080, 360], [576], [240], [720, 480]])
+        expect(initialSizes(probed(h), r), `${String(h)} ${String(r)}`).toEqual(
+          media.chooseSizes(h, r),
+        );
+  });
+
+  it('the ladder shortcut, sizes and storage arithmetic', () => {
+    expect(ladderShortcut(probed(1080))).toEqual([1080, 720, 360]);
+    expect(ladderShortcut(probed(576))).toEqual([360]);
+    expect(ladderShortcut({ status: 'unknown' })).toEqual([]);
+    expect(sizeBytes(2628, 60)).toBe(2628 * 125 * 60);
+    expect(sizeBytes(-1, 60)).toBe(0);
+    expect(sameSizes([720, 360], [360, 720])).toBe(true);
+    expect(sameSizes([720], undefined)).toBe(false);
+    expect(sameSizes(undefined, undefined)).toBe(true);
+    expect(sameSizes([720], [720, 360])).toBe(false);
+  });
+
+  it('draft: the sizes go to the upload tallest first; none picked is an error', () => {
+    const draft: StudioDraft = {
+      ...EMPTY_DRAFT,
+      file: { source: '/v.mp4', name: 'v.mp4' },
+      title: 'T',
+      mints: [mocks.MINTS.a],
+    };
+    expect(toUploadInput(draft)).not.toHaveProperty('sizes');
+    expect(toUploadInput({ ...draft, sizes: [360, 1080] })).toMatchObject({ sizes: [1080, 360] });
+    expect(validateDraft({ ...draft, sizes: [] })).toEqual({ sizes: 'Pick at least one size.' });
+    expect(toUploadInput({ ...draft, sizes: [] })).toBeUndefined();
+  });
+});
 
 describe('display arithmetic', () => {
   it('keeps the block size and the typical ladder in sync with core', () => {
     expect(BLOCK_SIZE).toBe(DEFAULT_BLOCK_SIZE);
     expect(TYPICAL_RENDITIONS).toEqual(
-      media.LADDER_TIERS.map((t) => ({
+      media.LADDER_TIERS.filter((t) => media.ALL_SIZES_PRESET.includes(t.height)).map((t) => ({
         label: t.label,
         kbps: t.videoBitrateKbps + t.audioBitrateKbps,
       })),
     );
+    // Pear #97: the default and the ladder shortcut too.
+    expect(DEFAULT_SIZE).toBe(media.DEFAULT_RENDITION_HEIGHT);
+    expect(LADDER_SHORTCUT).toEqual(media.ALL_SIZES_PRESET);
   });
 
   it('splits a payment per ADR 0005 Q1: seeder = ceil(amount × s / 100), creator = rest', () => {

@@ -98,10 +98,7 @@ export function createMediaPipeline(deps: MediaPipelineDeps): MediaPipeline {
     return { ...parsed, faststart };
   }
 
-  function plan(
-    source: MediaProbe,
-    opts?: { readonly maxHeight?: number; readonly codec?: RenditionSpec['codec'] },
-  ): LadderPlan {
+  function plan(source: MediaProbe, opts?: Parameters<MediaPipeline['plan']>[1]): LadderPlan {
     return planLadder(source, opts ?? {});
   }
 

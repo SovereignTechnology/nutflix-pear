@@ -149,6 +149,8 @@ const DEFAULT_CALL_TIMEOUTS: Partial<Record<WorkerMethod, number>> = {
   'studio.upload': 0, // transcodes run for minutes; progress events show liveness
   'seeder.melt': 120_000,
   'studio.ffmpeg': 60_000,
+  // Contracts v16: one ffprobe of a local file (it reads a few MB at most).
+  'studio.probe': 60_000,
 };
 const MAX_QUEUED = 256;
 const MAX_LINE = 1024;

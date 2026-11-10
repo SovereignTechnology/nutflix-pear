@@ -11,8 +11,10 @@
  *   - short-lived: `FILE_TOKEN_TTL_MS` (10 min);
  *   - bounded: at most `MAX_TOKENS_PER_WC` live per webContents (oldest evicted).
  *
- * Main swaps a token for `{ path, name, size }` only when relaying `studio.upload` (the IPC
- * gate); any other string there is `file-token-invalid`.
+ * Main swaps a token for `{ path, name, size }` only when relaying `studio.upload` or (contracts
+ * v16) `studio.probe` (the IPC gate); any other string there is `file-token-invalid`. A probe
+ * reads the file with ffprobe and publishes nothing, so it takes a token of its own and asks no
+ * confirmation.
  *
  * Residual (documented in docs/archive/lanes/L6-A.md): a compromised renderer can still ask for a token
  * for a path it knows, because `isGrantFileMsg` is all main sees — the preload only ever sends

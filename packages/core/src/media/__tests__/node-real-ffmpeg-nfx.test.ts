@@ -84,7 +84,8 @@ describe.skipIf(bins === undefined)('NFX packaging with real ffmpeg', () => {
   it('remuxes the transcoded ladder into verified NFX-05 content, by stream copy', async () => {
     // Not ultrafast: x264 then signals Constrained Baseline even with `-profile:v high`.
     const p = createNodeMediaPipeline({ binaries: bins!, tmpDir: base, preset: 'veryfast' });
-    const plan = p.plan(await p.probe(input));
+    // Two renditions (pear #97: the old ladder is `'all'`), so their GOP grids are compared.
+    const plan = p.plan(await p.probe(input), { sizes: 'all' });
     const out = await p.transcode(input, plan, () => undefined);
     // A name that looks like an option and a protocol still reaches ffmpeg as a file name.
     const odd = join(base, '-720p concat:x $(id).mp4');

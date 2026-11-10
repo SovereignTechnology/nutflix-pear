@@ -161,6 +161,8 @@ export const VALID: Samples = {
         satsPerBlock: sats(0),
         split: { seeder: 70, creator: 30 },
         thumbnailChoice: { bytes: new Uint8Array([0xff, 0xd8, 0xff]), type: 'image/jpeg' },
+        // Contracts v16: rendition heights, an original (1000) among tiers.
+        sizes: [2160, 1000, 360],
       },
     ],
     [
@@ -193,6 +195,8 @@ export const VALID: Samples = {
       },
     ],
   ],
+  // Contracts v16: a probe names its file by a token of its own.
+  'studio.probe': [[TOKEN]],
   'studio.myVideos': [[], ['10']],
   'studio.analytics': [[VIDEO_ID]],
   'seeder.status': [[]],
@@ -207,6 +211,9 @@ export const VALID: Samples = {
     [{ relays: [{ url: 'wss://relay.example' as never, read: true, write: false }] }],
     [{ defaultMints: [MINT], seeding: { enabled: true, diskCapBytes: 50 * 1024 ** 3 } }],
     [{ autoTopUp: { belowSats: sats(0), fromMint: MINT } }],
+    // Contracts v16: Studio's next default sizes.
+    [{ publishSizes: [720] }],
+    [{ publishSizes: [2160, 576, 360] }],
     [
       {
         nfx: {
@@ -349,9 +356,27 @@ export const INVALID: Partial<Record<Method, readonly unknown[][]>> = {
     // Contracts v8: NFX never for a priced video (free only, issue #15), and only a boolean.
     [{ ...VALID['studio.upload'][0]![0], nfx: true }],
     [{ ...VALID['studio.upload'][0]![0], satsPerBlock: sats(0), nfx: 1 }],
+    // Contracts v16: heights are whole, 2 to 2160, unique, at most 7.
+    [{ ...VALID['studio.upload'][0]![0], sizes: [4320] }],
+    [{ ...VALID['studio.upload'][0]![0], sizes: [1] }],
+    [{ ...VALID['studio.upload'][0]![0], sizes: [720.5] }],
+    [{ ...VALID['studio.upload'][0]![0], sizes: [720, 720] }],
+    [{ ...VALID['studio.upload'][0]![0], sizes: ['720'] }],
+    [{ ...VALID['studio.upload'][0]![0], sizes: [2160, 1440, 1080, 720, 480, 360, 1000, 240] }],
+  ],
+  'studio.probe': [
+    // SE-1: a token, never a path.
+    ['/home/user/Videos/a.mp4'],
+    ['nf-file:../../etc/passwd'],
+    [],
+    [TOKEN, TOKEN],
   ],
   updateSettings: [
     [{ theme: 'neon' }],
+    // Contracts v16: Studio's next default sizes: at least one valid height.
+    [{ publishSizes: [] }],
+    [{ publishSizes: [4320] }],
+    [{ publishSizes: [720, 720] }],
     [{ relays: [{ url: 'ws://relay.example', read: true, write: true }] }],
     [{ relays: [{ url: 'wss://relay.example#x', read: true, write: true }] }],
     [{ relays: [{ url: 'wss://relay.example', read: true }] }],

@@ -387,6 +387,12 @@ export class FakeHost {
         this.lastUpload = { path: file.path, name: file.name, size: file.size };
         return video;
       }
+      // Contracts v16: the path is main's swap of the probe's own token, never the renderer's.
+      case 'studio.probe': {
+        if (file === undefined) throw new Error('file-token-invalid: no file');
+        this.lastProbe = { path: file.path, name: file.name, size: file.size };
+        return a.studio.probe(file.path);
+      }
       default: {
         const [obj, fn] = method.split('.') as [string, string | undefined];
         const owner: unknown =
@@ -400,4 +406,5 @@ export class FakeHost {
 
   /** The last file `studio.upload` received (SE-1: from main's token swap). */
   lastUpload: { path: string; name: string; size: number } | undefined;
+  lastProbe: { path: string; name: string; size: number } | undefined;
 }
