@@ -1,0 +1,15 @@
+{
+  // The helper's browser run (e2e/browser.e2e.ts, ADR 0023): plain Node with type stripping, never
+  // part of `npm test` (it needs the helper, nfxd, nfx's player library, ffmpeg and a browser;
+  // .github/workflows/helper-webrtc.yml runs it). `tsc -b` from the root checks it; nothing is
+  // emitted. DOM for the page's side of `page.evaluate` and the tracker's WebSocket.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["./*.ts"]
+}
