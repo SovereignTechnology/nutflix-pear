@@ -623,15 +623,20 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     const r = make();
     const c = new Key();
     expect((await rejection(r.adapter.playNfx(addrOf(c, 'missing')))).code).toBe('not-found');
+    expect((await rejection(r.adapter.playNfx(addrOf(c, 'missing'), '720p'))).code).toBe(
+      'not-found',
+    );
     expect((await rejection(r.adapter.playNfx('38504:x' as NfxAddress))).code).toBe(
       'invalid-argument',
     );
-    expect((await rejection(r.adapter.playNfx(addrOf(c, 'missing'), '720p'))).code).toBe(
-      'invalid-argument',
-    );
+    for (const bad of ['', 'meta', 'x'.repeat(65), 7 as unknown as string]) {
+      expect((await rejection(r.adapter.playNfx(addrOf(c, 'missing'), bad))).code).toBe(
+        'invalid-argument',
+      );
+    }
   });
 
-  it('renditions are the player’s levels; setRendition is setLevel; a reopen starts on its level', async () => {
+  it('renditions are the player’s levels by rendition id; setRendition is setLevel; a reopen plays its pick', async () => {
     const r = make();
     const { addr } = await playable(r);
     put(r.relays, [SCOPED], beacon(new Key(), addr, [https('https://seed.example/o')]));
@@ -639,34 +644,43 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     if (session.source.kind !== 'element') throw new Error('not an element source');
     session.source.attach(document.createElement('video'));
     await tick();
+    // Everyone holds everything: nothing restricts the player.
+    expect('renditions' in r.player.last.options).toBe(false);
     const lib = r.player.last.session;
     lib.parsed([
-      { index: 0, width: 640, height: 360, bitrate: 800_000 },
-      { index: 1, width: 1280, height: 720, bitrate: 2_500_000 },
+      { index: 0, id: '360p', width: 640, height: 360, bitrate: 800_000 },
+      { index: 1, id: '720p', width: 1280, height: 720, bitrate: 2_500_000 },
     ]);
+    // The quality menu's ids are the hash list's (the library's `Level.id`), not level indexes.
     expect(session.renditions).toEqual([
-      { id: 'l0', bandwidth: 800_000, resolution: '640x360' },
-      { id: 'l1', bandwidth: 2_500_000, resolution: '1280x720' },
+      { id: '360p', bandwidth: 800_000, resolution: '640x360' },
+      { id: '720p', bandwidth: 2_500_000, resolution: '1280x720' },
     ]);
-    await session.setRendition?.('l1');
+    await session.setRendition?.('720p');
     expect(lib.setLevelCalls).toEqual([1]);
-    expect(session.rendition).toBe('l1');
-    expect((await rejection(session.setRendition!('l7'))).code).toBe('invalid-argument');
-    expect((await rejection(session.setRendition!('720p'))).code).toBe('invalid-argument');
+    expect(session.rendition).toBe('720p');
+    expect((await rejection(session.setRendition!('1080p'))).code).toBe('invalid-argument');
+    expect((await rejection(session.setRendition!('l1'))).code).toBe('invalid-argument');
     await session.close();
-    expect((await rejection(session.setRendition!('l0'))).code).toBe('session-closed');
+    expect((await rejection(session.setRendition!('360p'))).code).toBe('session-closed');
     // NfxWatch's fallback: close and reopen on the rendition.
     put(r.relays, [SCOPED], beacon(new Key(), addr, [https('https://seed.example/o')]));
-    const again = await r.adapter.playNfx(addr, 'l1');
-    expect(again.rendition).toBe('l1');
+    const again = await r.adapter.playNfx(addr, '720p');
+    expect(again.rendition).toBe('720p');
     if (again.source.kind !== 'element') throw new Error('not an element source');
     again.source.attach(document.createElement('video'));
     await tick();
-    expect(r.player.last.options.level).toBe(1);
+    expect('level' in r.player.last.options).toBe(false);
+    r.player.last.session.parsed([
+      { index: 0, id: '360p', width: 640, height: 360, bitrate: 800_000 },
+      { index: 1, id: '720p', width: 1280, height: 720, bitrate: 2_500_000 },
+    ]);
+    expect(r.player.last.session.setLevelCalls).toEqual([1]);
+    expect(again.rendition).toBe('720p');
     expect(again).toBeInstanceOf(WebNfxSession);
   });
 
-  it('pear #97: seeders holding different renditions start the player on the most-held', async () => {
+  it('pear #97: seeders holding different renditions: the player may play only those, the most-held first, each origin only what it serves', async () => {
     const creator = new Key();
     const sha = (x: string): string => createHash('sha256').update(x).digest('hex');
     const ladder = [
@@ -733,7 +747,37 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     );
     const addr = addrOf(creator, 'held-video');
     await r.adapter.nfxVideo(addr);
-    // Two origins hold 360p, one of them 720p too; nobody this page can reach holds 1080p.
+    // Two origins hold 360p, one of them 720p too; nobody this page can reach holds 1080p. A
+    // third seeder names seed-2 too, for 720p alone: seed-2 is taken to serve what both say.
+    put(
+      r.relays,
+      [SCOPED],
+      beacon(new Key(), addr, [{ ...https('https://seed-1.example/o'), renditions: ['360p'] }]),
+      beacon(new Key(), addr, [
+        { ...https('https://seed-2.example/o'), renditions: ['360p', '720p'] },
+      ]),
+      beacon(new Key(), addr, [{ ...https('https://seed-2.example/o'), renditions: ['720p'] }]),
+      // Unreachable from a page: not counted, and not an origin.
+      beacon(new Key(), addr, [{ ...https('https://10.0.0.5/o'), renditions: ['1080p'] }]),
+    );
+    const session = await r.adapter.playNfx(addr);
+    if (session.source.kind !== 'element') throw new Error('not an element source');
+    session.source.attach(document.createElement('video'));
+    await tick();
+    const { options } = r.player.last;
+    // 720p and 360p are held by two seeders each: the higher bandwidth first; 1080p never.
+    expect(options.renditions).toEqual(['720p', '360p']);
+    expect(options.origins).toEqual([
+      { url: 'https://seed-2.example/o', renditions: ['720p'] },
+      { url: 'https://seed-1.example/o', renditions: ['360p'] },
+      WEB_FALLBACK_ORIGIN,
+    ]);
+    expect('level' in options).toBe(false);
+    expect(served).toContain(`https://seed-1.example/o/${root}`);
+    expect(session.rendition).toBe(AUTO_RENDITION);
+    await session.close();
+
+    // A rendition the viewer picked starts the list when it is allowed, and is played.
     put(
       r.relays,
       [SCOPED],
@@ -742,26 +786,34 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
         { ...https('https://seed-2.example/o'), renditions: ['360p', '720p'] },
       ]),
     );
-    const session = await r.adapter.playNfx(addr);
-    if (session.source.kind !== 'element') throw new Error('not an element source');
-    session.source.attach(document.createElement('video'));
+    const picked = await r.adapter.playNfx(addr, '720p');
+    expect(picked.rendition).toBe('720p');
+    if (picked.source.kind !== 'element') throw new Error('not an element source');
+    picked.source.attach(document.createElement('video'));
     await tick();
-    // hls.js lists 360p, 720p, 1080p: 360p is level 0.
-    expect(r.player.last.options.level).toBe(0);
-    expect(served).toContain(`https://seed-1.example/o/${root}`);
-    expect(session.rendition).toBe('l0');
-    await session.close();
+    expect(r.player.last.options.renditions).toEqual(['720p', '360p']);
+    await picked.close();
 
-    // A rendition the viewer picked is theirs: no hash list is read for it.
-    served.length = 0;
+    // One nobody holds is not: the list stays as it was, and hls.js picks among the held ones.
     put(
       r.relays,
       [SCOPED],
       beacon(new Key(), addr, [{ ...https('https://seed-1.example/o'), renditions: ['360p'] }]),
+      beacon(new Key(), addr, [
+        { ...https('https://seed-2.example/o'), renditions: ['360p', '720p'] },
+      ]),
     );
-    const picked = await r.adapter.playNfx(addr, 'l2');
-    expect(picked.rendition).toBe('l2');
-    expect(served).toEqual([]);
+    const unheld = await r.adapter.playNfx(addr, '1080p');
+    if (unheld.source.kind !== 'element') throw new Error('not an element source');
+    unheld.source.attach(document.createElement('video'));
+    await tick();
+    expect(r.player.last.options.renditions).toEqual(['360p', '720p']);
+    r.player.last.session.parsed([
+      { index: 0, id: '360p', width: 640, height: 360, bitrate: 950_000 },
+      { index: 1, id: '720p', width: 1280, height: 720, bitrate: 2_800_000 },
+    ]);
+    expect(r.player.last.session.setLevelCalls).toEqual([]);
+    expect(unheld.rendition).toBe(AUTO_RENDITION);
   });
 
   it('close() of the adapter closes every play', async () => {

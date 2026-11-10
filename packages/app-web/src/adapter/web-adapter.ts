@@ -49,6 +49,7 @@ import type {
   Sha256Hex,
   Wallet,
 } from '@sovit/core';
+import { MAX_RENDITION_ID_LENGTH, RESERVED_RENDITION_ID } from '@sovit/core/nfx';
 import {
   NFX_BEACON_WAIT_MS,
   NfxBeaconWatch,
@@ -73,8 +74,8 @@ import { beaconEndpoints, playEndpoints } from './endpoints.js';
 import type { FetchFn } from './http.js';
 import { WebImages } from './images.js';
 import { browserRelayInfoFetch } from './relay-info.js';
-import { startFor, webAvailability } from './renditions.js';
-import { WebNfxSession, levelOf } from './session.js';
+import { preferring, renditionsFor, webAvailability } from './renditions.js';
+import { WebNfxSession } from './session.js';
 import { WebWallet } from './wallet.js';
 
 /** Page size of a comment thread (the desktop app's). */
@@ -131,6 +132,16 @@ function isHex64(x: unknown): x is string {
 
 function isText(x: unknown): x is string {
   return typeof x === 'string' && x.length <= WEB_MAX_TEXT;
+}
+
+/** A hash-list rendition id as `playNfx` takes one: non-empty, at most 64 characters, never `meta`. */
+function isRenditionId(x: unknown): x is string {
+  return (
+    typeof x === 'string' &&
+    x !== '' &&
+    x !== RESERVED_RENDITION_ID &&
+    x.length <= MAX_RENDITION_ID_LENGTH
+  );
 }
 
 function checkPage(cursor: unknown, limit: unknown): void {
@@ -296,8 +307,9 @@ export class WebNetworkAdapter implements NetworkAdapter {
   async playNfx(addr: NfxAddress, rendition?: string): Promise<NfxPlaySession> {
     const a = canonicalNfxAddress(addr);
     if (a === null) fail('invalid-argument', 'not an NFX address on this network');
-    const level = rendition === undefined ? undefined : levelOf(rendition);
-    if (level === null) fail('invalid-argument', 'no such rendition');
+    if (rendition !== undefined && !isRenditionId(rendition)) {
+      fail('invalid-argument', 'no such rendition');
+    }
     const video = await this.#read(() => this.#catalog.video(a));
     if (video === null) fail('not-found', 'no such free NFX video');
     const now = (): number => this.#now();
@@ -316,20 +328,24 @@ export class WebNetworkAdapter implements NetworkAdapter {
       this.#settings().nfx?.trackers ?? [],
       WEB_FALLBACK_ORIGIN,
     );
-    // Pear #97: when the seeders hold different renditions, start on the one most of them hold
-    // (never one nobody this page can reach holds). A rendition the viewer picked is theirs.
-    const start =
-      level === undefined
-        ? await startFor(this.#o.fetch, video, origins, webAvailability(video, events, now()))
-        : undefined;
+    // Pear #97: when the seeders hold different renditions, the player may play only those
+    // someone this page can reach holds, the most-held first (and a rendition the viewer picked
+    // first, when it is one of them); each origin is asked only for what it serves.
+    const allowed = await renditionsFor(
+      this.#o.fetch,
+      video,
+      origins,
+      webAvailability(video, events, now()),
+    );
     const session = new WebNfxSession({
       videoId: a,
       manifestJson: JSON.stringify(toWire(video.event)),
       origins,
+      renditions:
+        allowed === undefined || rendition === undefined ? allowed : preferring(allowed, rendition),
       trackers,
       iceServers: WEB_ICE_SERVERS,
-      level: level ?? start?.level,
-      ...(start === undefined ? {} : { expect: start.rendition }),
+      pin: rendition,
       player: () => this.#playerReady(),
       onClose: (s) => {
         this.#sessions.delete(s);

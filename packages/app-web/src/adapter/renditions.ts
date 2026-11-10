@@ -1,27 +1,21 @@
 /**
- * Which renditions a web play may use, and which it starts on (pear #97, the maintainer's
- * decision of 2026-11-09): never a rendition no reachable seeder holds, and the one most of them
- * hold first.
+ * Which renditions a web play may use (pear #97, the maintainer's decision of 2026-11-09): never
+ * one no reachable seeder holds, and the one most of them hold first. nfx's library does the
+ * cutting (nfx #83): `open()` takes the allowed renditions, preferred first, and each origin with
+ * the renditions it serves (`endpoints.ts`), and its session's levels are the allowed renditions
+ * that the origin it plays from serves. hls.js then adapts to bandwidth among those alone.
  *
  * - **Held** comes from core's `nfx.renditionAvailability` over the beacons, counting only what
- *   this page can reach: `https` origins it may fetch from (`beaconOrigin`) and `webrtc` bridges
- *   with a tracker it may use (`beaconTracker`). An endpoint without a `renditions` list holds
- *   every rendition.
+ *   this page can reach: `https` origins it may fetch from (`beaconOrigin`) that serve something,
+ *   and `webrtc` bridges with a tracker it may use (`beaconTracker`). An endpoint without a
+ *   `renditions` list holds every rendition.
  * - **When every counted seeder holds every rendition** (the usual case, and every one-rendition
- *   video), nothing is pinned: hls.js picks, as before.
+ *   video), no list is passed: the library allows every rendition, and each origin's own list (if
+ *   its beacon has one) still cuts what it is asked for.
  * - **Otherwise** the hash list is read from the play's origins (checked against the manifest's
- *   root, as the player checks it), the held renditions are ordered by core's
- *   `nfx.preferRenditions`, and the player starts on the first. The player's `level` is an index
- *   into hls.js's levels, which hls.js 1.7.3 sorts by HDCP level, height (when every level has a
- *   resolution), frame rate, video range, codec and then bitrate. Renditions of one NFX package
- *   differ only in height and bandwidth, so `levelOrder` is that order. The session checks the
- *   level it pinned once hls.js lists its levels, and moves to the matching one if they differ.
- *
- * TODO(pear #97): nfx's web library is getting an `open()` option that restricts its levels to
- * given rendition ids. Once pear pins a library with it, pass `allowed` (every held id, the
- * preferred first) instead of only the starting level, so hls.js adapts to bandwidth among the
- * held renditions; until then the start is pinned and the viewer's quality menu still lists every
- * level.
+ *   root, as the player checks it), and the held renditions it names are passed in core's
+ *   `nfx.preferRenditions` order. Only ids of the verified hash list are passed: the library
+ *   refuses an id the hash list lacks, and beacons come from any key.
  */
 import type { NfxVideo, NostrEvent } from '@sovit/core';
 import {
@@ -35,7 +29,12 @@ import {
   type RenditionAvailability,
 } from '@sovit/core/nfx';
 
-import { beaconOrigin, beaconTracker } from './endpoints.js';
+import {
+  MAX_CLAIMED_RENDITIONS,
+  beaconOrigin,
+  beaconTracker,
+  type PlayOrigin,
+} from './endpoints.js';
 import { getBounded, type FetchFn } from './http.js';
 
 /**
@@ -45,10 +44,13 @@ import { getBounded, type FetchFn } from './http.js';
 export const HASH_LIST_TIMEOUT_MS = 10_000;
 /** The most origins asked for the hash list. */
 export const HASH_LIST_ORIGINS = 3;
+/** The most ids `open()`'s `renditions` takes (nfx's library: `MAX_RENDITIONS`). */
+export const MAX_ALLOWED_RENDITIONS = MAX_CLAIMED_RENDITIONS;
 
 /** Whether this page can use endpoint `e` (the rules `beaconEndpoints` applies). */
 export function webUsable(e: Endpoint): boolean {
-  if (e.t === 'https') return beaconOrigin(e.url) !== null;
+  // An origin whose list is empty serves nothing (NFX-03 §4, and nfx's library skips it).
+  if (e.t === 'https') return beaconOrigin(e.url) !== null && e.renditions?.length !== 0;
   if (e.t === 'webrtc') return e.trackerUrls.some((u) => beaconTracker(u) !== null);
   return false;
 }
@@ -65,92 +67,66 @@ export function webAvailability(
   });
 }
 
-/** One rendition of a hash list, as the start choice needs it. */
+/** One rendition of a hash list, as the preference order needs it. */
 export interface PlayRendition {
   readonly id: string;
-  /** Bits per second (the master playlist's `BANDWIDTH`, hls.js's `bitrate`). */
+  /** Bits per second (the master playlist's `BANDWIDTH`). */
   readonly bandwidth: number;
-  /** Lines, from `resolution` (`<w>x<h>`), when listed. */
-  readonly height?: number;
-}
-
-/** hls.js 1.7.3's level order for one NFX package's renditions (module comment). */
-export function levelOrder<R extends PlayRendition>(renditions: readonly R[]): R[] {
-  const byHeight = renditions.every((r) => r.height !== undefined);
-  return [...renditions].sort(
-    (a, b) => (byHeight ? (a.height ?? 0) - (b.height ?? 0) : 0) || a.bandwidth - b.bandwidth,
-  );
-}
-
-/** Where the player starts, and what it may play (pear #97). */
-export interface StartChoice {
-  /** The hls.js level to start on (`levelOrder`). */
-  readonly level: number;
-  /** That level's rendition: what the session checks the pinned level against. */
-  readonly rendition: PlayRendition;
-  /** Every held rendition id, the preferred first (for the library's coming option). */
-  readonly allowed: readonly string[];
-}
-
-/** The renditions of a verified hash list, as `PlayRendition`s (one past 2^53 bit/s is left out). */
-function playRenditions(
-  list: readonly {
-    readonly id: string;
-    readonly bandwidth: bigint;
-    readonly resolution?: string | undefined;
-  }[],
-): PlayRendition[] {
-  const out: PlayRendition[] = [];
-  for (const r of list) {
-    if (r.bandwidth > BigInt(Number.MAX_SAFE_INTEGER)) continue;
-    const m = /^([1-9][0-9]{0,4})x([1-9][0-9]{0,4})$/.exec(r.resolution ?? '');
-    const height = m === null ? undefined : Number(m[2]);
-    out.push({
-      id: r.id,
-      bandwidth: Number(r.bandwidth),
-      ...(height === undefined ? {} : { height }),
-    });
-  }
-  return out;
-}
-
-/** The start choice for `renditions` (a hash list's) given who holds what, or `undefined`. */
-export function chooseStart(
-  renditions: readonly PlayRendition[],
-  held: RenditionAvailability,
-): StartChoice | undefined {
-  if (!availabilityVaries(held)) return undefined;
-  const preferred = preferRenditions(renditions, held);
-  const first = preferred[0];
-  if (first === undefined) return undefined;
-  const level = levelOrder(renditions).findIndex((r) => r.id === first.id);
-  return { level, rendition: first, allowed: preferred.map((r) => r.id) };
 }
 
 /**
- * Pear #97: where a play of `video` starts, when its seeders hold different renditions: the hash
- * list read from the first of `origins` (at most `HASH_LIST_ORIGINS`, within
- * `HASH_LIST_TIMEOUT_MS` in all) that serves one that verifies, then `chooseStart`.
- * `undefined` when nothing needs pinning, or no origin served a hash list (the player then reports
- * its own origin problems, and hls.js picks).
+ * The renditions a play may use, by id, the preferred first (`preferRenditions`), at most
+ * `MAX_ALLOWED_RENDITIONS`: `undefined` when every counted seeder holds every rendition (nothing
+ * to restrict) or when none of `renditions` (a verified hash list's) is held.
  */
-export async function startFor(
+export function allowedRenditions(
+  renditions: readonly PlayRendition[],
+  held: RenditionAvailability,
+): string[] | undefined {
+  if (!availabilityVaries(held)) return undefined;
+  const ids = [...new Set(preferRenditions(renditions, held).map((r) => r.id))];
+  return ids.length === 0 ? undefined : ids.slice(0, MAX_ALLOWED_RENDITIONS);
+}
+
+/** `allowed` with `id` moved first, when it is one of them (a viewer's pick starts the play). */
+export function preferring(allowed: readonly string[], id: string): string[] {
+  return allowed.includes(id) ? [id, ...allowed.filter((x) => x !== id)] : [...allowed];
+}
+
+/** A verified hash list's renditions as `PlayRendition`s (one past 2^53 bit/s is left out). */
+function playRenditions(
+  list: readonly { readonly id: string; readonly bandwidth: bigint }[],
+): PlayRendition[] {
+  return list
+    .filter((r) => r.bandwidth <= BigInt(Number.MAX_SAFE_INTEGER))
+    .map((r) => ({ id: r.id, bandwidth: Number(r.bandwidth) }));
+}
+
+/**
+ * Pear #97: the renditions a play of `video` may use (`allowedRenditions`), when its seeders hold
+ * different ones: the hash list read from the first of `origins` (those serving something, at
+ * most `HASH_LIST_ORIGINS`, within `HASH_LIST_TIMEOUT_MS` in all) that serves one that verifies.
+ * `undefined` when nothing needs restricting, or no origin served a hash list (the player then
+ * reports its own origin problems, and every rendition the origin serves is allowed).
+ */
+export async function renditionsFor(
   fetchFn: FetchFn,
   video: Pick<NfxVideo, 'id' | 'root' | 'segs'>,
-  origins: readonly string[],
+  origins: readonly PlayOrigin[],
   held: RenditionAvailability,
   now: () => number = Date.now,
-): Promise<StartChoice | undefined> {
+): Promise<string[] | undefined> {
   if (!availabilityVaries(held)) return undefined;
   const target = parseATag(video.id);
   if (!target.ok) return undefined;
   const deadline = now() + HASH_LIST_TIMEOUT_MS;
-  for (const origin of origins.slice(0, HASH_LIST_ORIGINS)) {
+  const asked = origins.filter((o) => o.renditions?.length !== 0).slice(0, HASH_LIST_ORIGINS);
+  for (const { url } of asked) {
     const left = deadline - now();
     if (left <= 0) break;
     let bytes: Uint8Array;
     try {
-      bytes = await getBounded(fetchFn, `${origin}/${video.root}`, {
+      bytes = await getBounded(fetchFn, `${url}/${video.root}`, {
         maxBytes: MAX_HASH_LIST_BYTES,
         timeoutMs: left,
       });
@@ -158,7 +134,7 @@ export async function startFor(
       continue;
     }
     const list = verifyHashList(bytes, video.root, target.value.addr, BigInt(video.segs));
-    if (list.ok) return chooseStart(playRenditions(list.value.renditions), held);
+    if (list.ok) return allowedRenditions(playRenditions(list.value.renditions), held);
   }
   return undefined;
 }

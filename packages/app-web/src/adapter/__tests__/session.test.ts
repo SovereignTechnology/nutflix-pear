@@ -1,7 +1,7 @@
 /**
  * The `element` source of a web play (contracts v14): one element at a time, everything the
  * player started stopped on detach and close, the player's refusal kept, renditions from its
- * levels.
+ * levels by their rendition ids, and what the play allows handed to the player (pear #97).
  */
 import { describe, expect, it } from 'vitest';
 
@@ -10,19 +10,23 @@ import type { MediaElementLike, NfxAddress } from '@sovit/core';
 import { FakeNfxPlayer } from '../../__tests__/support/fake-nfx-lib.js';
 import { tick } from '../../__tests__/support/nfx.js';
 import { WebAdapterError } from '../../errors.js';
-import { WEB_MAX_PLAY_PROBLEMS, WebNfxSession, levelId, levelOf, problemOf } from '../session.js';
+import { WEB_MAX_PLAY_PROBLEMS, WebNfxSession, originSource, problemOf } from '../session.js';
 
 const ADDR = `38504:${'a'.repeat(64)}:nfx:testnet:1:v` as NfxAddress;
 
-function session(player: FakeNfxPlayer, o: { level?: number } = {}) {
+const L360 = { index: 0, id: '360p', width: 640, height: 360, bitrate: 950_000 };
+const L720 = { index: 1, id: '720p', width: 1280, height: 720, bitrate: 2_800_000 };
+
+function session(player: FakeNfxPlayer, o: { pin?: string; renditions?: string[] } = {}) {
   const closed: WebNfxSession[] = [];
   const s = new WebNfxSession({
     videoId: ADDR,
     manifestJson: '{"kind":38504}',
-    origins: ['https://o.example/o'],
+    origins: [{ url: 'https://o.example/o' }],
+    renditions: o.renditions,
     trackers: [],
     iceServers: [],
-    level: o.level,
+    pin: o.pin,
     player: () => player.init().then(() => player),
     onClose: (x) => closed.push(x),
   });
@@ -34,11 +38,46 @@ function attach(s: WebNfxSession, el: MediaElementLike): () => void {
 }
 
 describe('WebNfxSession', () => {
-  it('level ids', () => {
-    expect(levelId(0)).toBe('l0');
-    expect(levelOf('l12')).toBe(12);
-    for (const bad of ['l', 'l01', 'l1000', '0', 'L1', 'l-1', ' l1'])
-      expect(levelOf(bad), bad).toBeNull();
+  it('origins reach the player bare when they serve every rendition, else with their list', () => {
+    expect(originSource({ url: 'https://a.example/o' })).toBe('https://a.example/o');
+    expect(originSource({ url: 'https://a.example/o', renditions: ['360p'] })).toEqual({
+      url: 'https://a.example/o',
+      renditions: ['360p'],
+    });
+    expect(originSource({ url: 'https://a.example/o', renditions: [] })).toEqual({
+      url: 'https://a.example/o',
+      renditions: [],
+    });
+  });
+
+  it('pear #97: the player gets the allowed renditions and each origin’s list, as given', async () => {
+    const player = new FakeNfxPlayer();
+    const s = new WebNfxSession({
+      videoId: ADDR,
+      manifestJson: '{}',
+      origins: [
+        { url: 'https://a.example/o', renditions: ['360p'] },
+        { url: 'https://b.example/o' },
+      ],
+      renditions: ['360p', '720p'],
+      trackers: [],
+      iceServers: [],
+      player: () => Promise.resolve(player),
+    });
+    attach(s, document.createElement('video'));
+    await tick();
+    expect(player.last.options.origins).toEqual([
+      { url: 'https://a.example/o', renditions: ['360p'] },
+      'https://b.example/o',
+    ]);
+    expect(player.last.options.renditions).toEqual(['360p', '720p']);
+    // Nothing to restrict: no list at all (the library allows every rendition).
+    const plain = new FakeNfxPlayer();
+    attach(session(plain).s, document.createElement('video'));
+    await tick();
+    expect('renditions' in plain.last.options).toBe(false);
+    expect(plain.last.options.origins).toEqual(['https://o.example/o']);
+    await s.close();
   });
 
   it('attaching a second element detaches the first; detaching a stale one changes nothing', async () => {
@@ -69,7 +108,7 @@ describe('WebNfxSession', () => {
     const s = new WebNfxSession({
       videoId: ADDR,
       manifestJson: '{}',
-      origins: ['https://o.example/o'],
+      origins: [{ url: 'https://o.example/o' }],
       trackers: ['wss://t.example/a'],
       iceServers: [{ urls: ['stun:s.example:3478'] }],
       player: () => gate.then(() => player),
@@ -108,111 +147,86 @@ describe('WebNfxSession', () => {
     expect(s.error).toBe('networkError:fragLoadError');
     off();
     lib.emit({ type: 'error', message: 'late' });
-    lib.parsed([{ index: 0, width: 1, height: 1, bitrate: 1 }]);
+    lib.parsed([{ index: 0, id: '360p', width: 1, height: 1, bitrate: 1 }]);
     expect(s.error).toBe('networkError:fragLoadError');
     expect(s.renditions).toEqual([]);
   });
 
-  it('levels the player already has at open are the renditions; one without a size has no resolution', async () => {
+  it('levels the player already has at open are the renditions, by id; one without a size has no resolution', async () => {
     const player = new FakeNfxPlayer();
     player.levels = [
-      { index: 0, width: 0, height: 0, bitrate: 96_000 },
-      { index: 1, width: 1920, height: 1080, bitrate: 5_000_000 },
+      { index: 0, id: 'audio', width: 0, height: 0, bitrate: 96_000 },
+      { index: 1, id: '1080p', width: 1920, height: 1080, bitrate: 5_000_000 },
+      // The same rendition twice (a master playlist may list a variant twice): listed once.
+      { index: 2, id: '1080p', width: 1920, height: 1080, bitrate: 5_000_000 },
     ];
-    const { s } = session(player, { level: 1 });
-    expect(s.rendition).toBe('l1');
+    const { s } = session(player, { pin: '1080p' });
+    expect(s.rendition).toBe('1080p');
     attach(s, document.createElement('video'));
     await tick();
-    expect(player.last.options.level).toBe(1);
+    expect('level' in player.last.options).toBe(false);
+    expect(player.last.session.setLevelCalls).toEqual([1]);
+    expect(s.rendition).toBe('1080p');
     expect(s.renditions).toEqual([
-      { id: 'l0', bandwidth: 96_000 },
-      { id: 'l1', bandwidth: 5_000_000, resolution: '1920x1080' },
+      { id: 'audio', bandwidth: 96_000 },
+      { id: '1080p', bandwidth: 5_000_000, resolution: '1920x1080' },
     ]);
   });
 
   it('setRendition before the player opened, or after a detach, is invalid-argument', async () => {
     const player = new FakeNfxPlayer();
     const { s } = session(player);
-    await expect(s.setRendition('l0')).rejects.toBeInstanceOf(WebAdapterError);
-    player.levels = [{ index: 0, width: 1, height: 1, bitrate: 1 }];
+    await expect(s.setRendition('360p')).rejects.toBeInstanceOf(WebAdapterError);
+    player.levels = [L360];
     const off = attach(s, document.createElement('video'));
     await tick();
-    await s.setRendition('l0');
+    await s.setRendition('360p');
     off();
-    await expect(s.setRendition('l0')).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(s.setRendition('360p')).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
   it('a level the player itself refuses is invalid-argument', async () => {
     const player = new FakeNfxPlayer();
-    player.levels = [{ index: 0, width: 1, height: 1, bitrate: 1 }];
+    player.levels = [L360];
     const { s } = session(player);
     attach(s, document.createElement('video'));
     await tick();
     player.last.session.levels = [];
-    await expect(s.setRendition('l0')).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(s.setRendition('360p')).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
-  it('pear #97: a pinned start level that is not the expected rendition moves to the one that is', async () => {
-    const levels = [
-      { index: 0, width: 640, height: 360, bitrate: 950_000 },
-      { index: 1, width: 1280, height: 720, bitrate: 2_800_000 },
-    ];
-    // hls.js dropped a level the start was computed with: index 1 is now 720p, 360p is index 0.
-    const moved = new FakeNfxPlayer();
-    const a = new WebNfxSession({
-      videoId: ADDR,
-      manifestJson: '{}',
-      origins: ['https://o.example/o'],
-      trackers: [],
-      iceServers: [],
-      level: 1,
-      expect: { id: '360p', bandwidth: 950_000, height: 360 },
-      player: () => Promise.resolve(moved),
-    });
+  it('a viewer’s pick is played once the levels list it, by id, whatever its index; else hls.js picks', async () => {
+    // The levels arrive after open, the pick at index 1.
+    const later = new FakeNfxPlayer();
+    const { s: a } = session(later, { pin: '720p' });
     attach(a, document.createElement('video'));
     await tick();
-    expect(moved.last.options.level).toBe(1);
-    moved.last.session.parsed(levels);
-    expect(moved.last.session.setLevelCalls).toEqual([0]);
-    expect(a.rendition).toBe('l0');
-    // Told once: a later levels event changes nothing.
-    moved.last.session.parsed(levels);
-    expect(moved.last.session.setLevelCalls).toEqual([0]);
+    expect(later.last.session.setLevelCalls).toEqual([]);
+    later.last.session.parsed([L360, L720]);
+    expect(later.last.session.setLevelCalls).toEqual([1]);
+    expect(a.rendition).toBe('720p');
+    // Once: a later levels event changes nothing.
+    later.last.session.parsed([L360, L720]);
+    expect(later.last.session.setLevelCalls).toEqual([1]);
 
-    // The pinned level is the expected one: nothing moves.
-    const kept = new FakeNfxPlayer();
-    kept.levels = levels;
-    const b = new WebNfxSession({
-      videoId: ADDR,
-      manifestJson: '{}',
-      origins: ['https://o.example/o'],
-      trackers: [],
-      iceServers: [],
-      level: 1,
-      expect: { id: '720p', bandwidth: 2_800_000, height: 720 },
-      player: () => Promise.resolve(kept),
-    });
+    // The play does not offer it (not allowed, or its origin does not serve it): automatic.
+    const cut = new FakeNfxPlayer();
+    const { s: b } = session(cut, { pin: '720p', renditions: ['360p'] });
+    expect(b.rendition).toBe('720p');
     attach(b, document.createElement('video'));
     await tick();
-    expect(kept.last.session.setLevelCalls).toEqual([]);
-    expect(b.rendition).toBe('l1');
+    cut.last.session.parsed([L360]);
+    expect(cut.last.session.setLevelCalls).toEqual([]);
+    expect(b.rendition).toBe('auto');
+    expect(b.renditions.map((r) => r.id)).toEqual(['360p']);
 
-    // No level is the expected rendition: back to automatic.
-    const none = new FakeNfxPlayer();
-    const c = new WebNfxSession({
-      videoId: ADDR,
-      manifestJson: '{}',
-      origins: ['https://o.example/o'],
-      trackers: [],
-      iceServers: [],
-      level: 0,
-      expect: { id: '1080p', bandwidth: 5_400_000, height: 1080 },
-      player: () => Promise.resolve(none),
-    });
+    // No pick: nothing is set.
+    const free = new FakeNfxPlayer();
+    free.levels = [L360, L720];
+    const { s: c } = session(free);
     attach(c, document.createElement('video'));
     await tick();
-    none.last.session.parsed(levels);
-    expect(none.last.session.setLevelCalls).toEqual([-1]);
+    expect(free.last.session.setLevelCalls).toEqual([]);
     expect(c.rendition).toBe('auto');
     await Promise.all([a.close(), b.close(), c.close()]);
   });
@@ -247,15 +261,13 @@ describe('WebNfxSession', () => {
     expect(s.renditions).toEqual([]);
     expect(told).toBe(0);
     const lib = player.last.session;
-    lib.parsed([
-      { index: 0, width: 640, height: 360, bitrate: 800_000 },
-      { index: 1, width: 1280, height: 720, bitrate: 2_500_000 },
-    ]);
+    lib.parsed([L360, L720]);
     expect(told).toBe(1);
-    expect(s.renditions.map((r) => r.id)).toEqual(['l0', 'l1']);
-    await s.setRendition('l1');
+    expect(s.renditions.map((r) => r.id)).toEqual(['360p', '720p']);
+    await s.setRendition('720p');
+    expect(lib.setLevelCalls).toEqual([1]);
     expect(told).toBe(2);
-    expect(s.rendition).toBe('l1');
+    expect(s.rendition).toBe('720p');
     lib.emit({
       type: 'origin',
       origin: 'https://a.example/o',
