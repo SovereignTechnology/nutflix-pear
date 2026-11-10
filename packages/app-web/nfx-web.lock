@@ -28,12 +28,21 @@
 # pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
 # web/player/package-lock.json. Node 22.
 #
-# 6465cb5 is nfx #74 (nfxd --stun, the `stun` beacon endpoint, and STUN servers from beacons in the
-# library's watchEndpoints, which this site does not use). From #74 on, lib-tar.sh writes the ustar
-# itself (web/player/lib-tar.mjs) instead of calling GNU tar, whose bytes differ between 1.34 and 1.35:
-# GitHub's ubuntu-24.04 runner and a Kata VM give the same tar, 837852ba…. The web-site workflow
-# (.github/workflows/web-site.yml) builds it again on every run and fails unless it matches.
-nfx 6465cb584fbe2026d90e1d6f89708604c1b7b24d b5146baa9cdfd75942a62461738dc8c7ffd30d15909996e05624b52f6393f8f4 837852ba6647563f0de679cb0dbf29a7cc77ff2f7967d134d8f08222b0550ebe
+# 6c20bef is nfx #83's merge. Since the last pin (6465cb5, #74: nfxd --stun and the `stun` beacon
+# endpoint):
+#   #75, #80  signaling over Nostr (NFX-10 §6) is available: `open()` takes
+#             `signaling: { kind: 'nostr', relays }`. This site does not use it yet: the deployed
+#             seeder's bridge is tracker-signaled, and Nostr waits for nfxd's mesh endpoint (#71).
+#   #76, #77  nfx-package makes one rendition by default, and nfxd may hold only some
+#             (`--seed <a>#360p`, the beacon's `https` endpoint naming its `renditions`).
+#   #83       held renditions: `open()` takes `renditions` (the allowed ids, preferred first) and
+#             origins with the renditions each serves (`OriginSource`), offers only the levels the
+#             origin it plays from serves, and each level carries its rendition id (`Level.id`).
+# From #74 on, lib-tar.sh writes the ustar itself (web/player/lib-tar.mjs) instead of calling GNU
+# tar, whose bytes differ between 1.34 and 1.35: GitHub's ubuntu-24.04 runner and a Kata VM give the
+# same tar, e43bc98a…. The web-site workflow (.github/workflows/web-site.yml) builds it again on
+# every run and fails unless it matches.
+nfx 6c20bef87b3c85324d900353b4e142601a086c1e 5c30fb3307a85127d9b885c060285ae53f8f5cd26851d65f3bc19a14fa9b178c e43bc98a84421de375245ba76e09dd8fc0a517c5b30f5e4fef8d9504507e079b
 tool rust 1.98.0
 tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
 tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f
