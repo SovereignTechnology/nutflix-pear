@@ -36,7 +36,10 @@ the same video. Whoever serves the page can change it; a browser cannot fully pr
   go through core's NFX catalogue, with search routed by each relay's NIP-11 document; plays wait
   for seeders' live beacons (core's beacon watch) and hand nfx's player the origins and trackers
   they name, checked (`https:` and `wss:` only, no query or user-info, public hosts), then the
-  fallback origin `https://web.nutflix.xyz/o` and the configured trackers, 4 in all. Images load
+  fallback origin `https://web.nutflix.xyz/o` and the configured trackers, 4 in all. Each origin
+  goes with the renditions its beacons say it serves, and when the seeders hold different
+  renditions the player may play only the held ones, the most-held first (issue #97), so it never
+  asks an origin for a file it does not serve. Images load
   only when their publisher signed their sha256, and reach the screens as `blob:` URLs of bytes
   that match it. Calls that need a wallet, a signer, Hypercore or Studio reject `unsupported`.
 - **`src/nfx-lib.ts`: the part of nfx's player library the adapter calls** (`init`, `open`), so the
@@ -96,6 +99,7 @@ Re-pinning nfx is one line of `nfx-web.lock`: `bash scripts/nfx-lib.sh pin <comm
 - `e2e/web.e2e.ts`: the built site in headless Chromium under its own headers, against nfxd built
   from the lock's nfx commit (scoped relay, origin, tracker and a WebRTC bridge) and a stock relay
   without NIP-50 (strfry), all on loopback. It checks the feed, search on both relays, playback,
-  playback from the bridge once the origin refuses every segment, a lying origin refused, a deleted
-  video, a video nobody seeds, the Settings notices and `source.json`, and that the CSP refused
+  playback from the bridge once the origin refuses every segment, a video seeded in 360p only
+  (`nfxd --seed <a>#360p`) played without one request for its 720p files, a lying origin refused,
+  a deleted video, a video nobody seeds, the Settings notices and `source.json`, and that the CSP refused
   nothing. `.github/workflows/web-site.yml` runs it on every change to the client.

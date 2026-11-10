@@ -10,6 +10,7 @@ export type {
   NfxLevel,
   NfxLibSession,
   NfxOpenOptions,
+  NfxOriginSource,
   NfxPlayerEvent,
   NfxPlayerLib,
   NfxTrackerSignaling,
@@ -40,8 +41,7 @@ export {
   WebNfxSession,
   AUTO_RENDITION,
   WEB_MAX_PLAY_PROBLEMS,
-  levelId,
-  levelOf,
+  originSource,
   problemOf,
   shortUrl,
 } from './adapter/session.js';
@@ -52,6 +52,7 @@ export {
   playEndpoints,
   type BeaconEndpoints,
   type PlayEndpoints,
+  type PlayOrigin,
 } from './adapter/endpoints.js';
 export { isPublicHost } from './adapter/hosts.js';
 export { WEB_OFFER } from './shell/offer.js';

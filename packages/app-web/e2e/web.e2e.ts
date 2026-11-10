@@ -14,11 +14,14 @@
  *   relay.e2e.test    nfxd A's embedded scoped relay (NIP-50)  strfry.e2e.test  strfry (no NIP-50)
  *   seed.e2e.test     a gate in front of nfxd A's origin       tracker.e2e.test nfxd A's tracker
  *   liar.e2e.test     a lying proxy in front of nfxd B's origin web.e2e.test     the site
+ *   held.e2e.test     a recorder in front of nfxd C's origin
  *
- * nfxd A seeds the lead video with `--bridge` (a native WebRTC peer in its tracker's swarms), and
- * its beacons name `https://seed.e2e.test:…` and `wss://tracker.e2e.test:…`. nfxd B seeds a second
- * video, its beacons naming only the liar. A third video is published and deleted, a fourth
- * published and seeded by nobody.
+ * nfxd A seeds the lead video (720p and 360p) with `--bridge` (a native WebRTC peer in its
+ * tracker's swarms), and its beacons name `https://seed.e2e.test:…` and `wss://tracker.e2e.test:…`.
+ * nfxd B seeds a second video, its beacons naming only the liar. A third video is published and
+ * deleted, a fourth published and seeded by nobody. nfxd C seeds a fifth, made in 720p and 360p,
+ * in 360p only (`--seed <a>#360p`, nfx #77): its origin answers 404 for 720p's files, and its
+ * beacons' `https` endpoint names `renditions: ["360p"]`.
  *
  * Checks, in one page (the beacon watch lives as long as the page):
  *  1. Home's Network feed lists the videos (not the deleted one).
@@ -26,17 +29,21 @@
  *     and no `search` filter is sent to it), and through nfxd's relay alone, in a fresh start of
  *     the app (its NIP-11 document, listing 50, is read with CORS; then `search` is sent there).
  *  3. The lead video plays past 5 s with nothing refused and nothing stopped, and its quality
- *     picker appears once the player knows the renditions.
+ *     picker appears once the player knows the renditions, offering them by their hash-list ids
+ *     (`720p`, `360p`: the library's `Level.id`).
  *  4. The origin then refuses every segment, and playback goes on 15 s more, past the end of the
  *     last segment the origin served: those bytes came over WebRTC, from the bridge.
- *  5. The liar flips a byte of every segment: the page says files were refused, and the video
+ *  5. Held renditions (pear #97, nfx #83): the fifth video plays past 5 s with nothing refused, as
+ *     360p alone (no quality picker), and the page never asks nfxd C's origin for a 720p file
+ *     (playlist, init or segment), so it never gets a 404.
+ *  6. The liar flips a byte of every segment: the page says files were refused, and the video
  *     does not move. Then, in a new play, it lies about the hash list: the page says the origin
  *     was skipped, and the play stops because no origin served a hash list that verifies.
- *  6. The deleted video's page says "Video not found".
- *  7. The unseeded video's Play ends in "No seeders online".
- *  8. Settings shows the line about IP addresses, and the link to source.json, whose hashes are
+ *  7. The deleted video's page says "Video not found".
+ *  8. The unseeded video's Play ends in "No seeders online".
+ *  9. Settings shows the line about IP addresses, and the link to source.json, whose hashes are
  *     the files served.
- *  9. No `securitypolicyviolation` event and no uncaught error, on any page, all along.
+ * 10. No `securitypolicyviolation` event and no uncaught error, on any page, all along.
  *
  * Usage (from packages/app-web, after the site build): node e2e/web.e2e.ts
  *   NFX_BIN       directory with nfxd and nfx-package built from the lock's nfx commit (required)
@@ -268,6 +275,19 @@ async function tlsFront(tls: { key: Buffer; cert: Buffer }): Promise<{
   };
 }
 
+/**
+ * Where a front forwards `reqUrl`: `upstream`'s scheme, host and port, always, with only the
+ * request's path and query. Concatenating `upstream + req.url` let a request target such as
+ * `@other.host/x` move the host (userinfo) or `//other.host/x` make it protocol-relative.
+ */
+function forwardUrl(upstream: string, reqUrl: string | undefined): URL {
+  const asked = new URL(reqUrl ?? '/', 'http://front.invalid');
+  const to = new URL(upstream);
+  to.pathname = to.pathname.replace(/\/$/, '') + asked.pathname;
+  to.search = asked.search;
+  return to;
+}
+
 /** `req` to `upstream` as the browser sent it (a Range included); `edit` may change a 200's body. */
 function proxy(
   upstream: string,
@@ -277,7 +297,7 @@ function proxy(
 ): void {
   const headers = { ...req.headers };
   delete headers.host;
-  const up = httpRequest(`${upstream}${req.url ?? '/'}`, { method: req.method, headers }, (r) => {
+  const up = httpRequest(forwardUrl(upstream, req.url), { method: req.method, headers }, (r) => {
     const chunks: Buffer[] = [];
     r.on('data', (c: Buffer) => chunks.push(c));
     r.on('end', () => {
@@ -349,6 +369,49 @@ async function liar(
       lie = what;
     },
   };
+}
+
+/** A front that records every request it passes on: the file it names, and its answer's status. */
+async function recorder(upstream: string): Promise<{
+  port: number;
+  requests: { path: string; sha: string | null; status: number }[];
+}> {
+  const requests: { path: string; sha: string | null; status: number }[] = [];
+  const port = await listen(
+    createServer((req, res) => {
+      const path = new URL(req.url ?? '/', 'http://x').pathname;
+      const sha = /\/([0-9a-f]{64})(?:\.[a-z0-9]+)?$/.exec(path)?.[1] ?? null;
+      const headers = { ...req.headers };
+      delete headers.host;
+      const up = httpRequest(
+        forwardUrl(upstream, req.url),
+        { method: req.method, headers },
+        (r) => {
+          requests.push({ path, sha, status: r.statusCode ?? 502 });
+          res.writeHead(r.statusCode ?? 502, r.headers);
+          r.pipe(res);
+        },
+      );
+      up.on('error', () => {
+        requests.push({ path, sha, status: 502 });
+        res.writeHead(502).end();
+      });
+      up.end();
+    }),
+  );
+  return { port, requests };
+}
+
+/** The status `url` (plain http, loopback) answers a GET with. */
+function statusOf(url: string): Promise<number> {
+  return new Promise((ok, fail) => {
+    const r = httpRequest(url, { method: 'GET' }, (res) => {
+      res.resume();
+      ok(res.statusCode ?? 0);
+    });
+    r.on('error', fail);
+    r.end();
+  });
 }
 
 const TYPES: Record<string, string> = {
@@ -428,7 +491,8 @@ function clip(name: string, size: string, seconds: number): string {
   return file;
 }
 
-function packageClip(input: string, id: string, maxHeight: number): Pkg {
+/** `input` packaged as NFX; `renditions` as `nfx-package --renditions` takes them (default: one). */
+function packageClip(input: string, id: string, maxHeight: number, renditions?: string): Pkg {
   const dir = join(work, `pkg-${id}`);
   run(bin('nfx-package'), [
     input,
@@ -438,6 +502,7 @@ function packageClip(input: string, id: string, maxHeight: number): Pkg {
     dir,
     '--max-height',
     String(maxHeight),
+    ...(renditions === undefined ? [] : ['--renditions', renditions]),
     '--preset',
     'veryfast',
     '--no-thumb',
@@ -472,6 +537,27 @@ function segmentTimes(p: Pkg): Map<string, [number, number]> {
     }
   }
   return times;
+}
+
+/**
+ * Rendition `id`'s files in package `p`, by sha256: its media playlist, and the init and segments
+ * that playlist lists.
+ */
+function renditionFiles(p: Pkg, id: string): Set<string> {
+  const list = JSON.parse(readFileSync(join(p.store, p.root), 'utf8')) as {
+    files: { name: string; sha256: string }[];
+    renditions: { id: string; playlist: string }[];
+  };
+  const r = list.renditions.find((x) => x.id === id);
+  const playlist = list.files.find((f) => f.name === r?.playlist);
+  if (playlist === undefined) throw new Error(`${p.video} has no rendition ${id}`);
+  const text = readFileSync(join(p.store, playlist.sha256), 'utf8');
+  const shas = new Set([playlist.sha256]);
+  for (const m of text.matchAll(/([0-9a-f]{64})\.(?:m4s|mp4)/g))
+    if (m[1] !== undefined) shas.add(m[1]);
+  if (shas.size < 3)
+    throw new Error(`rendition ${id} of ${p.video} lists ${String(shas.size - 1)} files`);
+  return shas;
 }
 
 function sha256File(path: string): string {
@@ -594,21 +680,28 @@ async function main(): Promise<void> {
   if (!existsSync(join(SITE, 'index.html'))) throw new Error(`no site at ${SITE}: build it first`);
   const tls = certificate();
 
-  // ---- content: four videos by one creator ----------------------------------------------------
-  const lead = packageClip(clip('lead', '1280x720', 60), 'web-e2e-lead', 720);
+  // ---- content: five videos by one creator ----------------------------------------------------
+  // nfx-package makes one rendition by default since nfx #76: the lead and the held video name two.
+  const lead = packageClip(clip('lead', '1280x720', 60), 'web-e2e-lead', 720, '720p,360p');
   const lies = packageClip(clip('lies', '640x360', 20), 'web-e2e-liar', 360);
   const gone = packageClip(clip('gone', '640x360', 4), 'web-e2e-deleted', 360);
   const lone = packageClip(clip('lone', '640x360', 4), 'web-e2e-unseeded', 360);
+  const held = packageClip(clip('held', '1280x720', 20), 'web-e2e-held', 720, '720p,360p');
+  const files720 = renditionFiles(held, '720p');
+  const files360 = renditionFiles(held, '360p');
   const keyA = join(work, 'a.key');
   const keyB = join(work, 'b.key');
+  const keyC = join(work, 'c.key');
   const creator = run(bin('nfxd'), ['key', 'new', keyA]).split('\n')[0] ?? '';
   run(bin('nfxd'), ['key', 'new', keyB]);
+  run(bin('nfxd'), ['key', 'new', keyC]);
   const addr = (p: Pkg): string => `38504:${creator}:${p.video}`;
   results['videos'] = {
     lead: addr(lead),
     liar: addr(lies),
     deleted: addr(gone),
     unseeded: addr(lone),
+    held: addr(held),
   };
 
   // ---- the stock relay ------------------------------------------------------------------------
@@ -633,6 +726,7 @@ async function main(): Promise<void> {
   const seedFront = await tlsFront(tls);
   const trackerFront = await tlsFront(tls);
   const liarFront = await tlsFront(tls);
+  const heldFront = await tlsFront(tls);
   strfryFront.setUpstream(strfryPort);
   const a = await start(
     bin('nfxd'),
@@ -679,6 +773,7 @@ async function main(): Promise<void> {
     [lies, 'Liar web e2e'],
     [gone, 'Withdrawn web e2e'],
     [lone, 'Unseeded web e2e'],
+    [held, 'Held renditions web e2e'],
   ] as const) {
     run(bin('nfxd'), [
       'publish',
@@ -738,6 +833,58 @@ async function main(): Promise<void> {
   await until('nfxd B seeding the liar video', 60_000, () =>
     b.text().includes(`${addr(lies)}: Seeding`),
   );
+
+  // ---- nfxd C: the held video, in 360p only ---------------------------------------------------
+  const nodeC = await start(
+    bin('nfxd'),
+    [
+      'run',
+      '--key',
+      keyC,
+      '--store',
+      held.store,
+      '--state',
+      join(work, 'state-c'),
+      '--seed',
+      `${addr(held)}#360p`,
+      '--relay',
+      relayWs,
+      '--origin',
+      '127.0.0.1:0',
+      '--https-url',
+      `https://held.e2e.test:${String(heldFront.port)}`,
+    ],
+    [/origin: (http:\/\/\S+?)\/?\s/],
+  );
+  const originC = (nodeC.matches[0]?.[1] ?? '').replace(/\/$/, '');
+  const h = await recorder(originC);
+  heldFront.setUpstream(h.port);
+  await until('nfxd C seeding the held video', 60_000, () =>
+    nodeC.text().includes(`${addr(held)}: Seeding`),
+  );
+  // What the test rests on: nfxd C serves 360p's files and 720p's playlist (a meta file), and
+  // answers 404 for 720p's init and segments.
+  const fileOf = (shas: Set<string>, ext: string): string => {
+    const list = readFileSync(join(held.store, [...shas][0] ?? ''), 'utf8');
+    const m = new RegExp(`([0-9a-f]{64})\\.${ext}`).exec(list);
+    if (m?.[1] === undefined) throw new Error(`no .${ext} in a playlist of the held video`);
+    return `${originC}/${held.root}/${m[1]}.${ext}`;
+  };
+  const originAnswers = {
+    playlist720: await statusOf(`${originC}/${held.root}/${[...files720][0] ?? ''}.m3u8`),
+    init720: await statusOf(fileOf(files720, 'mp4')),
+    segment720: await statusOf(fileOf(files720, 'm4s')),
+    segment360: await statusOf(fileOf(files360, 'm4s')),
+  };
+  results['heldOrigin'] = originAnswers;
+  if (
+    originAnswers.playlist720 !== 200 ||
+    originAnswers.init720 !== 404 ||
+    originAnswers.segment720 !== 404 ||
+    originAnswers.segment360 !== 200
+  ) {
+    throw new Error(`nfxd C's origin for the held video: ${JSON.stringify(originAnswers)}`);
+  }
 
   const sitePort = await siteServer(tls);
   const site = `https://web.e2e.test:${String(sitePort)}`;
@@ -826,7 +973,15 @@ async function main(): Promise<void> {
       throw new Error(`problems while playing: ${await text(page, '.nf-nfxwatch__problems')}`);
     await page.locator('.nf-nfxwatch__quality select').waitFor({ timeout: 30_000 });
     const levels = await page.locator('.nf-nfxwatch__quality option').allTextContents();
-    results['play'] = { pastFive: await videoTime(page), quality: levels };
+    // The menu's values are the renditions' hash-list ids (Level.id), not level indexes.
+    const ids = (
+      await page
+        .locator('.nf-nfxwatch__quality option')
+        .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value))
+    ).filter((v) => v !== '');
+    results['play'] = { pastFive: await videoTime(page), quality: levels, ids };
+    if (JSON.stringify([...ids].sort()) !== '["360p","720p"]')
+      throw new Error(`the quality menu offers ${JSON.stringify(ids)}, not 360p and 720p by id`);
 
     // 4. The origin refuses every segment from now on; the rest comes from the bridge.
     const times = segmentTimes(lead);
@@ -859,7 +1014,39 @@ async function main(): Promise<void> {
         `problems after the origin went: ${await text(page, '.nf-nfxwatch__problems')}`,
       );
 
-    // 5. The liar: a byte of every segment, then of the hash list.
+    // 5. Held renditions: nfxd C holds the held video in 360p only, and its beacon says so.
+    await go(page, `#/watch/${addr(held)}`);
+    await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
+    // Up to one beacon interval to find nfxd C's beacon, then the play.
+    await waitTime(page, 5, 180_000);
+    if ((await page.locator('.nf-nfxwatch__problems').count()) > 0)
+      throw new Error(
+        `problems playing held renditions: ${await text(page, '.nf-nfxwatch__problems')}`,
+      );
+    const heldAt = await videoTime(page);
+    // One level only, so no quality picker (both would be listed without the held cut).
+    const picker = await page.locator('.nf-nfxwatch__quality').count();
+    const asked720 = h.requests.filter((r) => r.sha !== null && files720.has(r.sha));
+    const asked360 = h.requests.filter((r) => r.sha !== null && files360.has(r.sha));
+    const failed = h.requests.filter((r) => r.status >= 400);
+    results['held'] = {
+      playedTo: heldAt,
+      picker,
+      requests: h.requests.length,
+      r720: asked720.map((r) => r.path),
+      r360: asked360.length,
+      failed: failed.map((r) => `${String(r.status)} ${r.path}`),
+    };
+    if (!(heldAt > 5)) throw new Error(`the held video played to ${String(heldAt)} s`);
+    if (picker !== 0) throw new Error('a quality picker for a video held in one rendition');
+    if (asked720.length > 0)
+      throw new Error(`the page asked for 720p files: ${JSON.stringify(results['held'])}`);
+    if (asked360.length < 3)
+      throw new Error(`360p came from elsewhere: ${JSON.stringify(results['held'])}`);
+    if (failed.length > 0)
+      throw new Error(`nfxd C's origin failed requests: ${JSON.stringify(results['held'])}`);
+
+    // 6. The liar: a byte of every segment, then of the hash list.
     await go(page, `#/watch/${addr(lies)}`);
     await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
     await page
@@ -888,18 +1075,18 @@ async function main(): Promise<void> {
     if ((await videoTime(page)) > 0.5) throw new Error('a video played from a hash list that lied');
     results['liar'] = { segments: lied, hashlist: await text(page, '.nf-nfxwatch__problems') };
 
-    // 6. The deleted video.
+    // 7. The deleted video.
     await go(page, `#/watch/${addr(gone)}`);
     await page.getByText('Video not found').first().waitFor({ timeout: 60_000 });
     results['deleted'] = 'Video not found';
 
-    // 7. Nobody seeds this one: Play waits out one beacon interval, then says so.
+    // 8. Nobody seeds this one: Play waits out one beacon interval, then says so.
     await go(page, `#/watch/${addr(lone)}`);
     await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
     await page.getByText('No seeders online').first().waitFor({ timeout: 120_000 });
     results['unseeded'] = 'No seeders online';
 
-    // 8. Settings: the IP address line, and source.json, whose hashes are the files served.
+    // 9. Settings: the IP address line, and source.json, whose hashes are the files served.
     await go(page, '#/settings');
     await page
       .getByText('Trackers and the peers you meet see your IP address.')
@@ -926,7 +1113,7 @@ async function main(): Promise<void> {
     }
     results['settings'] = { ipNotice: true, source: href };
 
-    // 9. Nothing the CSP refused, nothing thrown.
+    // 10. Nothing the CSP refused, nothing thrown.
     results['csp_violations'] = w.csp;
     results['page_errors'] = w.errors;
     if (w.csp.length > 0) throw new Error(`CSP violations: ${w.csp.join('; ')}`);
@@ -939,6 +1126,7 @@ async function main(): Promise<void> {
         .catch(() => undefined);
       writeFileSync(join(OUT, 'nfxd-a.log'), a.text());
       writeFileSync(join(OUT, 'nfxd-b.log'), b.text());
+      writeFileSync(join(OUT, 'nfxd-c.log'), nodeC.text());
       writeFileSync(join(OUT, 'console.txt'), `${w.console.join('\n')}\n`);
     }
     results['csp_violations'] = w.csp;
