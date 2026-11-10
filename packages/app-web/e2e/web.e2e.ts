@@ -275,6 +275,19 @@ async function tlsFront(tls: { key: Buffer; cert: Buffer }): Promise<{
   };
 }
 
+/**
+ * Where a front forwards `reqUrl`: `upstream`'s scheme, host and port, always, with only the
+ * request's path and query. Concatenating `upstream + req.url` let a request target such as
+ * `@other.host/x` move the host (userinfo) or `//other.host/x` make it protocol-relative.
+ */
+function forwardUrl(upstream: string, reqUrl: string | undefined): URL {
+  const asked = new URL(reqUrl ?? '/', 'http://front.invalid');
+  const to = new URL(upstream);
+  to.pathname = to.pathname.replace(/\/$/, '') + asked.pathname;
+  to.search = asked.search;
+  return to;
+}
+
 /** `req` to `upstream` as the browser sent it (a Range included); `edit` may change a 200's body. */
 function proxy(
   upstream: string,
@@ -284,7 +297,7 @@ function proxy(
 ): void {
   const headers = { ...req.headers };
   delete headers.host;
-  const up = httpRequest(`${upstream}${req.url ?? '/'}`, { method: req.method, headers }, (r) => {
+  const up = httpRequest(forwardUrl(upstream, req.url), { method: req.method, headers }, (r) => {
     const chunks: Buffer[] = [];
     r.on('data', (c: Buffer) => chunks.push(c));
     r.on('end', () => {
@@ -371,7 +384,7 @@ async function recorder(upstream: string): Promise<{
       const headers = { ...req.headers };
       delete headers.host;
       const up = httpRequest(
-        `${upstream}${req.url ?? '/'}`,
+        forwardUrl(upstream, req.url),
         { method: req.method, headers },
         (r) => {
           requests.push({ path, sha, status: r.statusCode ?? 502 });
