@@ -737,6 +737,11 @@ export class NfxMeshSignaler {
     };
   }
 
+  /** Whether our offer in `n` still waits for its answer (asked after an `await`). */
+  private unanswered(n: Negotiation): boolean {
+    return n.state === 'starting' || n.state === 'offered';
+  }
+
   /** §6.6: on a valid `connect` from a higher key we are not connected or connecting to. */
   private maybeOffer(r: Room, to: string): void {
     const key = r.key;
@@ -770,10 +775,10 @@ export class NfxMeshSignaler {
         n.offerAt = at;
         const accepted = await this.d.publish(relays, event);
         // No relay took it, and no answer has come by another way meanwhile.
-        if (accepted === 0 && n.state === 'offered') this.fail(r, to, n, true);
+        if (accepted === 0 && this.unanswered(n)) this.fail(r, to, n, true);
       } catch {
         // The SDP could not be signaled, or publishing threw.
-        if (n.state === 'starting' || n.state === 'offered') this.fail(r, to, n, true);
+        if (this.unanswered(n)) this.fail(r, to, n, true);
       }
     })();
   }
