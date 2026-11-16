@@ -1,11 +1,11 @@
 /**
- * Beacon endpoint filtering (ADR 0022 items 3 and 5): which origins and trackers from seeders'
+ * Beacon endpoint filtering (ADR 0022 items 3 and 5; pear #89): which origins from seeders'
  * beacons a play may use, what each origin serves (pear #97: absent all, empty none, several claims
  * intersected), and how they merge with the client's own. Beacons are really signed.
  */
 import { describe, expect, it } from 'vitest';
 
-import type { NfxVideo, TrackerUrl } from '@sovit/core';
+import type { NfxVideo } from '@sovit/core';
 
 import { Key, NS, T, addrOf, beacon, https, webrtc } from '../../__tests__/support/nfx.js';
 import { WEB_FALLBACK_ORIGIN } from '../../settings/defaults.js';
@@ -14,15 +14,12 @@ import {
   MAX_CLAIMED_RENDITIONS,
   beaconEndpoints,
   beaconOrigin,
-  beaconTracker,
   narrowClaim,
   originClaim,
-  playEndpoints,
+  playOrigins,
 } from '../endpoints.js';
 import { isPublicHost } from '../hosts.js';
 
-/** A tracker a beacon may name (the web's own, before signaling moved to Nostr). */
-const WEB_TRACKER = 'wss://web.nutflix.xyz/tracker' as TrackerUrl;
 const creator = new Key();
 const VIDEO = 'free-video-1';
 const video = {
@@ -74,31 +71,6 @@ describe('beaconOrigin: https only, no query, fragment or credentials, a public 
   });
 });
 
-describe('beaconTracker: wss only, a public host, in the player’s form', () => {
-  it.each([
-    ['wss://tracker.example', 'wss://tracker.example'],
-    ['wss://tracker.example/', 'wss://tracker.example'],
-    ['wss://Tracker.Example:8443/announce', 'wss://tracker.example:8443/announce'],
-  ])('%s → %s', (raw, t) => {
-    expect(beaconTracker(raw)).toBe(t);
-  });
-
-  it.each([
-    'ws://tracker.example/announce',
-    'ws://127.0.0.1:8000/announce',
-    'ws://localhost/announce',
-    'https://tracker.example/announce',
-    'wss://tracker.example/announce?info_hash=x',
-    'wss://tracker.example/announce#x',
-    'wss://u:p@tracker.example/announce',
-    'wss://127.0.0.1/announce',
-    'wss://192.168.0.2/announce',
-    'wss://tracker/announce',
-  ])('%s is refused', (raw) => {
-    expect(beaconTracker(raw)).toBeNull();
-  });
-});
-
 describe('isPublicHost', () => {
   it.each(['cdn.example', 'xn--bcher-kva.example', '93.184.215.14', '[2606:4700::6810:84e5]'])(
     '%s is public',
@@ -130,7 +102,7 @@ describe('isPublicHost', () => {
 });
 
 describe('beaconEndpoints: free beacons for this address only, newest per seeder', () => {
-  it('takes https origins and wss trackers, drops the rest, ranks by how many seeders name each', () => {
+  it('takes https origins, drops the rest (trackers too: pear #89), ranks by how many seeders name each', () => {
     const s1 = new Key();
     const s2 = new Key();
     const events = [
@@ -149,13 +121,12 @@ describe('beaconEndpoints: free beacons for this address only, newest per seeder
     const found = beaconEndpoints(video, events, T);
     expect(found).toEqual({
       origins: [{ url: 'https://a.example/o' }, { url: 'https://c.example/o' }],
-      trackers: ['wss://t1.example/announce', 'wss://t3.example/announce'],
       seeders: 2,
       reachable: 2,
     });
   });
 
-  it('at most 4 of each from one beacon and 8 origins in all', () => {
+  it('at most 4 origins from one beacon and 8 in all', () => {
     const many = (k: number, n: number): ReturnType<typeof https>[] =>
       Array.from({ length: n }, (_, i) => https(`https://o${String(k)}-${String(i)}.example/o`));
     const trackers = Array.from({ length: 6 }, (_, i) => `wss://t${String(i)}.example/a`);
@@ -164,7 +135,7 @@ describe('beaconEndpoints: free beacons for this address only, newest per seeder
     );
     const found = beaconEndpoints(video, events, T);
     expect(found.origins).toHaveLength(MAX_BEACON_ORIGINS);
-    expect(found.trackers).toEqual(trackers.slice(0, 4));
+    expect(found).not.toHaveProperty('trackers');
     // The first four of each beacon: twelve in all, eight kept.
     expect(found.origins.every((o) => /o[0-2]-[0-3]\./.test(o.url))).toBe(true);
   });
@@ -178,7 +149,6 @@ describe('beaconEndpoints: free beacons for this address only, newest per seeder
     ];
     expect(beaconEndpoints(video, events, T)).toEqual({
       origins: [],
-      trackers: [],
       seeders: 0,
       reachable: 0,
     });
@@ -216,6 +186,9 @@ describe('beaconEndpoints: free beacons for this address only, newest per seeder
       webrtc('ws://t.example/a'),
     ]);
     expect(beaconEndpoints(video, [ev], T)).toMatchObject({ seeders: 1, reachable: 0 });
+    // Pear #89: a tracker is no way to reach a seeder any more, however well-formed.
+    const bridge = beacon(new Key(), video.id, [webrtc('wss://tracker.example/announce')]);
+    expect(beaconEndpoints(video, [bridge], T)).toEqual({ origins: [], seeders: 1, reachable: 0 });
   });
 });
 
@@ -246,7 +219,6 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
     ];
     expect(beaconEndpoints(video, events, T)).toEqual({
       origins: [],
-      trackers: [],
       seeders: 0,
       reachable: 0,
     });
@@ -327,63 +299,44 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
   });
 });
 
-describe('playEndpoints: beacons’ origins then the fallback; configured trackers then beacons’, 4 in all', () => {
-  it('orders, dedupes and caps', () => {
-    const configured = [WEB_TRACKER, 'ws://127.0.0.1:8000/announce' as TrackerUrl];
-    const got = playEndpoints(
-      {
-        origins: [
-          { url: 'https://a.example/o' },
-          { url: WEB_FALLBACK_ORIGIN },
-          { url: 'https://b.example/o', renditions: ['360p'] },
-        ],
-        trackers: [
-          'wss://t1.example/a' as TrackerUrl,
-          WEB_TRACKER,
-          'wss://t2.example/a' as TrackerUrl,
-          'wss://t3.example/a' as TrackerUrl,
-        ],
-      },
-      configured,
-      WEB_FALLBACK_ORIGIN,
-    );
-    expect(got).toEqual({
-      origins: [
-        { url: 'https://a.example/o' },
-        { url: WEB_FALLBACK_ORIGIN },
-        { url: 'https://b.example/o', renditions: ['360p'] },
-      ],
-      trackers: [
-        WEB_TRACKER,
-        'ws://127.0.0.1:8000/announce',
-        'wss://t1.example/a',
-        'wss://t2.example/a',
-      ],
-    });
+describe('playOrigins: the beacons’ origins, then the fallback', () => {
+  it('orders and dedupes', () => {
+    expect(
+      playOrigins(
+        {
+          origins: [
+            { url: 'https://a.example/o' },
+            { url: WEB_FALLBACK_ORIGIN },
+            { url: 'https://b.example/o', renditions: ['360p'] },
+          ],
+        },
+        WEB_FALLBACK_ORIGIN,
+      ),
+    ).toEqual([
+      { url: 'https://a.example/o' },
+      { url: WEB_FALLBACK_ORIGIN },
+      { url: 'https://b.example/o', renditions: ['360p'] },
+    ]);
   });
 
-  it('with no beacon endpoints: the fallback origin and the configured trackers', () => {
-    expect(
-      playEndpoints({ origins: [], trackers: [] }, [WEB_TRACKER], WEB_FALLBACK_ORIGIN),
-    ).toEqual({
-      origins: [{ url: WEB_FALLBACK_ORIGIN }],
-      trackers: [WEB_TRACKER],
-    });
+  it('with no beacon endpoints: the fallback origin alone', () => {
+    expect(playOrigins({ origins: [] }, WEB_FALLBACK_ORIGIN)).toEqual([
+      { url: WEB_FALLBACK_ORIGIN },
+    ]);
   });
 
   it('the fallback origin serves every rendition, unless a beacon says what it serves', () => {
-    const fromBeacon = playEndpoints(
-      {
-        origins: [
-          { url: 'https://a.example/o', renditions: ['720p'] },
-          { url: WEB_FALLBACK_ORIGIN, renditions: ['360p'] },
-        ],
-        trackers: [],
-      },
-      [],
-      WEB_FALLBACK_ORIGIN,
-    );
-    expect(fromBeacon.origins).toEqual([
+    expect(
+      playOrigins(
+        {
+          origins: [
+            { url: 'https://a.example/o', renditions: ['720p'] },
+            { url: WEB_FALLBACK_ORIGIN, renditions: ['360p'] },
+          ],
+        },
+        WEB_FALLBACK_ORIGIN,
+      ),
+    ).toEqual([
       { url: 'https://a.example/o', renditions: ['720p'] },
       { url: WEB_FALLBACK_ORIGIN, renditions: ['360p'] },
     ]);
@@ -391,8 +344,8 @@ describe('playEndpoints: beacons’ origins then the fallback; configured tracke
     const events = [
       beacon(new Key(), video.id, [{ ...https(`${WEB_FALLBACK_ORIGIN}/`), renditions: ['360p'] }]),
     ];
-    expect(
-      playEndpoints(beaconEndpoints(video, events, T), [], WEB_FALLBACK_ORIGIN).origins,
-    ).toEqual([{ url: WEB_FALLBACK_ORIGIN, renditions: ['360p'] }]);
+    expect(playOrigins(beaconEndpoints(video, events, T), WEB_FALLBACK_ORIGIN)).toEqual([
+      { url: WEB_FALLBACK_ORIGIN, renditions: ['360p'] },
+    ]);
   });
 });

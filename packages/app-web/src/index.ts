@@ -14,7 +14,6 @@ export type {
   NfxPlayerEvent,
   NfxPlayerLib,
   NfxNostrSignaling,
-  NfxTrackerSignaling,
 } from './nfx-lib.js';
 export {
   DEFAULT_WEB_NFX,
@@ -22,7 +21,6 @@ export {
   WEB_FALLBACK_ORIGIN,
   WEB_ICE_SERVERS,
   WEB_MAX_MESH_RELAYS,
-  WEB_MAX_TRACKERS,
   WEB_MESH_RELAYS,
   WEB_NFX_NETWORK,
   WEB_SCOPED_RELAY,
@@ -50,10 +48,8 @@ export {
 export {
   beaconEndpoints,
   beaconOrigin,
-  beaconTracker,
-  playEndpoints,
+  playOrigins,
   type BeaconEndpoints,
-  type PlayEndpoints,
   type PlayOrigin,
 } from './adapter/endpoints.js';
 export { isPublicHost } from './adapter/hosts.js';

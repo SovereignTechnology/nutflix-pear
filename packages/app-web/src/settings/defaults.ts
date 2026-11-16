@@ -4,20 +4,13 @@
  * - **Read relays:** ADR 0009's four, with its 2026-11-07 amendment (`relay.ditto.pub`, the free
  *   relay that answers NIP-50 search), as in the desktop app.
  * - **NFX, always on**, on `nfx:testnet:1`: the network's scoped relay `wss://relay.nutflix.xyz`
- *   (the desktop app's `DEFAULT_NFX`) and its WebTorrent tracker `wss://web.nutflix.xyz/tracker`.
+ *   (the desktop app's `DEFAULT_NFX`) and two signaling relays for the browser mesh (`WEB_MESH_RELAYS`).
  *   No iroh relay: no iroh runs in a browser.
  * - **No wallet, no seeding, no unsigned images** in v1: those fields are fixed, never stored.
  *
  * Every value here is a public name (web.nutflix.xyz, relay.nutflix.xyz and the public relays).
  */
-import type {
-  MAX_NFX_MESH_RELAYS,
-  MAX_NFX_TRACKERS,
-  NfxNetwork,
-  NfxSettings,
-  RelayUrl,
-  Settings,
-} from '@sovit/core';
+import type { MAX_NFX_MESH_RELAYS, NfxNetwork, NfxSettings, RelayUrl, Settings } from '@sovit/core';
 
 export const WEB_NFX_NETWORK: NfxNetwork = 'nfx:testnet:1';
 
@@ -53,9 +46,6 @@ export const WEB_STUN_URL = 'stun:web.nutflix.xyz:3478';
 export const WEB_ICE_SERVERS: readonly { readonly urls: readonly string[] }[] = Object.freeze([
   Object.freeze({ urls: Object.freeze([WEB_STUN_URL]) }),
 ]);
-
-/** At most this many trackers read from beacons (contracts v14); none is used for signaling. */
-export const WEB_MAX_TRACKERS: typeof MAX_NFX_TRACKERS = 4;
 
 export const DEFAULT_WEB_NFX: NfxSettings = Object.freeze({
   enabled: true,

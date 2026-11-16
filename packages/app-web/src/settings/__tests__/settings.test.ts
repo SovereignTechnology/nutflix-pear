@@ -23,7 +23,7 @@ import {
   type SettingsStorage,
   type StorageEventTarget,
 } from '../store.js';
-import { isRelayUrl, isScopedRelayUrl, isTrackerUrl, isWebSettingsPatch } from '../validate.js';
+import { isRelayUrl, isScopedRelayUrl, isWebSettingsPatch } from '../validate.js';
 
 const stored = (settings: unknown, v: unknown = 1): string => JSON.stringify({ v, settings });
 
@@ -217,14 +217,6 @@ describe('isWebSettingsPatch', () => {
     }
     expect(isScopedRelayUrl('ws://[::1]:7777')).toBe(true);
     expect(isRelayUrl('ws://[::1]:7777')).toBe(false);
-    for (const ok of [
-      'wss://tracker.example',
-      'wss://tracker.example/announce',
-      'ws://[::1]:8000/a',
-    ]) {
-      expect(isTrackerUrl(ok), ok).toBe(true);
-    }
-    expect(isTrackerUrl(`wss://t.example/${'a'.repeat(600)}`)).toBe(false);
   });
 });
 

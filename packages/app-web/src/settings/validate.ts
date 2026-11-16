@@ -1,7 +1,7 @@
 /**
  * The web client's settings checks: what a `Partial<Settings>` patch may hold here, the web
  * counterpart of the desktop app's `isSettingsPatch` (`app-desktop/src/ipc/guards.ts`). The URL
- * rules are the desktop guards' own, so a relay or tracker one app accepts the other does too, and
+ * rules are the desktop guards' own, so a relay one app accepts the other does too, and
  * both accept exactly what Settings' validators write (`__tests__/settings-validate.test.ts` holds
  * them to `@sovit/ui`'s). The web adds its own limits on top:
  *
@@ -15,13 +15,13 @@
  * exception (a hostile getter or Proxy included). Objects must be plain with no unknown keys;
  * optional keys are absent, never `undefined`. Strings and arrays have caps.
  */
-import type { NfxSettings, RelayConfig, RelayUrl, Settings, TrackerUrl } from '@sovit/core';
+import type { NfxSettings, RelayConfig, RelayUrl, Settings } from '@sovit/core';
 
 import { WEB_MAX_MESH_RELAYS, WEB_NFX_NETWORK } from './defaults.js';
 
 type Guard<T> = (x: unknown) => x is T;
 
-/** Relay, tracker and server URLs: the desktop's `LIMITS.maxServerUrl`, Settings' `MAX_URL_LENGTH`. */
+/** Relay and server URLs: the desktop's `LIMITS.maxServerUrl`, Settings' `MAX_URL_LENGTH`. */
 export const MAX_SERVER_URL = 512;
 /** Read relays (the desktop's `LIMITS.maxArray`). */
 export const MAX_RELAYS = 256;
@@ -96,14 +96,6 @@ const RELAY_RE = new RegExp(`^[Ww][Ss][Ss]://${HOST}${PORT}${PATH_NO_TRAILING}${
 const LOOPBACK_WS_RE = new RegExp(
   `^[Ww][Ss]://(?:127\\.0\\.0\\.1|\\[::1\\]|localhost)${PORT}${PATH_NO_TRAILING}$`,
 );
-const LOWER_LABEL = '[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?';
-const LOWER_HOST = `(?:${LOWER_LABEL}(?:\\.${LOWER_LABEL})*|\\[[0-9a-f:]{2,39}\\])`;
-const LOWER_PORT = '(?::[1-9][0-9]{0,4})?';
-const TRACKER_PATH = "(?:/[A-Za-z0-9\\-._~!$&'()*+,;=:@%/]+)?";
-const TRACKER_RE = new RegExp(
-  `^(?:wss://${LOWER_HOST}${LOWER_PORT}|ws://(?:127\\.0\\.0\\.1|\\[::1\\]|localhost)${LOWER_PORT})${TRACKER_PATH}$`,
-);
-
 /** A read relay: `wss://`, no user-info or fragment, no trailing slash. */
 export const isRelayUrl = safe(matches(RELAY_RE)) as Guard<RelayUrl>;
 
@@ -111,13 +103,6 @@ export const isRelayUrl = safe(matches(RELAY_RE)) as Guard<RelayUrl>;
 export const isScopedRelayUrl = safe(
   (x: unknown): x is string => isRelayUrl(x) || matches(LOOPBACK_WS_RE)(x),
 ) as Guard<RelayUrl>;
-
-/**
- * Contracts v14: a WebTorrent tracker in the form nfx's player reduces one to: lower-case `wss://`
- * (or `ws://` to a loopback address), an optional port, a path other than a bare `/`; no
- * user-info, query or fragment.
- */
-export const isTrackerUrl = safe(matches(TRACKER_RE)) as Guard<TrackerUrl>;
 
 const isRelayConfig = obj<RelayConfig>({ url: isRelayUrl, read: bool, write: bool });
 

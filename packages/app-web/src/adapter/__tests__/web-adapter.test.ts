@@ -570,7 +570,10 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     const { addr } = await playable(r);
     const pending = r.adapter.playNfx(addr);
     await tick(20);
+    // A beacon naming only a tracker is no reason to stop waiting; one naming an origin is.
     put(r.relays, [SCOPED], beacon(new Key(), addr, [webrtc('wss://bridge.example/a')]));
+    await tick(20);
+    put(r.relays, [SCOPED], beacon(new Key(), addr, [https('https://late.example/o')]));
     const session = await pending;
     if (session.source.kind !== 'element') throw new Error('not an element source');
     session.source.attach(document.createElement('video'));
@@ -580,7 +583,7 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
       kind: 'nostr',
       relays: [...WEB_MESH_RELAYS],
     });
-    expect(r.player.last.options.origins).toEqual([WEB_FALLBACK_ORIGIN]);
+    expect(r.player.last.options.origins).toEqual(['https://late.example/o', WEB_FALLBACK_ORIGIN]);
   });
 
   it('no free beacon for this address: no-seeders (a paid one, another creator’s, another video’s)', async () => {

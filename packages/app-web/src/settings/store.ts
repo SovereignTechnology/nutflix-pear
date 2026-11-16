@@ -2,7 +2,7 @@
  * The web client's settings, kept in Web Storage under one key (ADR 0022 item 8). This is the one
  * module of `packages/app-web/src` that may name a browser storage API: SECURITY.md invariant 8
  * (no browser persistence of proofs or keys) holds for everything else, and its test allows
- * `localStorage` here and nowhere else. Nothing secret is stored: relays, trackers, the theme and
+ * `localStorage` here and nowhere else. Nothing secret is stored: relays, the theme and
  * two playback preferences.
  *
  * - **Read as the desktop host reads `settings.json`:** unknown keys are ignored, missing ones take
