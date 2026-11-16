@@ -6,9 +6,9 @@
  * that the origin it plays from serves. hls.js then adapts to bandwidth among those alone.
  *
  * - **Held** comes from core's `nfx.renditionAvailability` over the beacons, counting only what
- *   this page can reach: `https` origins it may fetch from (`beaconOrigin`) that serve something,
- *   and `webrtc` bridges with a tracker it may use (`beaconTracker`). An endpoint without a
- *   `renditions` list holds every rendition.
+ *   this page can reach: `https` origins it may fetch from (`beaconOrigin`), and `webrtc` bridges
+ *   with a tracker it may use (`beaconTracker`). An endpoint without a `renditions` list holds
+ *   every rendition; core rejects a beacon whose `https` list is empty (NFX-03 §4, pear #104).
  * - **When every counted seeder holds every rendition** (the usual case, and every one-rendition
  *   video), no list is passed: the library allows every rendition, and each origin's own list (if
  *   its beacon has one) still cuts what it is asked for.
@@ -49,8 +49,8 @@ export const MAX_ALLOWED_RENDITIONS = MAX_CLAIMED_RENDITIONS;
 
 /** Whether this page can use endpoint `e` (the rules `beaconEndpoints` applies). */
 export function webUsable(e: Endpoint): boolean {
-  // An origin whose list is empty serves nothing (NFX-03 §4, and nfx's library skips it).
-  if (e.t === 'https') return beaconOrigin(e.url) !== null && e.renditions?.length !== 0;
+  // Core refuses a beacon whose origin lists no rendition (NFX-03 §4, pear #104).
+  if (e.t === 'https') return beaconOrigin(e.url) !== null;
   if (e.t === 'webrtc') return e.trackerUrls.some((u) => beaconTracker(u) !== null);
   return false;
 }

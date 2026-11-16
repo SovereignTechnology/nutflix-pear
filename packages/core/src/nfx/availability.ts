@@ -7,9 +7,11 @@
  *
  * - `iroh` (NFX-06 §2): the renditions it has a ticket for. Without a `meta` ticket nothing can be
  *   fetched from it, so it holds none.
- * - `https` (NFX-05 §6): its optional `renditions` (nfx, `nfxd --renditions`); absent or empty
- *   means every rendition.
- * - `webrtc` (NFX-10 §2): its `renditions`; absent or empty means every rendition.
+ * - `https` (NFX-05 §6): its optional `renditions` (nfx, `nfxd --renditions`); absent means every
+ *   rendition. A present list is non-empty with distinct ids: `parseBeacon` rejects a beacon with
+ *   an empty or repeating one whole (NFX-03 §4, pear #104), so that seeder holds nothing from it.
+ * - `webrtc` (NFX-10 §2): its `renditions`; absent or empty means every rendition, as nfx-proto
+ *   reads it.
  * - `hyperdht` (NFX-12): files by sha256 from a seeder that keeps whole videos, so every
  *   rendition.
  * - `hyper` (deprecated, never dialled) and unknown endpoints: none.
@@ -66,7 +68,8 @@ function held(e: Endpoint): 'all' | readonly string[] {
         ? [...e.tickets.keys()].filter((k) => k !== RESERVED_RENDITION_ID)
         : [];
     case 'https':
-      return e.renditions === undefined || e.renditions.length === 0 ? 'all' : e.renditions;
+      // The parser never yields `[]` (pear #104); one built by hand names nothing, so holds none.
+      return e.renditions ?? 'all';
     case 'webrtc':
       return e.renditions.length === 0 ? 'all' : e.renditions;
     case 'hyperdht':

@@ -12,12 +12,12 @@
  *   player appends `/<root>/…` to the base and a query would steer its requests; a public host
  *   (`isPublicHost`). Reduced to `https://host[:port][/prefix]`.
  * - **What an origin serves** (NFX-03 §4, pear #97): its endpoint's `renditions`, absent meaning
- *   every rendition, an empty list none. When several seeders (or one beacon twice) name one
- *   origin, it serves only what every claim says, as nfx's library reads them
- *   (`Endpoints.originSources`): a beacon can narrow what an origin is taken to serve, never widen
- *   it, so the worst a lying beacon does is have the player skip that origin, rather than offer a
- *   level whose files it answers with `404`. An origin claimed to serve nothing counts for no
- *   seeder's reach.
+ *   every rendition (core rejects a beacon whose list is empty, pear #104). When several seeders
+ *   (or one beacon twice) name one origin, it serves only what every claim says, as nfx's library
+ *   reads them (`Endpoints.originSources`): a beacon can narrow what an origin is taken to serve,
+ *   never widen it, so the worst a lying beacon does is have the player skip that origin, rather
+ *   than offer a level whose files it answers with `404`. An origin left serving nothing (claims
+ *   that share no id) counts for no seeder's reach.
  * - **Trackers** (`webrtc` endpoints' `tracker_urls`): `wss:` only (a beacon never points a viewer
  *   at a `ws:` tracker, loopback or not), the same URL rules, a public host, in the form
  *   `isTrackerUrl` takes.
@@ -71,7 +71,8 @@ export function beaconTracker(raw: string): TrackerUrl | null {
 /**
  * What an `https` endpoint's `renditions` says its origin serves: `null` for every rendition
  * (absent), else its ids of at most `MAX_RENDITION_ID_LENGTH` characters, each once, the first
- * `MAX_CLAIMED_RENDITIONS` (core's parser has already refused `''` and `meta`). Empty: none.
+ * `MAX_CLAIMED_RENDITIONS` (core's parser has already refused `''`, `meta`, a repeat and an empty
+ * list). Empty (every id too long): none.
  */
 export function originClaim(renditions: readonly string[] | undefined): string[] | null {
   if (renditions === undefined) return null;

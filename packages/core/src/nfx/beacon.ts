@@ -50,14 +50,18 @@ export type Endpoint =
     }
   /**
    * NFX-05 §6: an origin's base URL. `renditions` (optional, as nfx adds it for `nfxd
-   * --renditions`, pear #97): the renditions it holds; absent means every rendition.
+   * --renditions`, pear #97): the renditions it holds; absent means every rendition. The parser
+   * never yields an empty or repeating list (NFX-03 §4: such a beacon is invalid, pear #104).
    */
   | { readonly t: 'https'; readonly url: string; readonly renditions?: readonly string[] }
   /** NFX-10 §2: a bridge. Swarm ids are derived per rendition, never carried. */
   | {
       readonly t: 'webrtc';
       readonly trackerUrls: readonly string[];
-      /** Renditions whose swarms the bridge joins; empty means every rendition. */
+      /**
+       * Renditions whose swarms the bridge joins; empty means every rendition. A present `[]` is
+       * read as absent, as nfx-proto reads it (NFX-10 §2 does not say a present list is non-empty).
+       */
       readonly renditions: readonly string[];
     }
   /** The deprecated NFX-12 draft: parsed, never emitted by NFX-12 publishers, never dialed. */
@@ -362,7 +366,9 @@ function parseEndpoint(raw: JsonValue): NfxResult<Endpoint | string> {
       const url = stringField(raw, 'url');
       if (!url.ok) return url;
       if (!isHttpsUrl(url.value)) return bad('https endpoint `url` must be an https URL');
-      // Pear #97: the renditions an origin holds, checked as a `webrtc` endpoint's are; absent = all.
+      // Pear #97: the renditions an origin holds; absent = all. NFX-03 §4 (pear #104): present,
+      // a non-empty list of distinct ids, none `meta`; anything else rejects the beacon whole, as
+      // nfx-proto does and nfx's `beacon-renditions.json` vectors require.
       const rawRenditions = raw.get('renditions');
       if (rawRenditions === undefined) return ok<Endpoint>({ t: 'https', url: url.value });
       const renditions = strings(
@@ -371,6 +377,12 @@ function parseEndpoint(raw: JsonValue): NfxResult<Endpoint | string> {
         (r) => r !== '' && r !== RESERVED_RENDITION_ID,
       );
       if (!renditions.ok) return renditions;
+      if (renditions.value.length === 0) {
+        return bad('https `renditions` must name 1 or more renditions');
+      }
+      if (new Set(renditions.value).size !== renditions.value.length) {
+        return bad('https `renditions` must not repeat a rendition');
+      }
       return ok<Endpoint>({ t: 'https', url: url.value, renditions: renditions.value });
     }
     case 'webrtc': {

@@ -1,8 +1,9 @@
 /**
  * Pear #97: which renditions a video's live beacons say are held, by how many seeders, and the
  * order a player tries them in. Mixed holders (per-rendition iroh tickets, `webrtc` and `https`
- * lists, `hyperdht` whole videos), absent = all, the newest beacon per seeder, stale and expired
- * beacons, other videos, transports a player cannot use, and the bounds.
+ * lists, `hyperdht` whole videos), absent = all, an `https` list empty or repeating (the beacon is
+ * invalid, pear #104), the newest beacon per seeder, stale and expired beacons, other videos,
+ * transports a player cannot use, and the bounds.
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
@@ -98,6 +99,27 @@ function beacon(
   ) as unknown as NostrEvent;
 }
 
+/** Beacon content naming `endpoints`, given as raw JSON (what a wire may carry, not what we write). */
+const rawContent = (endpoints: string): string =>
+  `{"v":1,"video":"${D}","endpoints":[${endpoints}],"chunks":"all","price_hint":0,"free":true}`;
+const rawHttps = (renditions?: string): string =>
+  `{"t":"https","url":"https://origin.example/nfx"${renditions === undefined ? '' : `,"renditions":${renditions}`}}`;
+const rawWebrtc = (renditions?: string): string =>
+  `{"t":"webrtc","tracker_urls":["wss://tracker.example"]${renditions === undefined ? '' : `,"renditions":${renditions}`}}`;
+/** An iroh endpoint holding 720p (and `meta`), as raw JSON. */
+const RAW_IROH = `{"t":"iroh","node":"${'a'.repeat(64)}","relay":"","addrs":[],"tickets":{"720p":"${ticket('7')}","meta":"${ticket('m')}"}}`;
+
+/** A free beacon for VIDEO whose content is `rawContent(endpoints)`, signed by `sk` at `at`. */
+function rawBeacon(endpoints: string, sk = generateSecretKey(), at = NOW - 10): NostrEvent {
+  const tags = beaconTags(`38504:${CREATOR}:${D}`, at, 120);
+  if (!tags.ok) throw new Error('bad test beacon');
+  const content = rawContent(endpoints);
+  return finalizeEvent(
+    { kind: 20464, created_at: at, tags: tags.value, content },
+    sk,
+  ) as unknown as NostrEvent;
+}
+
 const named = (a: ReturnType<typeof renditionAvailability>): Record<string, number> =>
   Object.fromEntries([...a.named].sort(([x], [y]) => x.localeCompare(y)));
 
@@ -115,9 +137,36 @@ describe('beacon `https` endpoints: optional renditions (pear #97, nfx `--rendit
   });
 
   it('refuses a list that is not one of rendition ids, as for `webrtc`', () => {
-    for (const bad of ['"720p"', '[""]', '["meta"]', '[7]', '{}']) {
+    for (const bad of ['"720p"', '[""]', '["meta"]', '[7]', '{}', 'null']) {
       const text = `{"v":1,"video":"${D}","endpoints":[{"t":"https","url":"https://o.example","renditions":${bad}}],"chunks":"all","price_hint":0,"free":true}`;
       expect(parseBeaconContent(text, 'a'.repeat(64)).ok, bad).toBe(false);
+    }
+  });
+
+  it('pear #104: refuses an empty list and a repeated id, whatever else the beacon names', () => {
+    // NFX-03 §4: present, a non-empty list of distinct ids. nfx's `beacon-renditions.json` has
+    // `renditions-empty` (beside an iroh endpoint, as here) and `renditions-repeated` invalid whole.
+    for (const bad of ['[]', '["720p","720p"]', '["720p","360p","720p"]']) {
+      for (const endpoints of [rawHttps(bad), `${RAW_IROH},${rawHttps(bad)}`]) {
+        const parsed = parseBeaconContent(rawContent(endpoints), 'a'.repeat(64));
+        expect(parsed.ok, endpoints).toBe(false);
+        if (!parsed.ok) expect(parsed.error.reason).toMatch(/^https `renditions` must /);
+      }
+    }
+    // The same beacon with its iroh endpoint alone is fine.
+    expect(parseBeaconContent(rawContent(RAW_IROH), 'a'.repeat(64)).ok).toBe(true);
+  });
+});
+
+describe('beacon `webrtc` endpoints: a present but empty list (pear #104)', () => {
+  it('reads it as absent, every rendition, as nfx-proto does (NFX-10 §2 is silent)', () => {
+    for (const endpoints of [rawWebrtc('[]'), rawWebrtc()]) {
+      const parsed = parseBeaconContent(rawContent(endpoints), 'a'.repeat(64));
+      expect(parsed.ok, endpoints).toBe(true);
+      if (!parsed.ok) return;
+      expect(parsed.value.endpoints).toEqual([
+        { t: 'webrtc', trackerUrls: ['wss://tracker.example'], renditions: [] },
+      ]);
     }
   });
 });
@@ -162,10 +211,10 @@ describe('renditionAvailability', () => {
     expect(named(irohOnly)).toEqual({ '720p': 1 });
   });
 
-  it('absent or empty means every rendition', () => {
+  it('absent means every rendition; a `webrtc` list present but empty too, as nfx-proto reads it', () => {
     const a = renditionAvailability(
       VIDEO,
-      [beacon([https()]), beacon([https([])]), beacon([webrtc([])])],
+      [beacon([https()]), rawBeacon(rawWebrtc()), rawBeacon(rawWebrtc('[]'))],
       NOW,
     );
     expect(a).toEqual({ seeders: 3, all: 3, named: new Map() });
@@ -173,6 +222,54 @@ describe('renditionAvailability', () => {
     // A seeder whose endpoints mix "all" and a list holds everything.
     const mixed = renditionAvailability(VIDEO, [beacon([iroh('a', ['720p']), https()])], NOW);
     expect(mixed).toEqual({ seeders: 1, all: 1, named: new Map() });
+  });
+
+  it('non-empty `https` and `webrtc` lists hold the renditions they name', () => {
+    const a = renditionAvailability(
+      VIDEO,
+      [rawBeacon(rawHttps('["720p","360p"]')), rawBeacon(rawWebrtc('["360p"]'))],
+      NOW,
+    );
+    expect(a).toEqual({
+      seeders: 2,
+      all: 0,
+      named: new Map([
+        ['720p', 1],
+        ['360p', 2],
+      ]),
+    });
+  });
+
+  it('pear #104: an `https` list empty or repeating holds nothing, nor does the rest of its beacon', () => {
+    const none = { seeders: 0, all: 0, named: new Map() };
+    for (const bad of ['[]', '["720p","720p"]']) {
+      // Its only endpoint: that seeder is no holder (never one holding every rendition).
+      expect(renditionAvailability(VIDEO, [rawBeacon(rawHttps(bad))], NOW), bad).toEqual(none);
+      // Beside an iroh endpoint that holds 720p: NFX-03 §4 rejects the beacon whole.
+      const beside = rawBeacon(`${RAW_IROH},${rawHttps(bad)}`);
+      expect(renditionAvailability(VIDEO, [beside], NOW), bad).toEqual(none);
+    }
+    expect(named(renditionAvailability(VIDEO, [rawBeacon(RAW_IROH)], NOW))).toEqual({ '720p': 1 });
+    // Other seeders still count; and an invalid beacon withdraws nothing, so the seeder's newest
+    // valid one does.
+    const sk = generateSecretKey();
+    const a = renditionAvailability(
+      VIDEO,
+      [
+        beacon([https(['360p'])], { sk, at: NOW - 70 }),
+        rawBeacon(rawHttps('[]'), sk, NOW - 10),
+        beacon([https(['1080p'])]),
+      ],
+      NOW,
+    );
+    expect(a).toEqual({
+      seeders: 2,
+      all: 0,
+      named: new Map([
+        ['1080p', 1],
+        ['360p', 1],
+      ]),
+    });
   });
 
   it('an iroh endpoint without a `meta` ticket holds nothing; nor does one with no rendition', () => {

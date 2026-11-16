@@ -88,8 +88,7 @@ describe('webAvailability: what this page can reach', () => {
     expect(webUsable({ t: 'https', url: 'https://seed.example/o', renditions: ['360p'] })).toBe(
       true,
     );
-    // An origin that says it serves nothing: nothing to fetch from it (nfx's library skips it).
-    expect(webUsable({ t: 'https', url: 'https://seed.example/o', renditions: [] })).toBe(false);
+    // An empty list never reaches it: core rejects that beacon whole (NFX-03 §4, pear #104).
     expect(webUsable({ t: 'https', url: 'https://10.0.0.5/o' })).toBe(false);
     expect(webUsable({ t: 'webrtc', trackerUrls: ['wss://t.example/a'], renditions: [] })).toBe(
       true,
@@ -117,7 +116,8 @@ describe('webAvailability: what this page can reach', () => {
       beacon(new Key(), addr, [https('https://b.example/o')]),
       // Nothing this page can use: not counted.
       beacon(new Key(), addr, [{ ...https('https://10.0.0.5/o'), renditions: ['1080p'] }]),
-      // An origin that serves nothing: not counted as holding everything.
+      // An origin listing no rendition: core rejects the beacon (NFX-03 §4, pear #104), so it
+      // is not counted, and never as holding everything.
       beacon(new Key(), addr, [{ ...https('https://c.example/o'), renditions: [] }]),
     ];
     const a = webAvailability(video, events, T);
