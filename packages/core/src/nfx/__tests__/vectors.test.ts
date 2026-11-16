@@ -314,8 +314,6 @@ describe('NFX-10 §1 stun endpoints (beacon-stun.json)', () => {
     const good = [
       '192.0.2.1:1',
       '0.0.0.0:65535',
-      '[::]:3478',
-      '[::1]:3478',
       '[2001:db8::]:1',
       '[1:2:3:4:5:6:7:8]:9',
       '[2001:0:0:1::1]:3478',
@@ -337,8 +335,14 @@ describe('NFX-10 §1 stun endpoints (beacon-stun.json)', () => {
       '[2001:db8:0:0:1::1]:1',
       '[1:2:3:4:5:6::8]:1',
       '[0:0:0:0:0:0:0:0]:1',
-      // IPv4 inside IPv6, however it is spelled.
+      // IPv4 inside IPv6, however it is spelled: mapped, and compatible (`::/96`, which takes
+      // `::` and `::1` with it).
       '[::ffff:c000:201]:1',
+      '[::cb00:710a]:1',
+      '[::]:3478',
+      '[::1]:3478',
+      // Longer than any address.
+      `[${'1:'.repeat(40)}1]:1`,
       '[01::1]:1',
       '[::1%eth0]:1',
       ' 192.0.2.1:1',

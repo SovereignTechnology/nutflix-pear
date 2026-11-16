@@ -29,6 +29,7 @@ import {
   meshDirectedTags,
   meshPresenceTags,
   meshProofPreimage,
+  meshProofValid,
   type MeshPresenceType,
   type MeshRoom,
 } from '../nfx/mesh-signal.js';
@@ -42,9 +43,12 @@ function hexOf(b: Uint8Array): string {
   return s;
 }
 
-/** A fresh random secret key in secure memory (retries the ~2^-128 invalid-scalar case). */
+/**
+ * A fresh random secret key in secure memory. An invalid scalar has a probability of about
+ * 2^-128, so a few tries that all fail mean the random source or the library is broken.
+ */
 function generate(): { readonly sk: SecureBuffer; readonly pubkey: string } {
-  for (;;) {
+  for (let tries = 0; tries < 8; tries++) {
     const sk = secureAlloc(32);
     randomFill(sk);
     try {
@@ -53,6 +57,19 @@ function generate(): { readonly sk: SecureBuffer; readonly pubkey: string } {
       wipe(sk);
     }
   }
+  throw new Error('signer: no valid session key could be generated');
+}
+
+/** A room as `meshRoom` makes one: checked, since a wrong one would sign a useless proof. */
+function checkRoom(room: MeshRoom): void {
+  const secret: unknown = room.secret;
+  if (
+    typeof room.key !== 'string' ||
+    !isLowerHex(room.key, 64) ||
+    !(secret instanceof Uint8Array) ||
+    secret.length !== 32
+  )
+    throw new Error('invalid-argument: not a mesh room');
 }
 
 export class MeshSessionKey {
@@ -60,10 +77,11 @@ export class MeshSessionKey {
   readonly pubkey: string;
   /** The session id (`d`): 16 random bytes, 32 lowercase hex, fixed for the session. */
   readonly sessionId: string;
-  private sk: SecureBuffer | null;
+  /** `#`-private: not reachable from outside the class, and not in a dump of the object. */
+  #sk: SecureBuffer | null;
 
   private constructor(sk: SecureBuffer, pubkey: string, sessionId: string) {
-    this.sk = sk;
+    this.#sk = sk;
     this.pubkey = pubkey;
     this.sessionId = sessionId;
   }
@@ -78,20 +96,27 @@ export class MeshSessionKey {
 
   /** A `connect` or `disconnect` in `room`, signed now (`now`: Unix seconds). */
   presence(type: MeshPresenceType, room: MeshRoom, now: number): NostrEvent {
-    return this.sign(room, now, meshPresenceTags(type, room.key, this.sessionId, now), '');
+    // Checked at run time too: the type is only a promise.
+    const t: string = type;
+    if (t !== 'connect' && t !== 'disconnect')
+      throw new Error('invalid-argument: not a presence type');
+    checkRoom(room);
+    return this.#sign(room, now, meshPresenceTags(type, room.key, this.sessionId, now), '');
   }
 
   /** An offer to session `to` in `room`: `sdp` encrypted to it (NIP-44 v2). */
   offer(room: MeshRoom, to: string, sdp: string, now: number): NostrEvent {
-    const content = this.encrypt(to, sdp);
-    return this.sign(room, now, meshDirectedTags(room.key, this.sessionId, to), content);
+    checkRoom(room);
+    const content = this.#encrypt(to, sdp);
+    return this.#sign(room, now, meshDirectedTags(room.key, this.sessionId, to), content);
   }
 
   /** The answer to offer `offerId` from session `to`: `sdp` encrypted to it. */
   answer(room: MeshRoom, to: string, offerId: string, sdp: string, now: number): NostrEvent {
     if (!isLowerHex(offerId, 64)) throw new Error('invalid-argument: not an event id');
-    const content = this.encrypt(to, sdp);
-    return this.sign(room, now, meshDirectedTags(room.key, this.sessionId, to, offerId), content);
+    checkRoom(room);
+    const content = this.#encrypt(to, sdp);
+    return this.#sign(room, now, meshDirectedTags(room.key, this.sessionId, to, offerId), content);
   }
 
   /**
@@ -102,7 +127,7 @@ export class MeshSessionKey {
     let ck: Uint8Array | undefined;
     try {
       if (!isLowerHex(from, 64) || typeof content !== 'string') return undefined;
-      ck = nip44.getConversationKey(this.key(), from);
+      ck = nip44.getConversationKey(this.#key(), from);
       const text = nip44.decrypt(content, ck);
       return isSdp(text) ? text : undefined;
     } catch {
@@ -112,25 +137,25 @@ export class MeshSessionKey {
     }
   }
 
-  /** Wipe the key. Every later call throws. */
+  /** Wipe the key. After it, signing and encrypting throw, and `decrypt` yields `undefined`. */
   destroy(): void {
-    wipe(this.sk);
-    this.sk = null;
+    wipe(this.#sk);
+    this.#sk = null;
   }
 
-  private key(): SecureBuffer {
-    if (this.sk === null) throw new Error('signer-locked: the mesh session has ended');
-    return this.sk;
+  #key(): SecureBuffer {
+    if (this.#sk === null) throw new Error('signer-locked: the mesh session has ended');
+    return this.#sk;
   }
 
-  private encrypt(to: string, sdp: string): string {
+  #encrypt(to: string, sdp: string): string {
     if (!isLowerHex(to, 64) || to === this.pubkey)
       throw new Error('invalid-argument: not a peer session key');
     if (typeof sdp !== 'string' || !isSdp(sdp))
       throw new Error('invalid-argument: only an SDP is sent');
     let ck: Uint8Array | undefined;
     try {
-      ck = nip44.getConversationKey(this.key(), to);
+      ck = nip44.getConversationKey(this.#key(), to);
       const content = nip44.encrypt(sdp, ck);
       if (utf8(content).length > MESH_MAX_CONTENT)
         throw new Error('invalid-argument: the SDP is too long to signal');
@@ -141,8 +166,8 @@ export class MeshSessionKey {
   }
 
   /** Add the room proof, then sign as the session: the only signing path there is. */
-  private sign(room: MeshRoom, now: number, tags: string[][], content: string): NostrEvent {
-    const sk = this.key();
+  #sign(room: MeshRoom, now: number, tags: string[][], content: string): NostrEvent {
+    const sk = this.#key();
     if (!Number.isSafeInteger(now) || now < 0) throw new Error('invalid-argument: not a time');
     const preimage = meshProofPreimage(room.key, now, this.pubkey, meshChallenge(tags, content));
     // cashu-ts signs SHA-256(message), which is the proof id (§6.3).
@@ -156,8 +181,11 @@ export class MeshSessionKey {
       },
       sk,
     );
+    // What goes out must be what a reader accepts: the event, and the room proof in it (so a
+    // change in how the library signs a message cannot go unnoticed).
     const event = verifyIncoming(signed);
-    if (event === null) throw new Error('signer: the signed event did not verify');
+    if (event === null || !meshProofValid(event, room.key))
+      throw new Error('signer: the signed event did not verify');
     return event;
   }
 }

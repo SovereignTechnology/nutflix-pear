@@ -13,8 +13,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { schnorrSignMessage } from '@cashu/cashu-ts';
 import * as nip44 from 'nostr-tools/nip44';
-import { getPublicKey } from 'nostr-tools/pure';
+import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import { bytesToHex, hexToBytes } from 'nostr-tools/utils';
 import { describe, expect, it } from 'vitest';
 
@@ -29,6 +30,7 @@ import {
   meshDirectedTags,
   meshPresenceTags,
   meshProofPreimage,
+  meshProofValid,
   meshRoom,
   meshRoomFilter,
   meshRoomKeyOf,
@@ -286,6 +288,183 @@ describe('NFX-10 §6.2–6.3 events and room proofs', () => {
   it('drops what is not an event at all, without throwing', () => {
     for (const junk of [null, 7, 'x', [], {}, { kind: 25050 }, { ...v.events.connect, tags: [[]] }])
       expect(read(junk, 'answerer').kind).toBe('dropped');
+  });
+
+  /**
+   * A correctly signed event by `who` with these tags and content, its room proof made over
+   * them (or `proof` in its place): for shapes the vectors do not carry.
+   */
+  function make(
+    who: 'offerer' | 'answerer',
+    tags: string[][],
+    content = '',
+    opts: { at?: number; proofs?: number; proofExtra?: string } = {},
+  ): RawEvent {
+    const sk = hexToBytes(v.secret_keys_DO_NOT_USE[who]);
+    const at = opts.at ?? v.now;
+    const preimage = meshProofPreimage(
+      v.room.pubkey,
+      at,
+      getPublicKey(sk),
+      meshChallenge(tags, content),
+    );
+    const proof = [
+      'roomproof',
+      sha256Hex(utf8(preimage)),
+      schnorrSignMessage(preimage, hexToBytes(v.secret_keys_DO_NOT_USE.room)),
+      ...(opts.proofExtra === undefined ? [] : [opts.proofExtra]),
+    ];
+    const all = [...tags, ...Array.from({ length: opts.proofs ?? 1 }, () => proof)];
+    return finalizeEvent({ kind: 25050, created_at: at, tags: all, content }, sk);
+  }
+  const P = v.room.pubkey;
+  const D = v.sessions.offerer.session_id;
+  const presence = (extra: string[][] = [], t = 'connect'): string[][] => [
+    ['t', t],
+    ['P', P],
+    ['d', D],
+    ['i', 'nfx-mesh/1'],
+    ['y', 'nfx'],
+    ...(t === 'connect' ? [['expiration', String(v.now + 90)]] : []),
+    ...extra,
+  ];
+  const offerTags = (extra: string[][] = []): string[][] => [
+    ['t', 'offer'],
+    ['P', P],
+    ['d', D],
+    ['i', 'nfx-mesh/1'],
+    ['y', 'nfx'],
+    ['p', v.sessions.answerer.pubkey],
+    ...extra,
+  ];
+  const cipher = (text: string): string =>
+    nip44.encrypt(text, hexToBytes(v.nip44.conversation_key));
+
+  it('holds the multiplicity rules the vectors do not carry', () => {
+    // The helper makes what the reader accepts, so each refusal below is the rule's.
+    expect(read(make('offerer', presence()), 'answerer').kind).toBe('connect');
+    expect(read(make('offerer', offerTags(), cipher(v.sdp.offer)), 'answerer').kind).toBe('offer');
+    const dup = (name: string, value: string): string[][] => presence([[name, value]]);
+    expect(read(make('offerer', dup('t', 'connect')), 'answerer')).toEqual({
+      kind: 'dropped',
+      why: 'not exactly one t',
+    });
+    expect(read(make('offerer', dup('P', P)), 'answerer').kind).toBe('dropped');
+    expect(read(make('offerer', dup('y', 'nfx')), 'answerer').kind).toBe('dropped');
+    expect(read(make('offerer', presence(), '', { proofs: 2 }), 'answerer').kind).toBe('dropped');
+    expect(read(make('offerer', presence(), '', { proofs: 0 }), 'answerer').kind).toBe('dropped');
+    const noT = presence().filter((t) => t[0] !== 't');
+    expect(read(make('offerer', noT), 'answerer').kind).toBe('dropped');
+    // On a directed event: no expiration, and no `e` on an offer.
+    const sdp = cipher(v.sdp.offer);
+    expect(
+      read(make('offerer', offerTags([['expiration', String(v.now + 90)]]), sdp), 'answerer').kind,
+    ).toBe('dropped');
+    expect(read(make('offerer', offerTags([['e', 'ab'.repeat(32)]]), sdp), 'answerer').kind).toBe(
+      'dropped',
+    );
+  });
+
+  it('ignores tags and values it does not know, as the spec says', () => {
+    // An `e` on presence is not one of §6.5's refusals; a room proof may carry more values.
+    expect(read(make('offerer', presence([['e', 'ab'.repeat(32)]])), 'answerer').kind).toBe(
+      'connect',
+    );
+    expect(read(make('offerer', presence(), '', { proofExtra: 'x' }), 'answerer').kind).toBe(
+      'connect',
+    );
+    expect(read(make('offerer', presence([['client', 'something']])), 'answerer').kind).toBe(
+      'connect',
+    );
+  });
+
+  it('holds the content limit at 32768 bytes exactly', () => {
+    // NIP-44 pads: a plaintext whose ciphertext is just under, and one just over.
+    const under = cipher(`v=0\r\n${'a'.repeat(16_000)}`);
+    expect(under.length).toBeLessThanOrEqual(32768);
+    expect(read(make('offerer', offerTags(), under), 'answerer').kind).toBe('offer');
+    const over = cipher(`v=0\r\n${'a'.repeat(30_000)}`);
+    expect(over.length).toBeGreaterThan(32768);
+    expect(read(make('offerer', offerTags(), over), 'answerer')).toEqual({
+      kind: 'dropped',
+      why: 'content is not NIP-44 v2 within the limit',
+    });
+    expect(read(make('offerer', offerTags(), 'x'.repeat(32769)), 'answerer').kind).toBe('dropped');
+  });
+
+  it('does no cryptography on what it ignores or drops early', () => {
+    // An event with a bad signature and a bad proof, but for another session, or stale: the
+    // verdict is the cheap one, so neither was looked at.
+    const bad = { ...v.events.offer, sig: '00'.repeat(64) };
+    expect(
+      readMeshEvent(bad, {
+        room: P,
+        now: v.now,
+        self: 'ab'.repeat(32),
+        decrypt: () => undefined,
+      }),
+    ).toEqual({ kind: 'ignored', why: 'for another session' });
+    expect(read({ ...v.events.connect, sig: '00'.repeat(64) }, 'answerer', v.now + 500)).toEqual({
+      kind: 'dropped',
+      why: 'not fresh',
+    });
+    expect(read({ ...v.events.connect, sig: '00'.repeat(64) }, 'answerer')).toEqual({
+      kind: 'dropped',
+      why: 'id or signature',
+    });
+  });
+
+  it('needs a clock, and survives a decrypt that throws', () => {
+    for (const now of [Number.NaN, Number.POSITIVE_INFINITY, 1.5])
+      expect(read(v.events.connect, 'answerer', now)).toEqual({ kind: 'dropped', why: 'no clock' });
+    expect(
+      readMeshEvent(v.events.offer, {
+        room: P,
+        now: v.now,
+        self: v.sessions.answerer.pubkey,
+        decrypt: () => {
+          throw new Error('boom');
+        },
+      }).kind,
+    ).toBe('dropped');
+  });
+
+  it('reads an event once: an object that changes between reads cannot split the checks', () => {
+    // A getter that shows the real tags first and others later, and a proxy that throws.
+    let reads = 0;
+    const shifty = {
+      ...v.events.connect,
+      get tags(): string[][] {
+        reads += 1;
+        return reads === 1 ? v.events.connect.tags : [['t', 'disconnect']];
+      },
+    };
+    expect(read(shifty, 'answerer').kind).toBe('connect');
+    expect(reads).toBe(1);
+    const hostile = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error('trap');
+        },
+      },
+    );
+    expect(read(hostile, 'answerer').kind).toBe('dropped');
+    // More tags, or values in a tag, than this profile ever has.
+    const many = Array.from({ length: 40 }, () => ['x', 'y']);
+    expect(read({ ...v.events.connect, tags: many }, 'answerer').kind).toBe('dropped');
+    expect(
+      read({ ...v.events.connect, tags: [new Array<string>(9).fill('x')] }, 'answerer').kind,
+    ).toBe('dropped');
+  });
+
+  it('checks a room proof on its own', () => {
+    expect(meshProofValid(v.events.connect, P)).toBe(true);
+    expect(meshProofValid(v.events.offer, P)).toBe(true);
+    expect(meshProofValid(v.events.connect, v.rooms[1]!.pubkey)).toBe(false);
+    expect(meshProofValid({ ...v.events.connect, created_at: 1 }, P)).toBe(false);
+    expect(meshProofValid({ ...v.events.connect, tags: [] }, P)).toBe(false);
+    expect(meshProofValid(v.events.connect, 'not-a-key')).toBe(false);
   });
 
   it('knows an SDP by its first line', () => {
