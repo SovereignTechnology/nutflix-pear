@@ -573,6 +573,11 @@ interface Watch {
   readonly csp: string[];
   readonly errors: string[];
   readonly frames: { url: string; payload: string }[];
+  /**
+   * Over the whole run (`frames` is emptied between checks): frames sent to a tracker, and
+   * nfx-mesh/1 events sent to strfry.
+   */
+  mesh: { announces: number; signaled: number };
   /** The NIP-11 requests (https to a relay's name) and how each ended: `200 acao=*`, or why not. */
   readonly nip11: { url: string; outcome: string }[];
   /** The page's console errors and warnings (the last `CONSOLE_KEEP`), for a failure's report. */
@@ -584,7 +589,14 @@ const RELAY_HTTPS = /^https:\/\/(?:relay|strfry)\.e2e\.test[:/]/;
 
 /** Everything the run must not see, from every page of the context. */
 async function watch(context: BrowserContext): Promise<Watch> {
-  const w: Watch = { csp: [], errors: [], frames: [], nip11: [], console: [] };
+  const w: Watch = {
+    csp: [],
+    errors: [],
+    frames: [],
+    nip11: [],
+    console: [],
+    mesh: { announces: 0, signaled: 0 },
+  };
   await context.exposeBinding('__e2eCsp', (_source, v: string) => {
     w.csp.push(v);
   });
@@ -613,7 +625,15 @@ async function watch(context: BrowserContext): Promise<Watch> {
     });
     page.on('websocket', (ws) => {
       ws.on('framesent', (f) => {
-        w.frames.push({ url: ws.url(), payload: typeof f.payload === 'string' ? f.payload : '' });
+        const payload = typeof f.payload === 'string' ? f.payload : '';
+        w.frames.push({ url: ws.url(), payload });
+        if (payload.includes('"action":"announce"')) w.mesh.announces += 1;
+        if (
+          ws.url().includes('//strfry.e2e.test') &&
+          payload.startsWith('["EVENT"') &&
+          payload.includes('"kind":25050')
+        )
+          w.mesh.signaled += 1;
       });
     });
   });
@@ -999,13 +1019,7 @@ async function main(): Promise<void> {
       );
     const t1 = await videoTime(page);
     // The page signaled over strfry (NFX-10 §6 events of kind 25050), and spoke to no tracker.
-    const signaled = w.frames.filter(
-      (f) =>
-        f.url.startsWith(stock) &&
-        f.payload.startsWith('["EVENT"') &&
-        f.payload.includes('"kind":25050'),
-    ).length;
-    const announces = w.frames.filter((f) => f.payload.includes('"action":"announce"')).length;
+    const { signaled, announces } = w.mesh;
     results['mesh'] = {
       blockedAt: t0,
       playedTo: t1,
