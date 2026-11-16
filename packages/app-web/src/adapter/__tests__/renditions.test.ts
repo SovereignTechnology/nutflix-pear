@@ -83,7 +83,7 @@ function origin(files: Readonly<Record<string, Uint8Array>>): {
 }
 
 describe('webAvailability: what this page can reach', () => {
-  it('counts https origins it may fetch from and webrtc bridges with a usable tracker only', () => {
+  it('counts https origins it may fetch from, and nothing else (pear #89: no tracker bridge)', () => {
     expect(webUsable({ t: 'https', url: 'https://seed.example/o' })).toBe(true);
     expect(webUsable({ t: 'https', url: 'https://seed.example/o', renditions: ['360p'] })).toBe(
       true,
@@ -91,9 +91,6 @@ describe('webAvailability: what this page can reach', () => {
     // An empty list never reaches it: core rejects that beacon whole (NFX-03 §4, pear #104).
     expect(webUsable({ t: 'https', url: 'https://10.0.0.5/o' })).toBe(false);
     expect(webUsable({ t: 'webrtc', trackerUrls: ['wss://t.example/a'], renditions: [] })).toBe(
-      true,
-    );
-    expect(webUsable({ t: 'webrtc', trackerUrls: ['ws://t.example/a'], renditions: [] })).toBe(
       false,
     );
     const irohEndpoint: Endpoint = {
@@ -121,12 +118,10 @@ describe('webAvailability: what this page can reach', () => {
       beacon(new Key(), addr, [{ ...https('https://c.example/o'), renditions: [] }]),
     ];
     const a = webAvailability(video, events, T);
-    expect(a.seeders).toBe(3);
+    // The tracker bridge is not counted: this page speaks to no tracker.
+    expect(a.seeders).toBe(2);
     expect(a.all).toBe(1);
-    expect([...a.named].sort()).toEqual([
-      ['360p', 2],
-      ['720p', 1],
-    ]);
+    expect([...a.named].sort()).toEqual([['360p', 1]]);
   });
 });
 

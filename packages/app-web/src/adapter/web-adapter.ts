@@ -75,7 +75,7 @@ import {
   WEB_NFX_NETWORK,
 } from '../settings/defaults.js';
 import type { WebSettingsStore } from '../settings/store.js';
-import { beaconEndpoints, playEndpoints } from './endpoints.js';
+import { beaconEndpoints, playOrigins } from './endpoints.js';
 import type { FetchFn } from './http.js';
 import { WebImages } from './images.js';
 import { browserRelayInfoFetch } from './relay-info.js';
@@ -318,8 +318,8 @@ export class WebNetworkAdapter implements NetworkAdapter {
     const video = await this.#read(() => this.#catalog.video(a));
     if (video === null) fail('not-found', 'no such free NFX video');
     const now = (): number => this.#now();
-    // Live beacons (NFX-04: never stored): wait until a seeder names an origin or a tracker this
-    // page can use, at most one republish interval, then take what came.
+    // Live beacons (NFX-04: never stored): wait until a seeder names an origin this page can
+    // use, at most one republish interval, then take what came.
     const events: readonly NostrEvent[] = await this.#beacons.wait(
       video,
       this.#beaconRelays(),
@@ -328,8 +328,7 @@ export class WebNetworkAdapter implements NetworkAdapter {
     );
     const found = beaconEndpoints(video, events, now());
     if (found.seeders === 0) fail('no-seeders', 'nobody seeding this NFX video is online');
-    // Trackers are not asked for any more (signaling is over Nostr, pear #89): only the origins.
-    const { origins } = playEndpoints(found, [], WEB_FALLBACK_ORIGIN);
+    const origins = playOrigins(found, WEB_FALLBACK_ORIGIN);
     // Pear #97: when the seeders hold different renditions, the player may play only those
     // someone this page can reach holds, the most-held first (and a rendition the viewer picked
     // first, when it is one of them); each origin is asked only for what it serves.

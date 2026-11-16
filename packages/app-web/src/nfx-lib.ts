@@ -4,7 +4,7 @@
  * library, pinned by commit and sha256 in `nfx-web.lock`, is wired in by the site build (M4) and the
  * tests pass a fake. The shapes follow the library's own declarations as of nfx PR #83: an `open()`
  * that takes the origins with the renditions each serves (`OriginSource`) and the renditions the
- * session may play, a mesh whose signaling is of kind `trackers`, `RTCIceServer`s with `stun:` URLs
+ * session may play, a mesh whose signaling is of kind `nostr`, `RTCIceServer`s with `stun:` URLs
  * only, and a session with hls.js levels that carry their rendition id.
  *
  * What the adapter does not take from the library: `resolveManifest` and `watchEndpoints`. The
@@ -49,17 +49,10 @@ export type NfxPlayerEvent =
   | { readonly type: 'error'; readonly message: string };
 
 /**
- * NFX-10 §1 signalling through WebTorrent trackers: `wss:` (or `ws:` to a loopback host), 1 to 4.
- * The library still takes it; this client signals over Nostr (`NfxNostrSignaling`, pear #89).
- */
-export interface NfxTrackerSignaling {
-  readonly kind: 'trackers';
-  readonly urls: string[];
-}
-
-/**
  * NFX-10 §6 signalling over Nostr (`nfx-mesh/1`): general relays, `wss:` (or `ws:` to a loopback
  * host), 1 to 8. A scoped relay (NFX-04) refuses the kind. Peers meet only on a relay both use.
+ * The library also takes WebTorrent trackers (`{ kind: 'trackers', urls }`); this client never
+ * passes them (pear #89).
  */
 export interface NfxNostrSignaling {
   readonly kind: 'nostr';
@@ -100,7 +93,7 @@ export interface NfxOpenOptions {
    */
   readonly renditions?: string[];
   /** The browser mesh; absent = every byte from an origin. */
-  readonly signaling?: NfxTrackerSignaling | NfxNostrSignaling;
+  readonly signaling?: NfxNostrSignaling;
   readonly iceServers?: NfxIceServer[];
   readonly onEvent?: (event: NfxPlayerEvent) => void;
   /** Aborting it cancels `open()`, or destroys the session once open. */
@@ -116,7 +109,7 @@ export interface NfxLibSession {
   readonly levels: readonly NfxLevel[];
   /** Play `index` from now on, or -1 to let hls.js pick; throws `RangeError` for any other. */
   setLevel(index: number): void;
-  /** Stops hls.js, the p2p loader, its tracker sockets and peers, and the media source. Idempotent. */
+  /** Stops hls.js, the p2p loader, its signaling sockets and peers, and the media source. Idempotent. */
   destroy(): void;
 }
 

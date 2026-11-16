@@ -1,8 +1,8 @@
 /**
  * A free NFX play in the page (contracts v11, v14): an `element` source whose `attach(el)` hands
- * the screen's `<video>` to nfx's player (`open(el, …)`), with the origins, trackers and ICE servers
+ * the screen's `<video>` to nfx's player (`open(el, …)`), with the origins, signaling relays and ICE servers
  * the adapter resolved. Detaching or closing destroys the player's session: hls.js, the p2p loader,
- * its tracker sockets and peers.
+ * its relay sockets and peers.
  *
  * Renditions are the player's hls.js levels, known once its master playlist is parsed (`levels`),
  * each by its hash-list rendition id (the library's `Level.id`, nfx #83), so the quality menu and

@@ -1,5 +1,5 @@
 /**
- * Which hosts a URL from someone else may make this page contact: an origin or a tracker a beacon
+ * Which hosts a URL from someone else may make this page contact: an origin a beacon
  * names, an image a profile names. A browser cannot see where a name resolves, so this checks what
  * the URL says: an IP literal must be public unicast, and a name must not be one that only means
  * something on the viewer's own machine or network (`localhost`, `.local`, a single label, …).

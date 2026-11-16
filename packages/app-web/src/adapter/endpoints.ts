@@ -1,7 +1,8 @@
 /**
- * Where a play fetches from (ADR 0022 items 3 and 5): the HTTPS origins and WebTorrent trackers
- * that seeders' live beacons name, checked as nfx's player checks them and stricter, then merged
- * with this client's own.
+ * Where a play fetches from (ADR 0022 items 3 and 5): the HTTPS origins that seeders' live
+ * beacons name, checked as nfx's player checks them and stricter, then merged with this client's
+ * own. Peers are found over Nostr (NFX-10 §6, pear #89), by room: a beacon carries nothing for
+ * that, and the trackers one may still name (`webrtc` endpoints) are not read.
  *
  * - **Which beacons count:** each must pass core's `parseBeacon` (signature, TTL, expiry, the
  *   `a` tag against the content), name this manifest's author and address, and be free (v1 plays
@@ -18,25 +19,20 @@
  *   never widen it, so the worst a lying beacon does is have the player skip that origin, rather
  *   than offer a level whose files it answers with `404`. An origin left serving nothing (claims
  *   that share no id) counts for no seeder's reach.
- * - **Trackers** (`webrtc` endpoints' `tracker_urls`): `wss:` only (a beacon never points a viewer
- *   at a `ws:` tracker, loopback or not), the same URL rules, a public host, in the form
- *   `isTrackerUrl` takes.
- * - **Caps:** at most 4 origins and 4 trackers from one beacon, 8 origins in all; each list ranked
- *   by how many seeders name an entry, ties in the order of their beacons, newest first.
- * - **The play:** the beacons' origins, then `WEB_FALLBACK_ORIGIN`; the configured trackers, then
- *   the beacons', 4 in all (contracts v14). The fallback origin serves every rendition unless a
- *   beacon names it, and then what its beacons say.
+ * - **Caps:** at most 4 origins from one beacon, 8 in all, ranked by how many seeders name an
+ *   entry, ties in the order of their beacons, newest first.
+ * - **The play:** the beacons' origins, then `WEB_FALLBACK_ORIGIN`. The fallback origin serves
+ *   every rendition unless a beacon names it, and then what its beacons say.
  */
-import type { NfxVideo, NostrEvent, TrackerUrl } from '@sovit/core';
+import type { NfxVideo, NostrEvent } from '@sovit/core';
 import { KIND_MANIFEST, MAX_RENDITION_ID_LENGTH, parseBeacon } from '@sovit/core/nfx';
 
-import { WEB_MAX_TRACKERS } from '../settings/defaults.js';
-import { MAX_SERVER_URL, isTrackerUrl } from '../settings/validate.js';
+import { MAX_SERVER_URL } from '../settings/validate.js';
 import { isPublicHost, parseStrictUrl } from './hosts.js';
 
 /** At most this many origins from beacons (nfx's player reports 8). */
 export const MAX_BEACON_ORIGINS = 8;
-/** At most this many origins, and this many trackers, from one beacon. */
+/** At most this many origins from one beacon. */
 export const PER_BEACON = 4;
 /** The most rendition ids one claim keeps (nfx's library: `MAX_RENDITIONS`). */
 export const MAX_CLAIMED_RENDITIONS = 32;
@@ -57,15 +53,6 @@ export function beaconOrigin(raw: string): string | null {
   if (!isPublicHost(u.hostname)) return null;
   const base = u.origin + u.pathname.replace(/\/+$/, '');
   return base.length <= MAX_SERVER_URL ? base : null;
-}
-
-/** A beacon's tracker as `wss://host[:port][/path]`, or `null` when it may not be used. */
-export function beaconTracker(raw: string): TrackerUrl | null {
-  const u = parseStrictUrl(raw, MAX_SERVER_URL);
-  if (u?.protocol !== 'wss:' || raw.includes('?') || raw.includes('#')) return null;
-  if (!isPublicHost(u.hostname)) return null;
-  const t = `wss://${u.host}${u.pathname === '/' ? '' : u.pathname}`;
-  return isTrackerUrl(t) ? t : null;
 }
 
 /**
@@ -102,17 +89,10 @@ function playOrigin(url: string, claim: readonly string[] | null): PlayOrigin {
 export interface BeaconEndpoints {
   /** Origins with what they serve, most-named first, at most `MAX_BEACON_ORIGINS`. */
   readonly origins: readonly PlayOrigin[];
-  /** Trackers, most-named first, at most `WEB_MAX_TRACKERS`. */
-  readonly trackers: readonly TrackerUrl[];
   /** Seeders with a valid, free beacon for this video, whatever they name. */
   readonly seeders: number;
-  /** Of those, the ones naming an origin or a tracker this client can use. */
+  /** Of those, the ones naming an origin this client can use. */
   readonly reachable: number;
-}
-
-/** Most-named first; `Array.prototype.sort` is stable, so ties keep first-seen order. */
-function ranked<T>(counts: ReadonlyMap<T, number>): T[] {
-  return [...counts].sort((x, y) => y[1] - x[1]).map(([v]) => v);
 }
 
 /** The endpoints `events` (beacons, any order) name for `video` at `now` (unix seconds). */
@@ -124,7 +104,6 @@ export function beaconEndpoints(
   const newestFirst = [...events].sort((a, b) => b.created_at - a.created_at);
   const seeders = new Set<string>();
   const origins = new Map<string, { n: number; claim: string[] | null }>();
-  const trackers = new Map<TrackerUrl, number>();
   let free = 0;
   let reachable = 0;
   for (const ev of newestFirst) {
@@ -137,7 +116,7 @@ export function beaconEndpoints(
     const address = `${String(KIND_MANIFEST)}:${b.creator}:${b.content.video.toString()}`;
     if (b.creator !== video.author || address !== video.id || !b.content.free) continue;
     free += 1;
-    const own = { origins: new Map<string, string[] | null>(), trackers: [] as TrackerUrl[] };
+    const own = { origins: new Map<string, string[] | null>() };
     for (const e of b.content.endpoints) {
       if (e.t === 'https') {
         const o = beaconOrigin(e.url);
@@ -147,23 +126,15 @@ export function beaconEndpoints(
         // One beacon naming an origin twice narrows it too.
         if (named !== undefined) own.origins.set(o, narrowClaim(named, claim));
         else if (own.origins.size < PER_BEACON) own.origins.set(o, claim);
-      } else if (e.t === 'webrtc') {
-        for (const raw of e.trackerUrls) {
-          const t = beaconTracker(raw);
-          if (t !== null && !own.trackers.includes(t) && own.trackers.length < PER_BEACON) {
-            own.trackers.push(t);
-          }
-        }
       }
     }
     const serving = [...own.origins.values()].filter((c) => c === null || c.length > 0);
-    if (serving.length + own.trackers.length > 0) reachable += 1;
+    if (serving.length > 0) reachable += 1;
     for (const [o, claim] of own.origins) {
       const c = origins.get(o);
       if (c === undefined) origins.set(o, { n: 1, claim });
       else origins.set(o, { n: c.n + 1, claim: narrowClaim(c.claim, claim) });
     }
-    for (const t of own.trackers) trackers.set(t, (trackers.get(t) ?? 0) + 1);
   }
   // `Array.prototype.sort` is stable: ties keep first-seen order.
   const rankedOrigins = [...origins].sort((x, y) => y[1].n - x[1].n);
@@ -171,32 +142,23 @@ export function beaconEndpoints(
     origins: rankedOrigins
       .slice(0, MAX_BEACON_ORIGINS)
       .map(([url, { claim }]) => playOrigin(url, claim)),
-    trackers: ranked(trackers).slice(0, WEB_MAX_TRACKERS),
     seeders: free,
     reachable,
   };
 }
 
-/** What one play hands nfx's player. */
-export interface PlayEndpoints {
-  readonly origins: readonly PlayOrigin[];
-  readonly trackers: readonly TrackerUrl[];
-}
-
 /**
- * The beacons' origins, then `fallbackOrigin` (every rendition, unless a beacon names it: then
- * its place and what the beacons say it serves); `configured` trackers (Settings), then the
- * beacons', at most `WEB_MAX_TRACKERS` in all. Duplicates are dropped.
+ * The origins one play hands nfx's player: the beacons', then `fallbackOrigin` (every rendition,
+ * unless a beacon names it: then its place and what the beacons say it serves). Duplicates are
+ * dropped.
  */
-export function playEndpoints(
-  beacons: Pick<BeaconEndpoints, 'origins' | 'trackers'>,
-  configured: readonly TrackerUrl[],
+export function playOrigins(
+  beacons: Pick<BeaconEndpoints, 'origins'>,
   fallbackOrigin: string,
-): PlayEndpoints {
+): PlayOrigin[] {
   const origins: PlayOrigin[] = [];
   for (const o of [...beacons.origins, { url: fallbackOrigin }]) {
     if (!origins.some((x) => x.url === o.url)) origins.push(o);
   }
-  const trackers = [...new Set([...configured, ...beacons.trackers])].slice(0, WEB_MAX_TRACKERS);
-  return { origins, trackers };
+  return origins;
 }

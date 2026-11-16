@@ -8,7 +8,8 @@
  * - **Home:** the Network and Tags feeds; Trending and Subscriptions are NIP-71 or signed-in only.
  * - **Settings:** Appearance (without "Load images from any website": only signed images are
  *   shown here), Playback, Relays and NFX (no switch, since NFX is always on; no iroh relays; the
- *   trackers; and the line saying that trackers and peers see the viewer's IP address).
+ *   signaling relays; and the line saying that those relays and peers see the viewer's IP
+ *   address).
  * - **No sign-in** in the header (NIP-07 comes after v1).
  * - **The source** (T13, AGPL-3.0 §13): Settings links to `source.json`, which the site build
  *   writes beside the page (the commits it was built from and the sha256 of every file).
@@ -23,8 +24,6 @@ export const WEB_OFFER: ShellOffer = Object.freeze({
     toggle: false,
     scopedRelays: true,
     irohRelays: false,
-    // Signaling is over Nostr (NFX-10 §6, pear #89): no tracker is used or listed.
-    trackers: false,
     meshNotice: true,
     // A browser trades over WebRTC by being one: there is no switch for it.
     webrtc: false,
