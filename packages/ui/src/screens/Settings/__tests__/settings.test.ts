@@ -1098,7 +1098,9 @@ describe('Settings — the web client’s parts (ADR 0022)', () => {
       },
     });
     const notice = web.r.get('[id$="-nfx-mesh-notice"]');
-    expect(notice.textContent).toContain('Trackers and the peers you meet see your IP address.');
+    expect(notice.textContent).toContain(
+      'The signaling relays below and the peers you meet see your IP address',
+    );
     expect(notice.textContent).toContain('other viewers');
     expect(section(web.r, 'NFX network').contains(notice)).toBe(true);
     const desktop = await ready(adapterWith());

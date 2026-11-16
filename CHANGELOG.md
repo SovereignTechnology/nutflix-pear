@@ -32,6 +32,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     as from any other source. No relay server carries video (no TURN): two peers that cannot
     reach each other directly simply do not connect.
   - Contracts v17 and v18 (`NfxSettings.webrtc?`, `stunServers?`, `meshRelays?`).
+- **The web client signals over Nostr too** (issue #89; the maintainer, 2026-11-15). The page at
+  web.nutflix.xyz finds its WebRTC peers on the same two signaling relays as the desktop app, so
+  a browser and the app meet, and it no longer speaks to a WebTorrent tracker. Settings › NFX
+  network lists the signaling relays instead of trackers; a saved tracker list is dropped. This
+  reaches the public site only when it is next deployed, together with the seeder's own mesh
+  endpoint (`nfxd --mesh-relay`).
 
 ### Changed
 

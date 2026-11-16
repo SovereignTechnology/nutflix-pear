@@ -326,8 +326,9 @@ export function NfxSection({
     >
       {show.meshNotice ? (
         <Note tone="warning" id={`${id}-mesh-notice`}>
-          Trackers and the peers you meet see your IP address. While a video plays, your browser
-          also sends the parts of it that it holds to other viewers of the same video.
+          The signaling relays below and the peers you meet see your IP address, and the relays
+          learn which videos you watch. While a video plays, your browser also sends the parts of it
+          that it holds to other viewers of the same video.
         </Note>
       ) : null}
       {show.toggle ? (
@@ -365,12 +366,12 @@ export function NfxSection({
         <RelayList
           inputId={`${id}-mesh-add`}
           title="Signaling relays"
-          description="Ordinary Nostr relays where this app and web viewers find each other to set up a WebRTC connection. Two peers meet only on a relay both use. No video passes through them."
+          description="Ordinary Nostr relays where viewers and seeders find each other to set up a WebRTC connection. Two peers meet only on a relay both use. No video passes through them."
           column="Signaling relay"
           relays={meshRelays}
           saved={new Set<string>(savedNfx.meshRelays ?? [])}
           max={UI_MAX_NFX_MESH_RELAYS}
-          empty={<>No signaling relays: nobody can reach this app over WebRTC until you add one.</>}
+          empty={<>No signaling relays: no peer can be reached over WebRTC until you add one.</>}
           addLabel="Add a signaling relay"
           placeholder="wss://relay.example"
           hint={

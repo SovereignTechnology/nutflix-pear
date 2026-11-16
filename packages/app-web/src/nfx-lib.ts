@@ -50,11 +50,20 @@ export type NfxPlayerEvent =
 
 /**
  * NFX-10 §1 signalling through WebTorrent trackers: `wss:` (or `ws:` to a loopback host), 1 to 4.
- * The library also takes `{ kind: 'nostr', relays }` (nfx #80), which this client does not use yet.
+ * The library still takes it; this client signals over Nostr (`NfxNostrSignaling`, pear #89).
  */
 export interface NfxTrackerSignaling {
   readonly kind: 'trackers';
   readonly urls: string[];
+}
+
+/**
+ * NFX-10 §6 signalling over Nostr (`nfx-mesh/1`): general relays, `wss:` (or `ws:` to a loopback
+ * host), 1 to 8. A scoped relay (NFX-04) refuses the kind. Peers meet only on a relay both use.
+ */
+export interface NfxNostrSignaling {
+  readonly kind: 'nostr';
+  readonly relays: string[];
 }
 
 /** A STUN server (`stun:` or `stuns:` URLs, no credentials); the library takes at most 4. */
@@ -91,7 +100,7 @@ export interface NfxOpenOptions {
    */
   readonly renditions?: string[];
   /** The browser mesh; absent = every byte from an origin. */
-  readonly signaling?: NfxTrackerSignaling;
+  readonly signaling?: NfxTrackerSignaling | NfxNostrSignaling;
   readonly iceServers?: NfxIceServer[];
   readonly onEvent?: (event: NfxPlayerEvent) => void;
   /** Aborting it cancels `open()`, or destroys the session once open. */

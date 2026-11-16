@@ -28,11 +28,16 @@
 # pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
 # web/player/package-lock.json. Node 22.
 #
-# 6c20bef is nfx #83's merge. Since the last pin (6465cb5, #74: nfxd --stun and the `stun` beacon
-# endpoint):
+# b5fe5e4 is nfx #81's merge (pear #89). Since the last pin (6c20bef, #83) the library's source did
+# not change, and its tar is the same, e43bc98a…: the pin moves for nfxd, which the web-site
+# workflow builds from this commit for the end-to-end run and which now has its mesh endpoint
+# (`--mesh-relay`, nfx #71: a native WebRTC peer signaled over Nostr, NFX-10 §6). The site signals
+# over Nostr since this pin, and speaks to no tracker.
+#
+# 6c20bef was nfx #83's merge. Since the pin before it (6465cb5, #74: nfxd --stun and the `stun`
+# beacon endpoint):
 #   #75, #80  signaling over Nostr (NFX-10 §6) is available: `open()` takes
-#             `signaling: { kind: 'nostr', relays }`. This site does not use it yet: the deployed
-#             seeder's bridge is tracker-signaled, and Nostr waits for nfxd's mesh endpoint (#71).
+#             `signaling: { kind: 'nostr', relays }`. This site uses it since pear #89.
 #   #76, #77  nfx-package makes one rendition by default, and nfxd may hold only some
 #             (`--seed <a>#360p`, the beacon's `https` endpoint naming its `renditions`).
 #   #83       held renditions: `open()` takes `renditions` (the allowed ids, preferred first) and
@@ -42,7 +47,7 @@
 # tar, whose bytes differ between 1.34 and 1.35: GitHub's ubuntu-24.04 runner and a Kata VM give the
 # same tar, e43bc98a…. The web-site workflow (.github/workflows/web-site.yml) builds it again on
 # every run and fails unless it matches.
-nfx 6c20bef87b3c85324d900353b4e142601a086c1e 5c30fb3307a85127d9b885c060285ae53f8f5cd26851d65f3bc19a14fa9b178c e43bc98a84421de375245ba76e09dd8fc0a517c5b30f5e4fef8d9504507e079b
+nfx b5fe5e472accd9d8c2548faad419a40a1885a61e 16024bdd4820414461c6da861591b926a72b5e5d54ae4c873162aef7b1212cb4 e43bc98a84421de375245ba76e09dd8fc0a517c5b30f5e4fef8d9504507e079b
 tool rust 1.98.0
 tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
 tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f
