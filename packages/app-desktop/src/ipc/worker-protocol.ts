@@ -126,6 +126,9 @@ export interface NfxRtcConfigWire {
   readonly stun: readonly string[];
 }
 
+/** #89: the most web swarms the WebRTC side serves (the helper's own cap). */
+export const MAX_NFX_RTC_SWARMS = 64;
+
 /** #89: the largest SDP that crosses to the worker (the helper's own cap). */
 export const MAX_NFX_SDP = 16 * 1024;
 
@@ -353,6 +356,11 @@ export interface WorkerMethodTable {
   'nfx.rtc.offer': [args: { readonly swarm: string }, result: NfxRtcSdpWire];
   'nfx.rtc.accept': [args: { readonly peer: number; readonly answer: string }, result: undefined];
   'nfx.rtc.hangup': [args: { readonly peer: number }, result: undefined];
+  /**
+   * #89: the web swarms the WebRTC side serves now (stored, verified videos' renditions), at most
+   * `MAX_NFX_RTC_SWARMS`: the rooms the host's signaling may seed in. Empty while WebRTC is off.
+   */
+  'nfx.rtc.swarms': [args: Record<string, never>, result: { readonly swarms: readonly string[] }];
   /** Probes the binary (`path` = the configured one, when set). */
   'studio.ffmpeg': [
     args: { readonly recheck: boolean; readonly path?: string },
@@ -555,6 +563,18 @@ export type WorkerEvent =
     }
   /** `--dev-fixtures` only: live manifests of the worker's fixture cores (unsigned, dev). */
   | { readonly op: 'ev'; readonly e: 'dev.fixtures'; readonly videos: readonly VideoManifest[] }
+  /**
+   * #89: a WebRTC connection opened (its data channel is up) or closed, in `swarm`. `dir`: who
+   * offered (`out`: this side). The host's signaling keeps its peers by these.
+   */
+  | {
+      readonly op: 'ev';
+      readonly e: 'nfx.rtc.peer';
+      readonly peer: number;
+      readonly swarm: string;
+      readonly dir: 'in' | 'out';
+      readonly open: boolean;
+    }
   /** Already redacted by the worker's logger. */
   | { readonly op: 'ev'; readonly e: 'log'; readonly level: WorkerLogLevel; readonly msg: string };
 export type WorkerEventName = WorkerEvent['e'];

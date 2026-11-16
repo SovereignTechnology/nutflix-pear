@@ -77,6 +77,7 @@ import {
   MAX_NFX_PLAY_IROH,
   MAX_NFX_PLAY_PEERS,
   MAX_NFX_RENDITIONS,
+  MAX_NFX_RTC_SWARMS,
   MAX_NFX_SDP,
   NFX_RESOLUTION,
   NFX_UPLOAD_FAILURES,
@@ -319,6 +320,7 @@ export const validateWorkerArgs: {
   'nfx.rtc.offer': safe(obj({ swarm: isNfxWebSwarm })),
   'nfx.rtc.accept': safe(obj({ peer: isNfxRtcPeer, answer: isNfxSdp })),
   'nfx.rtc.hangup': safe(obj({ peer: isNfxRtcPeer })),
+  'nfx.rtc.swarms': safe(obj({}) as Guard<Record<string, never>>),
   'studio.ffmpeg': safe(obj({ recheck: bool }, { path: isAbsolutePath })),
   'studio.upload': safe(isStudioUpload),
   'studio.probe': safe(obj({ path: isAbsolutePath })),
@@ -406,6 +408,12 @@ export const validateWorkerResult: {
   'nfx.rtc.offer': safe(obj({ peer: isNfxRtcPeer, sdp: isNfxSdp })),
   'nfx.rtc.accept': isVoid,
   'nfx.rtc.hangup': isVoid,
+  'nfx.rtc.swarms': safe(
+    obj({
+      swarms: (x: unknown): x is readonly string[] =>
+        arrayOf(isNfxWebSwarm, MAX_NFX_RTC_SWARMS)(x) && new Set(x).size === x.length,
+    }),
+  ),
   'studio.ffmpeg': safe(isFfmpegStatus),
   'studio.upload': safe(isVideoManifest),
   'studio.probe': safe(isSourceSizes),
@@ -614,6 +622,12 @@ export const validateWorkerEvent: {
   }),
   'upload.nfx': ev('upload.nfx', { uploadId: isUploadId, status: isNfxUploadStatusWire }),
   'dev.fixtures': ev('dev.fixtures', { videos: arrayOf(isVideoManifest, LIMITS.maxArray) }),
+  'nfx.rtc.peer': ev('nfx.rtc.peer', {
+    peer: isNfxRtcPeer,
+    swarm: isNfxWebSwarm,
+    dir: oneOf(['in', 'out'] as const),
+    open: bool,
+  }),
   log: ev('log', {
     level: oneOf(['debug', 'info', 'warn', 'error'] as const),
     msg: text(0, LIMITS.maxString, { multiline: true }),

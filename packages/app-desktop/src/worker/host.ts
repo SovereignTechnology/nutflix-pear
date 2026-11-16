@@ -386,6 +386,8 @@ export class WorkerHost {
       case 'nfx.rtc.hangup':
         await this.rtcStep(null, (h) => h.rtcHangup(req.a.peer));
         return undefined;
+      case 'nfx.rtc.swarms':
+        return { swarms: this.nfxRtcSeeding?.allSwarms() ?? [] };
       case 'studio.ffmpeg':
         return this.probe(req.a.recheck, req.a.path);
       case 'studio.upload':
@@ -464,6 +466,17 @@ export class WorkerHost {
         rmTree: (p) => runtime.mediaFs(a.storage).rm(p, { recursive: true }),
         root: nfxRoot,
         logger: log,
+      });
+      // #89: the host's signaling keeps its peers by these.
+      this.nfxRtc.onPeer((e) => {
+        this.o.emit({
+          op: 'ev',
+          e: 'nfx.rtc.peer',
+          peer: e.peer,
+          swarm: e.swarm,
+          dir: e.dir,
+          open: e.t === 'open',
+        });
       });
       this.nfxRtcWire = a.nfx?.rtc ?? null;
       await this.nfxRtc.set(this.rtcConfig());

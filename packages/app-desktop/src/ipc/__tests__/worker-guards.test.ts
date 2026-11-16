@@ -175,6 +175,7 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'nfx.rtc.offer': [{ swarm: RTC_SWARM }],
   'nfx.rtc.accept': [{ peer: 1, answer: SDP }],
   'nfx.rtc.hangup': [{ peer: 4_294_967_295 }],
+  'nfx.rtc.swarms': [{}],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
   'studio.probe': [{ path: '/home/u/Videos/a.mp4' }, { path: 'C:\\Users\\u\\a.mp4' }],
   'studio.upload': [
@@ -243,6 +244,7 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
   'nfx.rtc.offer': [{ peer: 3, sdp: SDP }],
   'nfx.rtc.accept': [undefined],
   'nfx.rtc.hangup': [undefined],
+  'nfx.rtc.swarms': [{ swarms: [] }, { swarms: [RTC_SWARM, `${RTC_SWARM}x`] }],
   'studio.ffmpeg': [
     { found: false },
     { found: true, path: '/usr/bin/ffmpeg', version: '8.1.2', os: 'linux' },
@@ -419,6 +421,10 @@ const EVENTS: { readonly [E in WorkerEventName]: readonly Extract<WorkerEvent, {
     },
   ],
   'dev.fixtures': [{ op: 'ev', e: 'dev.fixtures', videos: mocks.VIDEOS }],
+  'nfx.rtc.peer': [
+    { op: 'ev', e: 'nfx.rtc.peer', peer: 1, swarm: RTC_SWARM, dir: 'in', open: true },
+    { op: 'ev', e: 'nfx.rtc.peer', peer: 9, swarm: RTC_SWARM, dir: 'out', open: false },
+  ],
   log: [{ op: 'ev', e: 'log', level: 'warn', msg: 'peer banned' }],
 };
 
@@ -1078,5 +1084,30 @@ describe('#89: the WebRTC side (nfx.configure rtc, nfx.rtc.*)', () => {
       false,
     );
     expect(validateWorkerResult['nfx.rtc.accept']({})).toBe(false);
+  });
+
+  it('the served swarms are at most 64 distinct web swarm ids; a peer event is exact', () => {
+    const swarms = validateWorkerResult['nfx.rtc.swarms'];
+    expect(
+      swarms({ swarms: Array.from({ length: 64 }, (_, i) => `${RTC_SWARM}${String(i)}`) }),
+    ).toBe(true);
+    expect(
+      swarms({ swarms: Array.from({ length: 65 }, (_, i) => `${RTC_SWARM}${String(i)}`) }),
+    ).toBe(false);
+    expect(swarms({ swarms: [RTC_SWARM, RTC_SWARM] })).toBe(false);
+    expect(swarms({ swarms: ['nfx/1/hyper/x'] })).toBe(false);
+    expect(swarms({})).toBe(false);
+    expect(validateWorkerArgs['nfx.rtc.swarms']({ video: NFX_VIDEO })).toBe(false);
+    const peer = validateWorkerEvent['nfx.rtc.peer'];
+    const ok = { op: 'ev', e: 'nfx.rtc.peer', peer: 1, swarm: RTC_SWARM, dir: 'in', open: true };
+    expect(peer(ok)).toBe(true);
+    for (const bad of [
+      { ...ok, peer: 0 },
+      { ...ok, swarm: 'elsewhere' },
+      { ...ok, dir: 'both' },
+      { ...ok, open: 'yes' },
+      { ...ok, sdp: 'v=0' },
+    ])
+      expect(peer(bad), JSON.stringify(bad)).toBe(false);
   });
 });
