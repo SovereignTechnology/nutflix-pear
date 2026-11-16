@@ -158,6 +158,9 @@ export function validateIrohRelayUrl(
 /** Contracts v14: core's `MAX_NFX_TRACKERS`. */
 export const UI_MAX_NFX_TRACKERS = 4;
 
+/** Contracts v18: the cap on signaling relays (NFX-10 §6); core's `MAX_NFX_MESH_RELAYS`. */
+export const UI_MAX_NFX_MESH_RELAYS = 8;
+
 /**
  * `WSS://Tracker.Example/` → `wss://tracker.example`: the form nfx's web player reduces a tracker
  * URL to (scheme, host, port, and the path unless it is a bare `/`), so a beacon's tracker and a

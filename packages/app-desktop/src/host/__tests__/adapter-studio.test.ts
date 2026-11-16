@@ -242,7 +242,8 @@ describe('seeder over the worker; settings side effects', () => {
 
   it('slice 5b: Settings.nfx reaches the worker on every on/off change and at init', async () => {
     const nfx = { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } as const;
-    // #89: no WebRTC side until this build can signal (`NFX_WEBRTC_SIGNALING`).
+    // #89: this rig's worker has no iroh helper, so no WebRTC side (`nfx-worker-args.test.ts`
+    // and `mesh-signaler.test.ts` cover a host that has one).
     const RTC = null;
     r = await rig();
     await r.ready();

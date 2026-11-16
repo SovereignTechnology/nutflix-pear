@@ -11,9 +11,10 @@ import { hyperdhtEndpoint } from '@sovit/seeder';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { validateWorkerArgs } from '../../ipc/worker-guards.js';
+import { DEFAULT_NFX_MESH_RELAYS } from '../settings/settings.js';
 import { coreTestKit, type TestSignerLike } from './support/core-helpers.js';
 import type { Rig } from './support/rig.js';
-import { rig } from './support/rig.js';
+import { eventually, rig } from './support/rig.js';
 
 const kit = await coreTestKit();
 const NS = 'nfx:testnet:1';
@@ -391,5 +392,73 @@ describe('openNfxSession (contracts v11)', () => {
     expect(revoked).toHaveLength(2);
     expect(r.worker().calls('nfx.play.close')).toEqual([{ sid: mine.sid }]);
     expect(theirs.sid).not.toBe(mine.sid);
+  });
+});
+
+describe('#89: a play joins its rendition’s signaling room', () => {
+  const mesh = (): NostrEvent[] =>
+    r!.pool.published.map((p) => p.event).filter((e) => e.kind === nfx.KIND_MESH_SIGNAL);
+  const typed = (t: string): NostrEvent[] =>
+    mesh().filter((e) => e.tags.some((x) => x[0] === 't' && x[1] === t));
+  const pause = (): Promise<void> => new Promise((done) => setTimeout(done, 60));
+
+  it('with a helper: announces while the session is open, on the signaling relays, under a key per play', async () => {
+    r = await rig({ nfx: NFX_ON, irohHelper: '/nonexistent/iroh-helper' });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-9');
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-9');
+    const a = r.host.adapter;
+    const addr = addrOf(creator.pubkey, 'free-video-9');
+    await pause();
+    expect(mesh()).toEqual([]); // nothing played, nothing served: no room
+
+    const s = await a.openNfxSession(7, addr);
+    const [connect] = await eventually(
+      () => (typed('connect').length > 0 ? typed('connect') : null),
+      'a connect',
+    );
+    const room = nfx.meshRoom(`nfx/1/web/${NS}:free-video-9/720p`);
+    expect(connect!.tags).toContainEqual(['P', room.key]);
+    expect(r.pool.published.find((p) => p.event === connect)?.relays).toEqual(
+      DEFAULT_NFX_MESH_RELAYS,
+    );
+
+    // The worker's peer and reset events are taken (a smoke check: the play goes on below).
+    r.worker().event({ e: 'nfx.rtc.peer', peer: 1, swarm: room.swarm, dir: 'in', open: true });
+    r.worker().event({ e: 'nfx.rtc.reset' });
+
+    await a.closeNfxSession(7, s.sid);
+    const [bye] = await eventually(
+      () => (typed('disconnect').length > 0 ? typed('disconnect') : null),
+      'a disconnect',
+    );
+    expect(bye!.pubkey).toBe(connect!.pubkey);
+    expect(bye!.tags).toContainEqual(['P', room.key]);
+
+    // Watched again: another key. Switched off: a disconnect, and nothing after it.
+    const again = await a.openNfxSession(7, addr);
+    await eventually(
+      () => new Set(typed('connect').map((e) => e.pubkey)).size === 2,
+      'a second key',
+    );
+    await a.updateSettings({ nfx: { ...NFX_ON, webrtc: false } });
+    await eventually(() => typed('disconnect').length === 2, 'the disconnect of switching off');
+    const count = mesh().length;
+    await a.closeNfxSession(7, again.sid);
+    await a.openNfxSession(7, addr);
+    await pause();
+    expect(mesh()).toHaveLength(count);
+  });
+
+  it('without a helper nothing is signaled', async () => {
+    r = await rig({ nfx: NFX_ON });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-10');
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-10');
+    await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-10'));
+    await pause();
+    expect(mesh()).toEqual([]);
   });
 });

@@ -59,7 +59,7 @@ import type {
   WalletChangeEvent,
   WalletHistoryEntry,
 } from '@sovit/core';
-import { MAX_IMAGE_BYTES, NostrKind, manifest, nostr } from '@sovit/core';
+import { MAX_IMAGE_BYTES, NostrKind, manifest, nfx, nostr } from '@sovit/core';
 
 import { toHex } from '../ipc/codec.js';
 import { IpcError } from '../ipc/errors.js';
@@ -89,6 +89,7 @@ import { MergedCatalog } from './catalog/merged-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
 import { NfxBeacons } from './nfx/beacons.js';
+import { NfxMeshSignaler } from './nfx/mesh-signaler.js';
 import { NfxBeaconWatch } from './nfx/beacon-watch.js';
 import { NfxHostSession, beaconPeers, videoOf } from './nfx/play.js';
 import type { NfxStored } from './nfx/publish.js';
@@ -108,7 +109,11 @@ import { sniffImage } from './images/images.js';
 import type { Logger } from './log.js';
 import { redact } from './log.js';
 import type { DesktopConfig, SettingsStore } from './settings/settings.js';
-import { DEFAULT_NFX_STUN_SERVERS, autoTopUpDue } from './settings/settings.js';
+import {
+  DEFAULT_NFX_MESH_RELAYS,
+  DEFAULT_NFX_STUN_SERVERS,
+  autoTopUpDue,
+} from './settings/settings.js';
 import type { WorkerCall } from './sessions.js';
 import { HostPlaySession, SessionRegistry } from './sessions.js';
 import { buildUnreactDeletion, fetchReactionSummary, ownReactionIds } from './social/reactions.js';
@@ -164,6 +169,11 @@ export interface DesktopAdapterOptions {
    * it no beacon is ever published.
    */
   readonly nfxDir?: string;
+  /**
+   * #89: the worker has an iroh helper, so it can run a WebRTC side (`host.ts` passes whether
+   * `irohHelper` is set). Without one there is no WebRTC and no signaling.
+   */
+  readonly webrtc?: boolean;
   /** TESTS ONLY: how long a play waits for a live beacon (`NFX_BEACON_WAIT_MS`). */
   readonly nfxBeaconWaitMs?: number;
   /**
@@ -225,6 +235,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly beaconWatch: NfxBeaconWatch;
   /** Slice 5c: the beacon publisher (with `nfxDir`). */
   private readonly beacons: NfxBeacons | null;
+  /** #89: signaling for the worker's WebRTC side, over Nostr (NFX-10 §6). */
+  private readonly mesh: NfxMeshSignaler;
   /** Slice 5c: the seeder key of the current user and network, opened on first need. */
   private seederKey: {
     readonly user: NostrPubkey;
@@ -268,6 +280,33 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
             now: () => this.now(),
             log: this.log.child('nfx-beacons'),
           });
+    this.mesh = new NfxMeshSignaler({
+      relays: () => this.meshRelays(),
+      // One relay per subscription: the pool drops an event id it has seen before it verifies,
+      // so across relays one relay's forgery would hide the real event (NFX-10 §6.5).
+      subscribe: (relay, filter, onEvent, onClose) =>
+        this.o.pool.subscribe([relay], [filter], {
+          onevent: onEvent,
+          onclose: () => {
+            onClose();
+          },
+        }),
+      publish: async (relays, event) =>
+        (await this.o.pool.publish(relays, event)).filter((r) => r.ok).length,
+      rtc: {
+        offer: (swarm) => this.o.worker('nfx.rtc.offer', { swarm }),
+        answer: (swarm, offer) => this.o.worker('nfx.rtc.answer', { swarm, offer }),
+        accept: async (peer, answer) => {
+          await this.o.worker('nfx.rtc.accept', { peer, answer });
+        },
+        hangup: async (peer) => {
+          await this.o.worker('nfx.rtc.hangup', { peer });
+        },
+        swarms: async () => (await this.o.worker('nfx.rtc.swarms', {})).swarms,
+      },
+      now: () => this.now(),
+      log: this.log.child('nfx-mesh'),
+    });
     this.beaconWatch = new NfxBeaconWatch({
       subscribe: (filter, relays, onEvent) =>
         this.client().subscribe([filter], onEvent, { relays }),
@@ -332,11 +371,31 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       .then(() => {
         this.beacons?.start();
       });
+    this.applyMesh();
   }
 
   /** Slice 5c: stop publishing beacons (they expire on their own within 120 s). */
   stopNfx(): void {
     this.beacons?.stop();
+    this.mesh.stop();
+  }
+
+  /** #89: the signaling relays while the worker runs a WebRTC side; none otherwise. */
+  private meshRelays(): readonly RelayUrl[] {
+    return this.workerArgs(this.o.settings.get()).rtc === null
+      ? []
+      : nfxMeshRelays(this.o.settings.get());
+  }
+
+  /** `nfxWorkerArgs` for this host (whether its worker can run a WebRTC side at all). */
+  private workerArgs(s: Settings): NfxConfigureArgs {
+    return nfxWorkerArgs(s, this.o.webrtc === true);
+  }
+
+  /** #89: signal while the worker's WebRTC side is on; a fresh session key at each start. */
+  private applyMesh(): void {
+    if (this.workerArgs(this.o.settings.get()).rtc === null) this.mesh.stop();
+    else this.mesh.start();
   }
 
   /** Slice 5c: beacons go to the scoped relays only, and only while seeding and NFX are on. */
@@ -811,6 +870,9 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       close: (x) => this.endNfxSession(x, true),
     });
     this.nfxSessions.set(sid, s);
+    // #89: meet the rendition's web swarm too (browsers and other peers holding its segments).
+    const at = nfx.VideoAddr.parse(d);
+    if (at.ok) this.mesh.play(sid, at.value.webStreamSwarmId(res.rendition));
     // Main learns the link before the reply that names its token (as for paid sessions).
     this.o.mediaLink(token, res.link);
     return s;
@@ -830,6 +892,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   private async endNfxSession(s: NfxHostSession, viaWorker: boolean): Promise<void> {
     this.nfxSessions.delete(s.sid);
+    this.mesh.unplay(s.sid);
     this.o.mediaLink(s.linkToken, null);
     if (viaWorker) await this.o.worker('nfx.play.close', { sid: s.sid }).catch(() => undefined);
   }
@@ -1222,8 +1285,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     // Slice 5b: NFX on or off reaches the worker; slice 5e-3: so does a change of the network's
     // iroh relays (the worker then restarts its helper with them); #89: and WebRTC on or off, or
     // a change of its STUN servers (the worker restarts its WebRTC helper with them).
-    const nfxNow = nfxWorkerArgs(next);
-    const nfxWas = nfxWorkerArgs(prev);
+    const nfxNow = this.workerArgs(next);
+    const nfxWas = this.workerArgs(prev);
     const stun = (a: NfxConfigureArgs): string | null => a.rtc?.stun.join(' ') ?? null;
     if (
       nfxNow.enabled !== nfxWas.enabled ||
@@ -1236,6 +1299,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
         this.log.warn('NFX change not pushed to the worker (applies on its next start)');
       }
     }
+    // #89: signaling follows WebRTC on or off (a change of relays is read at the next tick).
+    this.applyMesh();
     return next;
   }
 
@@ -1316,9 +1381,12 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       case 'dev.fixtures':
         this.onDevFixtures(ev.videos);
         return;
-      // #89: the mesh signaler's (the next step); nothing listens yet.
       case 'nfx.rtc.peer':
+        this.mesh.onPeer(ev);
+        return;
       case 'nfx.rtc.reset':
+        this.mesh.reset();
+        return;
       case 'ready':
       case 'log':
         return;
@@ -1327,6 +1395,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   /** The worker died: its sessions died with it (links revoked, nothing asked of it). */
   onWorkerDown(): void {
+    this.mesh.reset();
     this.sessions.dropAll();
     // Slice 5d: the worker's NFX sessions died with it; revoke their links.
     for (const s of [...this.nfxSessions.values()]) void this.endNfxSession(s, false);
@@ -1415,24 +1484,28 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   }
 }
 
-/**
- * #89: whether this build can signal WebRTC connections (Nostr, nfx #71; the next step of #89).
- * Until it can, nobody could reach the worker's WebRTC side, so it is never started: no STUN server
- * is asked, no helper runs, and Settings shows no switch for it.
- */
-export const NFX_WEBRTC_SIGNALING = false;
+/** #89 (contracts v18): the relays WebRTC is signaled on; absent = the default pair. */
+export function nfxMeshRelays(s: Settings): readonly RelayUrl[] {
+  return s.nfx?.meshRelays ?? DEFAULT_NFX_MESH_RELAYS;
+}
 
 /**
  * Slice 5b: `Settings.nfx` as the worker takes it (`init.nfx`, `nfx.configure`); slice 5e-3: with
- * the network's iroh relays, none when unset. #89 (contracts v17): `rtc` while NFX and WebRTC
- * (absent = on) are both on, there is a STUN server (absent = the network's default) and this
- * build can signal; else `null`, and the worker runs no WebRTC side.
+ * the network's iroh relays, none when unset. #89 (contracts v17, v18): `rtc` while the worker
+ * has a helper (`helper`), NFX and WebRTC (absent = on) are both on, and there is a STUN server
+ * and a signaling relay (absent = the defaults); else `null`, and the worker runs no WebRTC side:
+ * without signaling nobody could reach it.
  */
-export function nfxWorkerArgs(s: Settings, signaling = NFX_WEBRTC_SIGNALING): NfxConfigureArgs {
+export function nfxWorkerArgs(s: Settings, helper: boolean): NfxConfigureArgs {
   const enabled = s.nfx?.enabled === true;
   const stun = s.nfx?.stunServers ?? DEFAULT_NFX_STUN_SERVERS;
-  // `enabled` narrows `s.nfx` to present.
-  const webrtc = signaling && enabled && s.nfx.webrtc !== false && stun.length > 0;
+  const webrtc =
+    helper &&
+    enabled &&
+    // `enabled` narrows `s.nfx` to present.
+    s.nfx.webrtc !== false &&
+    stun.length > 0 &&
+    nfxMeshRelays(s).length > 0;
   return {
     enabled,
     irohRelays: s.nfx?.irohRelays ?? [],

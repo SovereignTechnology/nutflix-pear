@@ -612,7 +612,7 @@ export async function createHost(o: HostOptions): Promise<Host> {
         seeding: s.seeding,
         prefetchSeconds: s.prefetchSeconds,
         // Slice 5b: NFX seeding needs the setting on as well as seeding; 5e-3: its iroh relays.
-        nfx: nfxWorkerArgs(s),
+        nfx: nfxWorkerArgs(s, (o.irohHelper ?? null) !== null),
         irohHelper: o.irohHelper ?? null,
         ...(desktop.ffmpeg === undefined ? {} : { ffmpeg: desktop.ffmpeg }),
         // Payments need at least one mint to pay at and be paid at (Settings → mints).
@@ -669,6 +669,8 @@ export async function createHost(o: HostOptions): Promise<Host> {
     ...(o.random === undefined ? {} : { random: o.random }),
     ...(o.now === undefined ? {} : { now: o.now }),
     nfxDir: join(o.userData, NFX_DIR),
+    // #89: a WebRTC side, and its signaling, only with an iroh helper to run it.
+    webrtc: (o.irohHelper ?? null) !== null,
     ...(o.nfxBeaconWaitMs === undefined ? {} : { nfxBeaconWaitMs: o.nfxBeaconWaitMs }),
     // ADR 0022: NIP-11 decides where `search` goes, on the real network only (an injected or
     // offline pool answers no HTTP).

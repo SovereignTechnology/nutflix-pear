@@ -7,6 +7,32 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- **The app trades video with web browsers, directly** (issue #89, ADR 0023; the maintainer's
+  decisions of 2026-11-09 and 2026-11-15). With NFX on, the app fetches parts of a free video you
+  watch from people watching it in a web browser and, while seeding is on, seeds the free videos
+  it keeps to them, over WebRTC: no nfxd bridge in between, and no tracker. It is **on by
+  default**, in builds that ship the iroh helper (the packaged app). What that means for you:
+  - **Who sees your IP address:** the peers you connect to; the network's STUN server
+    (`web.nutflix.xyz:3478`, which the app asks for its public address every 25 s while this
+    runs); and the signaling relays.
+  - **Signaling relays** are ordinary Nostr relays where the app and web viewers find each other
+    (NFX-10 §6). The default is two of the app's default public relays, `relay.primal.net` and
+    `relay.ditto.pub`, picked by a soak test (`scripts/mesh-relay-soak.mjs`). They learn your IP
+    address and which videos you seed or watch, never how you connect: connection details are
+    encrypted to the peer. NFX's own scoped relay does not carry signaling.
+  - **What anyone can see there:** that some app is in a video's room, under a random key. The
+    app uses a new key for each video you watch, and another for what it seeds (which its
+    beacons already announce), never your own key. Anyone who knows a video can join its room
+    and, by connecting, learn the IP addresses of the peers in it, as with any swarm.
+  - **Settings › NFX network** has the switch ("Trade video with web browsers") and the list of
+    signaling relays. Switch it off, or empty the list, and the app does no WebRTC at all.
+  - Every part of a video that arrives this way is checked against the video's signed hash list,
+    as from any other source. No relay server carries video (no TURN): two peers that cannot
+    reach each other directly simply do not connect.
+  - Contracts v17 and v18 (`NfxSettings.webrtc?`, `stunServers?`, `meshRelays?`).
+
 ### Changed
 
 - **Uploads make one rendition by default, and the creator picks the sizes** (issue #97, the

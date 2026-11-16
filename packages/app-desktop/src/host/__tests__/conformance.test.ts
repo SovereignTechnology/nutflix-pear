@@ -41,6 +41,7 @@ import {
   isRelayUrl,
   isSats,
   isSeederStatusWire,
+  isMeshRelays,
   isStunServers,
   isTrackers,
   isUnixSeconds,
@@ -181,7 +182,14 @@ const isSettings = obj(
         network: oneOf(['nfx:testnet:1'] as const),
         scopedRelays: arrayOf(isRelayUrl, 8),
       },
-      { irohRelays: isIrohRelays, trackers: isTrackers, webrtc: bool, stunServers: isStunServers },
+      {
+        irohRelays: isIrohRelays,
+        trackers: isTrackers,
+        webrtc: bool,
+        stunServers: isStunServers,
+        // v18 (NFX-10 §6): the signaling relays; the desktop defaults write them.
+        meshRelays: isMeshRelays,
+      },
     ),
   },
 );

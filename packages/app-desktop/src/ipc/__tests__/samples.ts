@@ -233,6 +233,8 @@ export const VALID: Samples = {
           scopedRelays: [],
           webrtc: false,
           stunServers: ['web.nutflix.xyz:3478', '192.0.2.1:3478', '[2001:db8::1]:19302'] as never,
+          // Contracts v18: the signaling relays.
+          meshRelays: ['wss://relay.example', 'ws://127.0.0.1:7777'] as never,
         },
       },
     ],
@@ -421,6 +423,14 @@ export const INVALID: Partial<Record<Method, readonly unknown[][]>> = {
       { nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [], stunServers } },
     ]),
     [{ nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [], webrtc: 'on' } }],
+    // Contracts v18: cleartext off this computer, a repeat, nine relays.
+    ...[
+      ['ws://relay.example'],
+      ['wss://relay.example', 'wss://relay.example'],
+      Array.from({ length: 9 }, (_, i) => `wss://r${String(i)}.example`),
+    ].map((meshRelays) => [
+      { nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [], meshRelays } },
+    ]),
   ],
   'desktop.ffmpeg': [[{}], [{ recheck: 'yes' }], [{ recheck: true, path: '/usr/bin/ffmpeg' }]],
   // The renderer names a kind only: no NIP-07 on desktop, and never a URI, flow or passphrase.

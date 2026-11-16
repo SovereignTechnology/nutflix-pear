@@ -24,6 +24,7 @@ import {
 } from './controls.js';
 import {
   UI_MAX_NFX_IROH_RELAYS,
+  UI_MAX_NFX_MESH_RELAYS,
   UI_MAX_NFX_SCOPED_RELAYS,
   UI_MAX_NFX_TRACKERS,
   UI_NFX_NETWORK,
@@ -55,11 +56,14 @@ export interface NfxSectionParts {
   readonly meshNotice?: boolean | undefined;
   /**
    * Contracts v17 (ADR 0023): the switch for trading video with web browsers over WebRTC, and the
-   * line saying who then sees the user's IP address. Default: hidden until the desktop app can
-   * signal (Nostr, nfx #71): before that nobody could reach its WebRTC side, so it is not started
-   * and there is nothing to switch. The web client never shows it (it is a browser).
+   * line saying who then sees the user's IP address. Default: shown. The web client hides it: a
+   * browser trades over WebRTC by being one, and says so in its mesh notice.
    */
   readonly webrtc?: boolean | undefined;
+  /**
+   * Contracts v18 (NFX-10 §6): the relays WebRTC connections are signaled on. Default: shown.
+   */
+  readonly meshRelays?: boolean | undefined;
 }
 
 /** `base.nfx`, or the network's starting point (off, no scoped relays). */
@@ -241,13 +245,15 @@ export function NfxSection({
   const savedNfx = nfxOf(saved);
   const irohRelays = nfx.irohRelays ?? [];
   const trackers = nfx.trackers ?? [];
+  const meshRelays = nfx.meshRelays ?? [];
   const show = {
     toggle: parts?.toggle ?? true,
     scopedRelays: parts?.scopedRelays ?? true,
     irohRelays: parts?.irohRelays ?? true,
     trackers: parts?.trackers ?? false,
     meshNotice: parts?.meshNotice ?? false,
-    webrtc: parts?.webrtc ?? false,
+    webrtc: parts?.webrtc ?? true,
+    meshRelays: parts?.meshRelays ?? true,
   };
   // Contracts v17: absent = on.
   const webrtcOn = nfx.webrtc !== false;
@@ -286,6 +292,17 @@ export function NfxSection({
       ...cur,
       irohRelays: (cur.irohRelays ?? []).filter((r) => r !== url),
     }));
+  };
+
+  const addMesh = (url: RelayUrl): Promise<boolean> =>
+    update((cur) => {
+      const list = cur.meshRelays ?? [];
+      return list.some((r) => normaliseRelayUrl(r) === url) || list.length >= UI_MAX_NFX_MESH_RELAYS
+        ? cur
+        : { ...cur, meshRelays: [...list, url] };
+    });
+  const removeMesh = (url: RelayUrl): void => {
+    void update((cur) => ({ ...cur, meshRelays: (cur.meshRelays ?? []).filter((r) => r !== url) }));
   };
 
   const addTracker = (url: TrackerUrl): Promise<boolean> =>
@@ -327,7 +344,7 @@ export function NfxSection({
         <SwitchRow
           id={`${id}-webrtc`}
           label="Trade video with web browsers"
-          description="Seeds the videos you keep to people watching in a web browser, and fetches parts of a video from them, over WebRTC. Off: no WebRTC at all."
+          description="Fetches parts of a video you watch from people watching it in a web browser and, while seeding is on, seeds the free videos you keep to them, over WebRTC. Off: no WebRTC at all."
           checked={webrtcOn}
           disabled={!nfx.enabled}
           busy={pending.has('nfx')}
@@ -337,8 +354,36 @@ export function NfxSection({
       {show.webrtc && nfx.enabled && webrtcOn ? (
         <Note tone="warning" id={`${id}-webrtc-notice`}>
           The web viewers you trade video with see your IP address, and so does the network&apos;s
-          STUN server, which this app asks for its public address while it runs.
+          STUN server, which this app asks for its public address while it runs. The signaling
+          relays below learn which videos you seed or watch, and your IP address; they never see how
+          you connect. Anyone reading those relays can see that some app is in a video&apos;s room,
+          under a random key (a new one for each video you watch), and can learn its IP address by
+          connecting to it.
         </Note>
+      ) : null}
+      {show.meshRelays ? (
+        <RelayList
+          inputId={`${id}-mesh-add`}
+          title="Signaling relays"
+          description="Ordinary Nostr relays where this app and web viewers find each other to set up a WebRTC connection. Two peers meet only on a relay both use. No video passes through them."
+          column="Signaling relay"
+          relays={meshRelays}
+          saved={new Set<string>(savedNfx.meshRelays ?? [])}
+          max={UI_MAX_NFX_MESH_RELAYS}
+          empty={<>No signaling relays: nobody can reach this app over WebRTC until you add one.</>}
+          addLabel="Add a signaling relay"
+          placeholder="wss://relay.example"
+          hint={
+            <>
+              wss:// relays, or ws:// to a relay on this computer. At most {UI_MAX_NFX_MESH_RELAYS}.
+              The network&apos;s scoped relays do not carry signaling.
+            </>
+          }
+          fullError={`At most ${String(UI_MAX_NFX_MESH_RELAYS)} signaling relays.`}
+          validate={validateScopedRelayUrl}
+          add={addMesh}
+          remove={removeMesh}
+        />
       ) : null}
       {show.scopedRelays ? (
         <RelayList

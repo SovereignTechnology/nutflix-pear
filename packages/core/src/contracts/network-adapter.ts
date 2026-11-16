@@ -331,6 +331,9 @@ export const MAX_NFX_TRACKERS = 4 as const;
 /** v17: the most STUN servers (NFX-10 §1) the desktop app's WebRTC side uses. */
 export const MAX_NFX_STUN_SERVERS = 4 as const;
 
+/** v18: the most relays (NFX-10 §6) a client signals its WebRTC connections on. */
+export const MAX_NFX_MESH_RELAYS = 8 as const;
+
 /**
  * v10 (ADR 0020): taking part in an NFX network. Off unless `enabled`: no NFX query, listing,
  * seeding or beacon happens without it.
@@ -374,6 +377,16 @@ export interface NfxSettings {
    * beacon. A stored v10 to v16 `nfx` stays valid.
    */
   readonly stunServers?: readonly StunServer[];
+  /**
+   * v18 (NFX-10 §6, ADR 0023): the relays WebRTC connections are signaled on, with no tracker:
+   * ordinary Nostr relays that carry ephemeral kind 25050 (a scoped relay refuses it). `wss://`,
+   * or `ws://` to a loopback address only; unique; at most `MAX_NFX_MESH_RELAYS`. Two peers meet
+   * only on a relay both use. Absent = the shell's default; empty = none, which leaves WebRTC
+   * off. These relays learn which videos the user seeds or watches (a room key maps back to a
+   * rendition) and the user's IP address, never a connection's addresses. A stored v10 to v17
+   * `nfx` stays valid.
+   */
+  readonly meshRelays?: readonly RelayUrl[];
 }
 
 export interface Settings {

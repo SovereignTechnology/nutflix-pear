@@ -345,6 +345,12 @@ export const isScopedRelayUrl = safe(
       (typeof x === 'string' && x.length <= LIMITS.maxServerUrl && LOOPBACK_WS_RE.test(x)),
   ),
 );
+/**
+ * Contracts v18 (NFX-10 §6): unique signaling relays, at most `LIMITS.maxNfxMeshRelays`, in a
+ * scoped relay's form (`wss://`, or `ws://` to this computer: a local relay in tests).
+ */
+export const isMeshRelays: Guard<readonly RelayUrl[]> = (x): x is readonly RelayUrl[] =>
+  arrayOf(isScopedRelayUrl, LIMITS.maxNfxMeshRelays)(x) && new Set(x).size === x.length;
 /** Unique scoped relays, at most `LIMITS.maxNfxScopedRelays`. */
 const isScopedRelays: Guard<readonly RelayUrl[]> = (x): x is readonly RelayUrl[] =>
   arrayOf(isScopedRelayUrl, LIMITS.maxNfxScopedRelays)(x) && new Set(x).size === x.length;
@@ -570,7 +576,14 @@ const isSettingsPatch = obj(
     // v17 (ADR 0023): WebRTC with browsers (absent = on) and its STUN servers (absent = default).
     nfx: obj(
       { enabled: bool, network: oneOf(NFX_NETWORK_IDS), scopedRelays: isScopedRelays },
-      { irohRelays: isIrohRelays, trackers: isTrackers, webrtc: bool, stunServers: isStunServers },
+      {
+        irohRelays: isIrohRelays,
+        trackers: isTrackers,
+        webrtc: bool,
+        stunServers: isStunServers,
+        // v18: the relays WebRTC is signaled on (absent = the default pair).
+        meshRelays: isMeshRelays,
+      },
     ),
     // Contracts v16: Studio's next default sizes; at least one (absent = 720p).
     publishSizes: (x: unknown): x is readonly number[] => isUploadSizes(x) && x.length > 0,

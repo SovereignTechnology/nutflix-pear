@@ -37,9 +37,25 @@ trickle candidates), and both directions.
    Binding requests (RFC 8489, request and success only) to the servers `rtc-init` names, so the
    mapping is the WebRTC socket's own.
 3. **No signaling in the helper.** It takes an offer and returns an answer, or makes an offer and
-   takes the answer. How they travel is the host's: over Nostr, once nfx #71 defines the event.
-   The app never ships tracker signaling; trackers appear only in CI tests, because today's browser
-   player speaks nothing else.
+   takes the answer. How they travel is the host's: over Nostr, as NFX-10 §6 (`nfx-mesh/1`, nfx
+   #71) defines it. The app never ships tracker signaling; a tracker appears only in the helper's
+   own browser test, which predates §6.
+   - The host's signaler (`host/nfx/mesh-signaler.ts`) joins the room of each rendition it plays
+     and of each swarm the worker serves (at most 32), announces presence, and follows §6.6: the
+     lower key offers, timeouts, backoff, and §6.5's bounds. The wire and its checks are
+     `@sovit/core`'s, written from the spec and pinned by its vectors (ADR 0020).
+   - **Session keys are random and never the user's key or the seeder key:** one per run for the
+     rooms of what the app seeds, and a separate one for each play session, so a reader of the
+     relays cannot tie what the user watches to what they seed or to their other plays.
+   - **An open room is treated as hostile.** Anyone can derive a room and sign valid events in
+     it with any number of keys. So every negotiation that ends unopened costs its peer a
+     backoff; worker calls come from token buckets, one set for this side's offers and one for
+     its answers, so a flood of offers cannot starve its own; and each relay is subscribed on
+     its own, so one relay cannot hide another's events.
+   - **Signaling relays are general relays the user lists** (contracts v18, `meshRelays`; the
+     maintainer, 2026-11-15): the scoped relay refuses kind 25050. The default is two of the
+     app's default public relays, picked by `scripts/mesh-relay-soak.mjs`; the web client uses
+     the same pair, so the two meet. An empty list leaves WebRTC off.
 4. **It moves bytes and decides nothing,** as ADR 0021 §3. It serves the files the worker names
    (`rtc-serve`, only files the worker's verified hash list includes), reads a file only when asked
    and refuses it if its size changed, and hands fetched bytes back unchecked; the worker checks
@@ -78,7 +94,12 @@ trickle candidates), and both directions.
 - Settings gain a WebRTC switch, on by default, with a disclosure: browser peers see the user's
   IP address, and so does the network's STUN server, which the helper asks every 25 s while its
   WebRTC side runs (contracts v17: `NfxSettings.webrtc?`, `stunServers?`). The side starts only
-  once the app can signal (the host's `NFX_WEBRTC_SIGNALING`): before that nobody could reach it,
-  so no STUN server is asked and the switch is not shown.
+  with a helper to run it and a relay to signal on: without signaling nobody could reach it.
+- The signaling relays learn which videos the user seeds or watches (a room key maps back to a
+  rendition for anyone with the catalogue) and the user's IP address. They never see an SDP: it
+  is encrypted to its receiver. Anyone who can derive a room can join it and, by offering or
+  answering, learn its members' addresses, as a tracker's swarm lets them (NFX-10 §6.7). They
+  can also fill a room's answer slots and keep honest offers out for as long as they keep at it;
+  this side's own offers still go out. Settings says so beside the switch.
 - Same-LAN peers do not see each other's LAN address, so they connect through the router's public
   mapping (hairpin) or not at all, unless a test or LAN run sets `allow_private`.
