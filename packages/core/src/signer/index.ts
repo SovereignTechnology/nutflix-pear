@@ -7,6 +7,8 @@
  *   - `Nip46Signer` / `Nip07Signer` — adapters that verify every event the remote signer or
  *     extension returns against the request and the pinned pubkey.
  *   - `SignerManager` — the host's `SignerControl` (connect / lock / sign out / status).
+ *   - `MeshSessionKey` — a per-session key for NFX mesh signaling (NFX-10 §6): signs only the
+ *     four `nfx-mesh/1` events it builds, and is never an identity key.
  */
 export type {
   Signer,
@@ -27,6 +29,7 @@ export {
   type KeyFileHeader,
 } from './keyfile.js';
 export { LocalSigner, checkSignInput, parseSecretKey, type SignInput } from './local.js';
+export { MeshSessionKey } from './mesh-key.js';
 export {
   Nip07Signer,
   Nip46Signer,

@@ -76,6 +76,9 @@ function held(e: Endpoint): 'all' | readonly string[] {
       return 'all';
     case 'hyper':
       return [];
+    // A STUN server serves no video (NFX-10 §1).
+    case 'stun':
+      return [];
   }
 }
 
