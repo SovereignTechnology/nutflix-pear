@@ -306,11 +306,16 @@ describe('NfxMeshSignaler against hand-made peers', () => {
     const low = peer(me, 'below');
     await send(w, x.presence('connect', ROOM, w.now - 61));
     await send(w, x.presence('connect', nfx.meshRoom(`${SWARM}x`), w.now));
-    // A room proof by the wrong room secret, under our room's key.
-    await send(
-      w,
-      x.presence('connect', { ...ROOM, secret: nfx.meshRoom(`${SWARM}x`).secret }, w.now),
-    );
+    // A connect altered after it was signed (here: another event's room proof swapped in).
+    const real = x.presence('connect', ROOM, w.now);
+    const other = x.presence('connect', ROOM, w.now + 1);
+    w.pool.inject({
+      ...real,
+      tags: real.tags.map((t) =>
+        t[0] === 'roomproof' ? other.tags.find((o) => o[0] === 'roomproof')! : t,
+      ),
+    });
+    await settle();
     const good = low.offer(ROOM, me, sdpOf('low', 1), w.now);
     // A tampered ciphertext under the real event's id and signature, straight to subscribers.
     w.pool.inject({ ...good, content: `${good.content.slice(0, -4)}AAAA` });

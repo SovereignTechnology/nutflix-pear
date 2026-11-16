@@ -61,6 +61,13 @@ These are known limits of the released app, not bugs awaiting a report:
   (ADR 0009), and so do NFX's two default relays, `relay.nutflix.xyz` and `iroh.nutflix.xyz`, which
   SovTech runs (ADR 0020, 2026-11-08); switch NFX off in Settings to stop contacting them. The app
   makes no private-browsing claim.
+- **WebRTC peers, a STUN server and signaling relays see you** (on `main`, after 0.1.2; ADR 0023).
+  With NFX on, the app trades video with web browsers over WebRTC. The peers it connects to learn
+  your IP address; so does the network's STUN server (`web.nutflix.xyz:3478`, asked every 25 s
+  while this runs). The signaling relays (by default `relay.damus.io` and `nos.lol`, NFX-10 §6)
+  learn your IP address and which videos you seed or watch; connection details are encrypted to
+  the peer. Anyone who knows a video can join its room and learn its members' addresses by
+  connecting to them, as with any swarm. Settings › NFX network switches it off.
 - **Images can reveal your IP.** With remote images off (the default), an `https` image is fetched
   only when its publisher signed its hash, and the host it comes from still sees your address.
 - **Builds are signed by key, not by a vendor.** There is no operating-system code signing and no
