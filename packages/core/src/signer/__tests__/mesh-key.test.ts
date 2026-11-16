@@ -68,9 +68,6 @@ describe('MeshSessionKey', () => {
     const connect = a.presence('connect', other, NOW);
     // Read in the first room: its `P` is another room's.
     expect(readAs(b, connect).kind).toBe('dropped');
-    // A proof made with another room's secret under this room's `P` fails too.
-    const forged = a.presence('connect', { ...meshRoom(SWARM), secret: other.secret }, NOW);
-    expect(readAs(b, forged)).toEqual({ kind: 'dropped', why: 'room proof' });
   });
 
   it('sends only an SDP, to a peer key, within the size limit', () => {
@@ -88,24 +85,36 @@ describe('MeshSessionKey', () => {
     expect(b.decrypt('nope', a.offer(room, b.pubkey, SDP, NOW).content)).toBeUndefined();
   });
 
-  it('has no way to sign anything else', () => {
+  it('has no way to sign anything else, and its key is out of reach', () => {
     const a = MeshSessionKey.create();
-    const surface = Object.getOwnPropertyNames(MeshSessionKey.prototype).sort();
-    expect(surface).toEqual(
-      [
-        'answer',
-        'constructor',
-        'decrypt',
-        'destroy',
-        'encrypt',
-        'key',
-        'offer',
-        'presence',
-        'sign',
-      ].sort(),
-    );
+    expect(Object.getOwnPropertyNames(MeshSessionKey.prototype).sort()).toEqual([
+      'answer',
+      'constructor',
+      'decrypt',
+      'destroy',
+      'offer',
+      'presence',
+    ]);
     expect('signEvent' in a).toBe(false);
     expect('nip44Encrypt' in a).toBe(false);
+    // The key is a `#` field: not a property, and not in a dump of the object.
+    expect(Object.keys(a).sort()).toEqual(['pubkey', 'sessionId']);
+    expect(JSON.stringify(a)).toBe(JSON.stringify({ pubkey: a.pubkey, sessionId: a.sessionId }));
+  });
+
+  it('refuses a presence type or a room that is not one', () => {
+    const a = MeshSessionKey.create();
+    const room = meshRoom(SWARM);
+    expect(() => a.presence('offer' as never, room, NOW)).toThrow(/presence type/);
+    expect(() => a.presence('connect', { ...room, key: 'xyz' }, NOW)).toThrow(/mesh room/);
+    expect(() => a.presence('connect', { ...room, secret: new Uint8Array(31) }, NOW)).toThrow(
+      /mesh room/,
+    );
+    // A secret that is not the key's: the proof would not verify, so nothing is returned.
+    const other = meshRoom(`${SWARM}x`);
+    expect(() => a.presence('connect', { ...room, secret: other.secret }, NOW)).toThrow(
+      /did not verify/,
+    );
   });
 
   it('does nothing once destroyed', () => {

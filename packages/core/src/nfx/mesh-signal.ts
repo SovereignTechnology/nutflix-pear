@@ -191,33 +191,106 @@ const dropped = (why: string): MeshRead => ({ kind: 'dropped', why });
 
 const DECIMAL = /^(?:0|[1-9][0-9]{0,15})$/;
 const TYPES: readonly string[] = ['connect', 'disconnect', 'offer', 'answer'];
+/** More tags, or values in one tag, than any event of this profile has: such an event is dropped. */
+const MAX_TAGS = 32;
+const MAX_TAG_VALUES = 8;
+
+interface Snapshot {
+  readonly id: unknown;
+  readonly pubkey: string;
+  readonly created_at: number;
+  readonly kind: number;
+  readonly tags: readonly (readonly string[])[];
+  readonly content: string;
+  readonly sig: unknown;
+}
+
+/**
+ * One read of an untrusted object into plain values, so that everything after it (the checks,
+ * the signature, the room proof) sees the same event: an object with getters, or a proxy, cannot
+ * show one thing to the checks and another to the verifier.
+ */
+function snapshot(raw: unknown): Snapshot | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  try {
+    const e = raw as Readonly<Record<string, unknown>>;
+    const { id, pubkey, kind, content, sig } = e;
+    const createdAt = e['created_at'];
+    const rawTags = e['tags'];
+    if (
+      kind !== KIND_MESH_SIGNAL ||
+      typeof pubkey !== 'string' ||
+      !isLowerHex(pubkey, 64) ||
+      typeof content !== 'string' ||
+      typeof createdAt !== 'number' ||
+      !Number.isSafeInteger(createdAt) ||
+      !Array.isArray(rawTags) ||
+      rawTags.length > MAX_TAGS
+    )
+      return undefined;
+    const tags: string[][] = [];
+    for (const t of rawTags as readonly unknown[]) {
+      if (!Array.isArray(t) || t.length === 0 || t.length > MAX_TAG_VALUES) return undefined;
+      const copy: string[] = [];
+      for (const v of t as readonly unknown[]) {
+        if (typeof v !== 'string') return undefined;
+        copy.push(v);
+      }
+      tags.push(copy);
+    }
+    return { id, pubkey, created_at: createdAt, kind, tags, content, sig };
+  } catch {
+    // A getter or a proxy trap that throws.
+    return undefined;
+  }
+}
+
+/**
+ * Whether `event` carries a valid room proof for the room whose key is `room` (§6.3): its
+ * `roomproof` names the id of the preimage rebuilt from the event, and the room key signed it.
+ */
+export function meshProofValid(
+  event: {
+    readonly pubkey: string;
+    readonly created_at: number;
+    readonly tags: readonly (readonly string[])[];
+    readonly content: string;
+  },
+  room: string,
+): boolean {
+  const proofs = event.tags.filter((t) => t[0] === 'roomproof');
+  const [proof] = proofs;
+  if (proofs.length !== 1 || proof === undefined) return false;
+  const id = proof[1] ?? '';
+  const sig = proof[2] ?? '';
+  if (!isLowerHex(id, 64) || !isLowerHex(sig, 128) || !isLowerHex(room, 64)) return false;
+  const preimage = meshProofPreimage(
+    room,
+    event.created_at,
+    event.pubkey,
+    meshChallenge(event.tags, event.content),
+  );
+  if (sha256Hex(utf8(preimage)) !== id) return false;
+  try {
+    return schnorr.verify(hexToBytes(sig), hexToBytes(id), hexToBytes(room));
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Read one relay event for `room` (§6.5), in the spec's order: what is not this profile's is
  * ignored before any cryptography, a malformed or stale event is dropped, a directed event for
  * another session is ignored before its signature is looked at, and only then come the NIP-01
- * check, the room proof and the decryption.
+ * check, the room proof and the decryption. Never throws, whatever `raw` is.
  */
 export function readMeshEvent(raw: unknown, o: MeshReader): MeshRead {
-  if (typeof raw !== 'object' || raw === null) return dropped('not an event');
-  const e = raw as Readonly<Record<string, unknown>>;
-  const { kind, pubkey, content, tags: rawTags } = e;
-  const createdAt = e['created_at'];
-  if (
-    kind !== KIND_MESH_SIGNAL ||
-    typeof pubkey !== 'string' ||
-    !isLowerHex(pubkey, 64) ||
-    typeof content !== 'string' ||
-    typeof createdAt !== 'number' ||
-    !Number.isSafeInteger(createdAt) ||
-    !Array.isArray(rawTags) ||
-    !rawTags.every(
-      (t): t is string[] =>
-        Array.isArray(t) && t.length > 0 && t.every((v) => typeof v === 'string'),
-    )
-  )
-    return dropped('not a kind-25050 event');
-  const tags: readonly (readonly string[])[] = rawTags;
+  // A reader without a clock would accept anything as fresh.
+  if (!Number.isSafeInteger(o.now)) return dropped('no clock');
+  const e = snapshot(raw);
+  if (e === undefined) return dropped('not a kind-25050 event');
+  const { pubkey, content, tags } = e;
+  const createdAt = e.created_at;
   const all = (name: string): (readonly string[])[] => tags.filter((t) => t[0] === name);
   /** The value of the one tag called `name`; `null` when absent, `undefined` when not exactly one. */
   const one = (name: string): string | null | undefined => {
@@ -229,7 +302,11 @@ export function readMeshEvent(raw: unknown, o: MeshReader): MeshRead {
   // 1. Not ours: other applications use this kind.
   const i = all('i');
   if (i.length !== 1 || i[0]?.[1] !== MESH_PROTOCOL) return ignored('another protocol');
-  const t = one('t');
+  const ts = all('t');
+  // A `t` other than the four (NIP-DC's `route` among them) is another event type; none, or
+  // more than one, is a malformed event of ours.
+  if (ts.length !== 1) return dropped('not exactly one t');
+  const t = ts[0]?.[1];
   if (typeof t !== 'string' || !TYPES.includes(t)) return ignored('another event type');
   const type = t as MeshSignalType;
   if (pubkey === o.self) return ignored('our own event');
@@ -244,7 +321,7 @@ export function readMeshEvent(raw: unknown, o: MeshReader): MeshRead {
   const proof = proofs[0];
   if (
     proofs.length !== 1 ||
-    proof?.length !== 3 ||
+    proof === undefined ||
     !isLowerHex(proof[1] ?? '', 64) ||
     !isLowerHex(proof[2] ?? '', 128)
   )
@@ -260,11 +337,16 @@ export function readMeshEvent(raw: unknown, o: MeshReader): MeshRead {
       if (typeof offerId !== 'string' || !isLowerHex(offerId, 64))
         return dropped('an answer names one offer');
     } else if (offerId !== null) return dropped('e on an offer');
-    if (content === '' || utf8(content).length > MESH_MAX_CONTENT || content.startsWith('#'))
+    // Base64 is ASCII: more characters than the limit is more bytes than the limit.
+    if (
+      content === '' ||
+      content.length > MESH_MAX_CONTENT ||
+      content.startsWith('#') ||
+      utf8(content).length > MESH_MAX_CONTENT
+    )
       return dropped('content is not NIP-44 v2 within the limit');
   } else {
     if (p !== null) return dropped('p on presence');
-    if (offerId !== null) return dropped('e on presence');
     if (content !== '') return dropped('presence with content');
     if (type === 'connect' ? typeof expiration !== 'string' : expiration !== null)
       return dropped('expiration is for connect, exactly once');
@@ -286,33 +368,23 @@ export function readMeshEvent(raw: unknown, o: MeshReader): MeshRead {
   // 4. For another session: none of our business, and no work spent on it.
   if (directed && p !== o.self) return ignored('for another session');
 
-  // 5. The event, then its room proof.
-  const verified = verifyEvent(raw);
+  // 5. The event (the snapshot, not `raw` again), then its room proof.
+  const verified = verifyEvent(e);
   if (!verified.ok) return dropped('id or signature');
   const event = verified.value;
-  const preimage = meshProofPreimage(
-    o.room,
-    event.created_at,
-    event.pubkey,
-    meshChallenge(event.tags, event.content),
-  );
-  const proofId = sha256Hex(utf8(preimage));
-  let proven = false;
-  if (proof[1] === proofId) {
-    try {
-      proven = schnorr.verify(hexToBytes(proof[2] ?? ''), hexToBytes(proofId), hexToBytes(o.room));
-    } catch {
-      proven = false;
-    }
-  }
-  if (!proven) return dropped('room proof');
+  if (!meshProofValid(event, o.room)) return dropped('room proof');
 
   const common: Common = { id: event.id, from: event.pubkey, sessionId, createdAt };
   if (type === 'connect') return { ...common, kind: 'connect', expiration: expires };
   if (type === 'disconnect') return { ...common, kind: 'disconnect' };
 
   // 6. The SDP.
-  const sdp = o.decrypt(event.pubkey, event.content);
+  let sdp: string | undefined;
+  try {
+    sdp = o.decrypt(event.pubkey, event.content);
+  } catch {
+    sdp = undefined;
+  }
   if (sdp === undefined || !isSdp(sdp)) return dropped('content does not decrypt to an SDP');
   if (type === 'offer') return { ...common, kind: 'offer', sdp };
   return { ...common, kind: 'answer', offerId: offerId ?? '', sdp };

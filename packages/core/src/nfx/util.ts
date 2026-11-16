@@ -157,10 +157,13 @@ function ipv6Text(groups: readonly number[]): string {
 /**
  * `ip:port` in canonical text form (NFX-10 §1): a dotted IPv4 address with no leading zeros, or
  * a bracketed RFC 5952 IPv6 address (lowercase, the longest zero run compressed, no zone), never
- * an IPv4 address written inside IPv6 (the dotted forms, and `::ffff:0:0/96` however it is
- * spelled); a port from 1 to 65535 with no leading zeros. Names and URLs are refused.
+ * an IPv4 address written inside IPv6 (the dotted forms, and `::ffff:0:0/96` and `::/96` however
+ * they are spelled, so `::` and `::1` too); a port from 1 to 65535 with no leading zeros. Names and
+ * URLs are refused. At most 64 characters are looked at.
  */
 export function isCanonicalSocketAddr(s: string): boolean {
+  // `[ffff:…:ffff]:65535` is 47 characters.
+  if (s.length > 64) return false;
   const colon = s.lastIndexOf(':');
   if (colon < 1) return false;
   const port = s.slice(colon + 1);
@@ -170,8 +173,10 @@ export function isCanonicalSocketAddr(s: string): boolean {
     const text = host.slice(1, -1);
     const groups = ipv6Groups(text);
     if (groups === undefined || ipv6Text(groups) !== text) return false;
-    const mapped = groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff;
-    return !mapped;
+    // `::ffff:0:0/96` (IPv4-mapped) and `::/96` (IPv4-compatible, with `::` and `::1`): an IPv4
+    // address inside IPv6 however it is spelled, and no address a STUN server answers at.
+    const head = groups.slice(0, 5).every((g) => g === 0);
+    return !(head && (groups[5] === 0xffff || groups[5] === 0));
   }
   const m = IPV4.exec(host);
   if (m === null) return false;
