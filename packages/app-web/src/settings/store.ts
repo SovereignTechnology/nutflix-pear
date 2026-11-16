@@ -18,7 +18,7 @@
 import type { Settings } from '@sovit/core';
 
 import { WebAdapterError } from '../errors.js';
-import { DEFAULT_WEB_NFX, DEFAULT_WEB_SETTINGS } from './defaults.js';
+import { DEFAULT_WEB_NFX, DEFAULT_WEB_SETTINGS, WEB_MESH_RELAYS } from './defaults.js';
 import { WEB_SETTING_KEYS, isWebSettingsPatch } from './validate.js';
 
 /** The Web Storage key (ADR 0022 item 8). */
@@ -65,9 +65,23 @@ export function parseStoredWebSettings(raw: string | null): Settings {
   }
   const { nfx, ...rest } = picked;
   if (!isWebSettingsPatch(rest)) return DEFAULT_WEB_SETTINGS;
-  const nfxPatch: unknown = nfx === undefined ? {} : { nfx };
-  const kept = isWebSettingsPatch(nfxPatch) ? nfxPatch : { nfx: DEFAULT_WEB_NFX };
-  return { ...DEFAULT_WEB_SETTINGS, ...rest, ...kept };
+  // A stored `nfx` from before signaling moved to Nostr (pear #89) lists trackers: they go, the
+  // rest stays, and it gets the default signaling relays so Settings shows the ones in use.
+  const nfxPatch: unknown = nfx === undefined ? {} : { nfx: withoutTrackers(nfx) };
+  const kept: Partial<Settings> = isWebSettingsPatch(nfxPatch)
+    ? nfxPatch
+    : { nfx: DEFAULT_WEB_NFX };
+  const filled: Partial<Settings> =
+    kept.nfx === undefined || kept.nfx.meshRelays !== undefined
+      ? kept
+      : { nfx: { ...kept.nfx, meshRelays: WEB_MESH_RELAYS } };
+  return { ...DEFAULT_WEB_SETTINGS, ...rest, ...filled };
+}
+
+function withoutTrackers(nfx: unknown): unknown {
+  if (typeof nfx !== 'object' || nfx === null || Array.isArray(nfx)) return nfx;
+  const { trackers: _trackers, ...rest } = nfx as Readonly<Record<string, unknown>>;
+  return rest;
 }
 
 /** What is written: the fields a viewer sets, nothing fixed. */

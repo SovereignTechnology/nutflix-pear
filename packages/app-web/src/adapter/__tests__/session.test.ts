@@ -24,7 +24,7 @@ function session(player: FakeNfxPlayer, o: { pin?: string; renditions?: string[]
     manifestJson: '{"kind":38504}',
     origins: [{ url: 'https://o.example/o' }],
     renditions: o.renditions,
-    trackers: [],
+    meshRelays: [],
     iceServers: [],
     pin: o.pin,
     player: () => player.init().then(() => player),
@@ -60,7 +60,7 @@ describe('WebNfxSession', () => {
         { url: 'https://b.example/o' },
       ],
       renditions: ['360p', '720p'],
-      trackers: [],
+      meshRelays: [],
       iceServers: [],
       player: () => Promise.resolve(player),
     });
@@ -109,7 +109,7 @@ describe('WebNfxSession', () => {
       videoId: ADDR,
       manifestJson: '{}',
       origins: [{ url: 'https://o.example/o' }],
-      trackers: ['wss://t.example/a'],
+      meshRelays: ['wss://signal.example'],
       iceServers: [{ urls: ['stun:s.example:3478'] }],
       player: () => gate.then(() => player),
     });

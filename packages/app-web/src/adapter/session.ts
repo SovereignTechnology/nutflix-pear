@@ -114,7 +114,8 @@ export interface WebNfxSessionOptions {
    * absent, every rendition. hls.js starts on the first its origin serves.
    */
   readonly renditions?: readonly string[] | undefined;
-  readonly trackers: readonly string[];
+  /** The signaling relays (NFX-10 §6); none: no mesh, every byte from an origin. */
+  readonly meshRelays: readonly string[];
   readonly iceServers: readonly { readonly urls: readonly string[] }[];
   /**
    * The rendition the viewer picked (`playNfx(addr, id)`): played, and hls.js's choice turned
@@ -277,10 +278,10 @@ export class WebNfxSession implements NfxPlaySession {
         manifestJson: o.manifestJson,
         origins: o.origins.map(originSource),
         ...(o.renditions === undefined ? {} : { renditions: [...o.renditions] }),
-        // Trackers, not nfx #80's `nostr` kind: the deployed seeder's bridge is tracker-signaled,
-        // and Nostr signaling waits for nfxd's mesh endpoint (nfx #71 phase 2).
-        ...(o.trackers.length > 0
-          ? { signaling: { kind: 'trackers' as const, urls: [...o.trackers] } }
+        // Signaling over Nostr (NFX-10 §6, pear #89): this page, the desktop app and nfxd's mesh
+        // endpoint meet in the rendition's room on these relays. Never a tracker.
+        ...(o.meshRelays.length > 0
+          ? { signaling: { kind: 'nostr' as const, relays: [...o.meshRelays] } }
           : {}),
         iceServers: o.iceServers.map((s): NfxIceServer => ({ urls: [...s.urls] })),
         onEvent: (e) => {

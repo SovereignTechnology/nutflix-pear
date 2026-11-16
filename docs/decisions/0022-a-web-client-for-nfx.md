@@ -64,6 +64,12 @@ A client that does only that avoids every reason ADR 0019 gave:
    (`webrtc` endpoints) without asking. Every tracker URL is checked as nfx's player checks it:
    `wss:`, or `ws:` to a loopback host; no credentials, query or fragment. At most 4 are used. The
    page says plainly that trackers and peers see the viewer's IP address.
+   **Amended 2026-11-15 (the maintainer; pear #89, ADR 0023):** signaling is over Nostr instead
+   (NFX-10 §6). The page uses the signaling relays in its settings (contracts v18
+   `NfxSettings.meshRelays`; by default `relay.primal.net` and `relay.ditto.pub`, the pair the
+   desktop app uses, so the two meet) and no tracker, whether configured or named in a beacon.
+   The page says that the signaling relays and peers see the viewer's IP address, and that the
+   relays learn which videos are watched.
 4. **Our own STUN server.** `iceServers` lists `stun:web.nutflix.xyz:3478` and nothing else: a
    Binding responder that SovTech runs (nfxd's `--stun`, built on the nfx side), with no TURN and no
    third party. A Nostr relay cannot do this job. It is a WebSocket over TCP, so it never sees the

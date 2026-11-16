@@ -23,12 +23,12 @@ export const WEB_OFFER: ShellOffer = Object.freeze({
     toggle: false,
     scopedRelays: true,
     irohRelays: false,
-    trackers: true,
+    // Signaling is over Nostr (NFX-10 §6, pear #89): no tracker is used or listed.
+    trackers: false,
     meshNotice: true,
     // A browser trades over WebRTC by being one: there is no switch for it.
     webrtc: false,
-    // Signaling is over trackers here still (the Nostr kind is the next step of #89).
-    meshRelays: false,
+    meshRelays: true,
   }),
   appearanceParts: Object.freeze({ remoteImages: false }),
   signIn: false,

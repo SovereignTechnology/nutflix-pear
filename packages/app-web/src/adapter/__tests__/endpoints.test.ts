@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { NfxVideo, TrackerUrl } from '@sovit/core';
 
 import { Key, NS, T, addrOf, beacon, https, webrtc } from '../../__tests__/support/nfx.js';
-import { WEB_FALLBACK_ORIGIN, WEB_TRACKER } from '../../settings/defaults.js';
+import { WEB_FALLBACK_ORIGIN } from '../../settings/defaults.js';
 import {
   MAX_BEACON_ORIGINS,
   MAX_CLAIMED_RENDITIONS,
@@ -21,6 +21,8 @@ import {
 } from '../endpoints.js';
 import { isPublicHost } from '../hosts.js';
 
+/** A tracker a beacon may name (the web's own, before signaling moved to Nostr). */
+const WEB_TRACKER = 'wss://web.nutflix.xyz/tracker' as TrackerUrl;
 const creator = new Key();
 const VIDEO = 'free-video-1';
 const video = {

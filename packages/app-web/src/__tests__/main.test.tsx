@@ -141,11 +141,16 @@ describe('the web shell (ADR 0022)', () => {
     const headings = Array.from(container.querySelectorAll('h2')).map((h) => h.textContent);
     expect(headings).toEqual(['Appearance', 'Playback and performance', 'Relays', 'NFX network']);
     const notice = container.querySelector('[id$="-nfx-mesh-notice"]');
-    expect(notice?.textContent).toContain('Trackers and the peers you meet see your IP address.');
+    expect(notice?.textContent).toContain(
+      'The signaling relays below and the peers you meet see your IP address',
+    );
     expect(container.querySelector('[id$="-appearance-remote-images"]')).toBeNull();
     expect(container.querySelector('[id$="-nfx-enabled"]')).toBeNull();
     expect(container.querySelector('[id$="-nfx-iroh-add"]')).toBeNull();
-    expect(container.textContent).toContain('wss://web.nutflix.xyz/tracker');
+    // Pear #89: signaling relays, the pair the desktop app uses; no tracker anywhere.
+    expect(container.querySelector('[id$="-nfx-mesh-add"]')).not.toBeNull();
+    expect(container.textContent).toContain('wss://relay.ditto.pub');
+    expect(container.textContent).not.toContain('tracker');
     expect(container.textContent).toContain('wss://relay.nutflix.xyz');
     // T13 and AGPL-3.0 §13: the source the page was built from, and what a browser cannot promise.
     expect(container.querySelector('.nf-settings__source a')?.getAttribute('href')).toBe(
