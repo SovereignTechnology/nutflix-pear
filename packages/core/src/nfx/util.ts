@@ -110,6 +110,73 @@ export function compareCodePoints(a: string, b: string): number {
   return 1;
 }
 
+const IPV4 = /^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$/;
+const IPV6_GROUP = /^(?:0|[1-9a-f][0-9a-f]{0,3})$/;
+
+/** The eight groups of an IPv6 address written with hex groups only, or `undefined`. */
+function ipv6Groups(text: string): number[] | undefined {
+  const halves = text.split('::');
+  if (halves.length > 2) return undefined;
+  const side = (h: string | undefined): string[] | undefined => {
+    if (h === undefined || h === '') return [];
+    const groups = h.split(':');
+    return groups.every((g) => IPV6_GROUP.test(g)) ? groups : undefined;
+  };
+  const head = side(halves[0]);
+  const tail = side(halves[1]);
+  if (head === undefined || tail === undefined) return undefined;
+  const given = head.length + tail.length;
+  if (halves.length === 1 ? given !== 8 : given > 7) return undefined;
+  const zeros = new Array<string>(8 - given).fill('0');
+  return [...head, ...zeros, ...tail].map((g) => parseInt(g, 16));
+}
+
+/** RFC 5952 text of eight groups: lowercase, the first longest run of two or more zeros as `::`. */
+function ipv6Text(groups: readonly number[]): string {
+  let bestAt = -1;
+  let bestLen = 1;
+  for (let i = 0; i < 8;) {
+    let j = i;
+    while (j < 8 && groups[j] === 0) j++;
+    if (j - i > bestLen) {
+      bestAt = i;
+      bestLen = j - i;
+    }
+    i = j === i ? i + 1 : j;
+  }
+  const hex = (g: number): string => g.toString(16);
+  if (bestAt < 0) return groups.map(hex).join(':');
+  const head = groups.slice(0, bestAt).map(hex).join(':');
+  const tail = groups
+    .slice(bestAt + bestLen)
+    .map(hex)
+    .join(':');
+  return `${head}::${tail}`;
+}
+
+/**
+ * `ip:port` in canonical text form (NFX-10 §1): a dotted IPv4 address with no leading zeros, or
+ * a bracketed RFC 5952 IPv6 address (lowercase, the longest zero run compressed, no zone), never
+ * an IPv4 address written inside IPv6 (the dotted forms, and `::ffff:0:0/96` however it is
+ * spelled); a port from 1 to 65535 with no leading zeros. Names and URLs are refused.
+ */
+export function isCanonicalSocketAddr(s: string): boolean {
+  const colon = s.lastIndexOf(':');
+  if (colon < 1) return false;
+  const port = s.slice(colon + 1);
+  if (!/^[1-9][0-9]{0,4}$/.test(port) || Number(port) > 65535) return false;
+  const host = s.slice(0, colon);
+  if (host.startsWith('[') && host.endsWith(']')) {
+    const text = host.slice(1, -1);
+    const groups = ipv6Groups(text);
+    if (groups === undefined || ipv6Text(groups) !== text) return false;
+    const mapped = groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff;
+    return !mapped;
+  }
+  const m = IPV4.exec(host);
+  return m !== null && m.slice(1).every((o) => Number(o) <= 255);
+}
+
 const encoder = new TextEncoder();
 
 export function utf8(s: string): Uint8Array {

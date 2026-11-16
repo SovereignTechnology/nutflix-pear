@@ -19,6 +19,7 @@ import { Namespace, VideoAddr } from './namespace.js';
 import {
   U64_MAX,
   compareCodePoints,
+  isCanonicalSocketAddr,
   isHttpsUrl,
   isLowerHex,
   parseU64Strict,
@@ -67,7 +68,16 @@ export type Endpoint =
   /** The deprecated NFX-12 draft: parsed, never emitted by NFX-12 publishers, never dialed. */
   | { readonly t: 'hyper'; readonly drive: string }
   /** NFX-12 §2: the seeder's HyperDHT peer key, and its `bind` to this seeder and network. */
-  | { readonly t: 'hyperdht'; readonly peer: string; readonly bind: string };
+  | { readonly t: 'hyperdht'; readonly peer: string; readonly bind: string }
+  /**
+   * NFX-10 §1: a STUN server the seeder runs (Binding only), for WebRTC peers' public mappings:
+   * 1 to `MAX_STUN_ADDRS` distinct `ip:port`, each in canonical text form. Whether an address is
+   * global unicast is for whoever uses one to check, not a parsing rule.
+   */
+  | { readonly t: 'stun'; readonly addrs: readonly string[] };
+
+/** The most addresses one `stun` endpoint carries (NFX-10 §1). */
+export const MAX_STUN_ADDRS = 4;
 
 /** How much of the hash list a seeder holds: all of it, or a count of entries. */
 export type Chunks = 'all' | bigint;
@@ -424,6 +434,19 @@ function parseEndpoint(raw: JsonValue): NfxResult<Endpoint | string> {
       }
       return ok<Endpoint>({ t: 'hyperdht', peer, bind });
     }
+    case 'stun': {
+      const rawAddrs = raw.get('addrs');
+      if (rawAddrs === undefined) return bad('stun endpoint needs `addrs`');
+      const addrs = strings(rawAddrs, 'addrs', isCanonicalSocketAddr);
+      if (!addrs.ok) return addrs;
+      if (addrs.value.length < 1 || addrs.value.length > MAX_STUN_ADDRS) {
+        return bad('stun `addrs` must name 1 to 4 addresses');
+      }
+      if (new Set(addrs.value).size !== addrs.value.length) {
+        return bad('stun `addrs` must not repeat an address');
+      }
+      return ok<Endpoint>({ t: 'stun', addrs: addrs.value });
+    }
     default:
       return ok(t.value);
   }
@@ -461,6 +484,8 @@ function endpointText(e: Endpoint): string {
       return `{"t":"hyper","drive":${q(e.drive)}}`;
     case 'hyperdht':
       return `{"t":"hyperdht","peer":${q(e.peer)},"bind":${q(e.bind)}}`;
+    case 'stun':
+      return `{"t":"stun","addrs":${JSON.stringify(e.addrs)}}`;
   }
 }
 

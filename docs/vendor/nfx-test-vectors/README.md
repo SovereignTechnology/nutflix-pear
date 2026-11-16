@@ -1,8 +1,8 @@
 # NFX test vectors
 
-Byte-for-byte copies of twelve files from the NFX suite's `spec/test-vectors/`, at nfx commit
-`47cb059f6632a3932a787c20bfd421eb5779d659` (SovereignTechnology/nfx `main`, the merge of PR #2, the
-NFX-12 HyperDHT rewrite). They are the golden fixtures `packages/core/src/nfx/` is written against (NFX-11 §4:
+Byte-for-byte copies of fifteen files from the NFX suite's `spec/test-vectors/`, at nfx commit
+`b5fe5e472accd9d8c2548faad419a40a1885a61e` (SovereignTechnology/nfx `main`, the merge of PR #81;
+the twelve files vendored before, at `47cb059`, are unchanged there). They are the golden fixtures `packages/core/src/nfx/` is written against (NFX-11 §4:
 the wire is pinned by its fixtures, not by a library version).
 
 | File                                                     | What it pins                                     |
@@ -15,6 +15,8 @@ the wire is pinned by its fixtures, not by a library version).
 | `beacon-hyperdht.json`                                   | the `hyperdht` endpoint and its `bind` (NFX-12 §2) |
 | `hashlist.json`, `hashlist-invalid.json`                 | hash lists and playlists (NFX-05)                |
 | `files1.json`                                            | `nfx/files/1` and `nfx/pay/1` messages (NFX-12 §§4–5) |
+| `beacon-stun.json`                                       | the `stun` endpoint (NFX-10 §1)                  |
+| `mesh-signal.json`, `mesh-signal-invalid.json`           | signaling over Nostr, kind 25050 `nfx-mesh/1` (NFX-10 §6) |
 
 `SHA256SUMS` pins every file. `packages/core/src/nfx/__tests__/vectors.test.ts` recomputes the
 hashes and fails on a changed, missing or unpinned file, then runs every case.

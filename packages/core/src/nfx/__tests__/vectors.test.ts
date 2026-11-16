@@ -1,6 +1,6 @@
 /**
  * Every NFX test vector this package implements (docs/vendor/nfx-test-vectors, nfx commit
- * 47cb059), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
+ * b5fe5e4), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
  * reproduced up to their id: nfx-proto re-signs with a zero BIP-340 `aux_rand`, which no
  * signer here exposes, so a rebuilt event's id is compared and the vector's signature verified.
  */
@@ -58,6 +58,7 @@ import {
   type Rendition,
   type Role,
 } from '../index.js';
+import { isCanonicalSocketAddr } from '../util.js';
 
 const DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -74,6 +75,7 @@ const DIR = join(
 const VECTOR_FILES = [
   'beacon-hyperdht.json',
   'beacon-invalid.json',
+  'beacon-stun.json',
   'beacon.json',
   'canon.json',
   'deletion.json',
@@ -84,6 +86,8 @@ const VECTOR_FILES = [
   'manifest-invalid.json',
   'manifest-open.json',
   'manifest.json',
+  'mesh-signal-invalid.json',
+  'mesh-signal.json',
 ];
 
 interface RawEvent {
@@ -273,6 +277,75 @@ describe('NFX-03 beacons', () => {
     const ev = beaconVector.event;
     const parsed = unwrap(parseBeaconContent(ev.content, ev.pubkey));
     expect(unwrap(parseBeaconContent(beaconContentText(parsed), ev.pubkey))).toEqual(parsed);
+  });
+});
+
+describe('NFX-10 §1 stun endpoints (beacon-stun.json)', () => {
+  const v = load('beacon-stun.json') as {
+    now: number;
+    valid: Named[];
+    invalid: (Named & { reason: string })[];
+  };
+
+  it('accepts every valid beacon with its stun endpoint, and reproduces its content', () => {
+    for (const c of v.valid) {
+      const b = unwrap(parseBeacon(c.event, v.now));
+      const stun = b.content.endpoints.find((e) => e.t === 'stun');
+      const wire = (
+        JSON.parse(c.event.content) as { endpoints: { t: string; addrs?: string[] }[] }
+      ).endpoints.find((e) => e.t === 'stun');
+      expect(stun, c.name).toEqual({ t: 'stun', addrs: wire?.addrs });
+      expect(b.content.skipped, c.name).toEqual([]);
+      expect(beaconContentText(b.content), c.name).toBe(c.event.content);
+      expect(idOf(c.event), c.name).toBe(c.event.id);
+    }
+  });
+
+  it('rejects every beacon whose stun endpoint is malformed, whole', () => {
+    for (const c of v.invalid) {
+      expect(verifyEvent(c.event).ok, `${c.name}: signature should be valid`).toBe(true);
+      expect(parseBeacon(c.event, v.now).ok, `${c.name} (${c.reason}) must be rejected`).toBe(
+        false,
+      );
+    }
+  });
+
+  it('takes canonical ip:port only', () => {
+    const good = [
+      '192.0.2.1:1',
+      '0.0.0.0:65535',
+      '[::]:3478',
+      '[::1]:3478',
+      '[2001:db8::]:1',
+      '[1:2:3:4:5:6:7:8]:9',
+      '[2001:0:0:1::1]:3478',
+      '[1:0:0:2::3]:1',
+    ];
+    const bad = [
+      '',
+      ':3478',
+      '192.0.2.1',
+      '192.0.2.1:',
+      '192.0.2.1:65536',
+      '192.0.2.256:1',
+      '192.0.2:1',
+      '[::1]',
+      '::1:3478',
+      '[1:2:3:4:5:6:7:8:9]:1',
+      '[1::2::3]:1',
+      // Not the longest run, a single zero group compressed, or nothing compressed.
+      '[2001:db8:0:0:1::1]:1',
+      '[1:2:3:4:5:6::8]:1',
+      '[0:0:0:0:0:0:0:0]:1',
+      // IPv4 inside IPv6, however it is spelled.
+      '[::ffff:c000:201]:1',
+      '[01::1]:1',
+      '[::1%eth0]:1',
+      ' 192.0.2.1:1',
+      '192.0.2.1:1 ',
+    ];
+    for (const a of good) expect(isCanonicalSocketAddr(a), a).toBe(true);
+    for (const a of bad) expect(isCanonicalSocketAddr(a), a).toBe(false);
   });
 });
 
