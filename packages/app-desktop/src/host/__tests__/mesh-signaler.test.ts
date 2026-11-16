@@ -25,10 +25,14 @@ import {
   MAX_ROOM_PEERS,
   MAX_ROOMS,
   NfxMeshSignaler,
+  OPEN_TIMEOUT_S,
   PRESENCE_EVERY_S,
+  PRESENCE_JITTER_S,
   ROOM_CALL_BURST,
   ROOM_CALL_REFILL_S,
   SUB_RETRY_S,
+  SWARMS_EVERY_S,
+  SWARMS_FAILURES,
 } from '../nfx/mesh-signaler.js';
 
 const R1 = 'wss://signal.test' as RelayUrl;
@@ -125,10 +129,22 @@ class FakeRtc implements MeshRtc {
 interface World {
   readonly pool: nostr.FakeRelayPool;
   now: number;
+  /** What the signaler's random source returns: 0 = no jitter at all. */
+  random: number;
+  /** While true the relay refuses every event. */
+  refusing: boolean;
 }
 
 function world(): World {
-  return { pool: new nostr.FakeRelayPool(), now: 1_790_000_000 };
+  const w: World = {
+    pool: new nostr.FakeRelayPool({
+      rejectPublish: () => (w.refusing ? 'blocked: not today' : null),
+    }),
+    now: 1_790_000_000,
+    random: 0,
+    refusing: false,
+  };
+  return w;
 }
 
 function signalerIn(w: World, who: string, relays: () => readonly RelayUrl[] = () => RELAYS) {
@@ -155,6 +171,7 @@ function signalerIn(w: World, who: string, relays: () => readonly RelayUrl[] = (
     rtc,
     now: () => w.now,
     log,
+    random: () => w.random,
     timers: { setInterval: () => 0, clearInterval: () => undefined },
   });
   return {
@@ -386,10 +403,13 @@ describe('NfxMeshSignaler against hand-made peers', () => {
     await send(w, low.offer(ROOM, me, sdpOf('low', 2), w.now + 1));
     expect(rtc.hangups).toEqual([1]);
     expect(rtc.answers.map((x) => x.peer)).toEqual([1, 2]);
-    // The old connection's close, arriving late, is not the new negotiation's.
+    // The old connection's close, arriving late, is not the new negotiation's: that one still
+    // opens, and is a connection a still newer offer replaces (a failed one would be waiting).
     s.onPeer({ peer: 1, open: false });
     s.onPeer({ peer: 2, open: true });
-    expect(rtc.hangups).toEqual([1]);
+    await send(w, low.offer(ROOM, me, sdpOf('low', 3), w.now + 2));
+    expect(rtc.hangups).toEqual([1, 2]);
+    expect(rtc.answers).toHaveLength(3);
     s.stop();
   });
 
@@ -650,31 +670,70 @@ describe('NfxMeshSignaler against hand-made peers', () => {
   it('when the helper went away every id is forgotten, and what the worker makes late is hung up', async () => {
     const { w, s, rtc, me } = await one();
     const x = peer(me, 'above');
-    const y = peer(me, 'above');
     await send(w, x.presence('connect', ROOM, w.now));
     const ours = sent(w, 'offer', me)[0]!;
     await send(w, x.answer(ROOM, me, ours.id, sdpOf('x', 1), w.now));
     s.onPeer({ peer: 1, open: true });
-    // An offer to Y is with the worker when the helper restarts.
+    // An offer is out (connection 2), and another is with the worker, when the helper restarts.
+    await send(
+      w,
+      from(me, 'above', (k) => k.presence('connect', ROOM, w.now)),
+    );
+    expect(rtc.offers.at(-1)).toEqual({ swarm: SWARM, peer: 2 });
     rtc.hold = true;
-    await send(w, y.presence('connect', ROOM, w.now));
+    await send(
+      w,
+      from(me, 'above', (k) => k.presence('connect', ROOM, w.now)),
+    );
     s.reset();
     rtc.restart();
     rtc.release();
     await settle();
-    // What the new helper made for the cancelled negotiation is hung up, and nothing is sent.
+    // What the new helper made for the cancelled negotiation (its connection 1) is hung up,
+    // and nothing is sent for it.
     expect(rtc.hangups).toEqual([1]);
-    expect(sent(w, 'offer', me)).toHaveLength(1);
+    expect(sent(w, 'offer', me)).toHaveLength(2);
     rtc.hold = false;
-    // X is no longer held as connected: its next presence gets a new offer.
-    w.now += PRESENCE_EVERY_S;
+    // X is no longer held as connected: its next presence gets a new offer, the new helper's 2.
+    w.now += 1;
     await send(w, x.presence('connect', ROOM, w.now));
     expect(rtc.offers.at(-1)).toEqual({ swarm: SWARM, peer: 2 });
-    // The old connection's close, under an id the new helper may reuse, touches nothing.
-    s.onPeer({ peer: 1, open: false });
-    w.now += 5;
+    // The offer that was out before the restart is forgotten: its timeout, which would have
+    // come first, hangs nothing up, least of all the new connection 2.
+    w.now += ANSWER_TIMEOUT_S;
     s.tick();
     expect(rtc.hangups).toEqual([1]);
+    s.stop();
+  });
+
+  it('an offer no relay takes fails at once; an answer not opened in 15 s, or refused by the worker, fails too', async () => {
+    const { w, s, rtc, me } = await one();
+    w.refusing = true;
+    // Straight into the relay's subscriptions: it refuses what is published while it refuses.
+    w.pool.store(from(me, 'above', (k) => k.presence('connect', ROOM, w.now)));
+    await settle();
+    expect(rtc.offers).toHaveLength(1);
+    expect(rtc.hangups).toEqual([1]);
+    w.refusing = false;
+    // Answered, handed to the worker, never open.
+    const x = peer(me, 'above');
+    await send(w, x.presence('connect', ROOM, w.now));
+    const ours = sent(w, 'offer', me).at(-1)!;
+    await send(w, x.answer(ROOM, me, ours.id, sdpOf('x', 1), w.now));
+    expect(rtc.accepts).toEqual([{ peer: 2, answer: sdpOf('x', 1) }]);
+    w.now += OPEN_TIMEOUT_S;
+    s.tick();
+    expect(rtc.hangups).toEqual([1]);
+    w.now += 1;
+    s.tick();
+    expect(rtc.hangups).toEqual([1, 2]);
+    // The worker refuses an answer (a bad SDP): hung up as well.
+    const y = peer(me, 'above');
+    rtc.accept = () => Promise.reject(new Error('bad-request: not an answer'));
+    await send(w, y.presence('connect', ROOM, w.now));
+    const third = sent(w, 'offer', me).at(-1)!;
+    await send(w, y.answer(ROOM, me, third.id, sdpOf('y', 1), w.now));
+    expect(rtc.hangups).toEqual([1, 2, 3]);
     s.stop();
   });
 
@@ -757,6 +816,116 @@ describe('NfxMeshSignaler rooms, keys and relays', () => {
     // A video this app seeds is in its room as the seeder, played or not.
     s.play('four', kept);
     expect(s.keyIn(kept)).toBe(seedKey);
+    s.stop();
+  });
+
+  it('a play keeps its key when its video becomes seeded; the seeding key comes after it has left', async () => {
+    const w = world();
+    const { s, rtc } = signalerIn(w, 'me');
+    s.play('one', SWARM);
+    s.start();
+    await settle();
+    const mine = s.keyIn(SWARM)!;
+    expect(mine).not.toBe(s.pubkey);
+    rtc.served = [SWARM];
+    w.now += SWARMS_EVERY_S;
+    s.tick();
+    await settle();
+    expect(s.keyIn(SWARM)).toBe(mine);
+    expect(sent(w, 'disconnect')).toEqual([]);
+    // The play ends: its key says goodbye, and the seeding key announces at a random later time.
+    w.random = 0.5;
+    s.unplay('one');
+    await settle();
+    expect(sent(w, 'disconnect').map((e) => e.pubkey)).toEqual([mine]);
+    expect(s.keyIn(SWARM)).toBe(s.pubkey);
+    s.tick();
+    expect(sent(w, 'connect', s.pubkey!)).toEqual([]);
+    w.now += PRESENCE_EVERY_S / 2;
+    s.tick();
+    expect(sent(w, 'connect', s.pubkey!)).toHaveLength(1);
+    s.stop();
+  });
+
+  it('rooms keep their own beat, are spread again after a stall, and at stop only one key speaks', async () => {
+    const w = world();
+    const { s, rtc } = signalerIn(w, 'me');
+    rtc.served = [`${SWARM}-kept`];
+    s.play('one', SWARM);
+    s.start();
+    await settle();
+    s.tick();
+    expect(sent(w, 'connect')).toHaveLength(2);
+    // The next round comes up to ten seconds early, by the room's own draw.
+    w.random = 0.5;
+    w.now += PRESENCE_EVERY_S;
+    s.tick();
+    expect(sent(w, 'connect')).toHaveLength(4);
+    w.now += PRESENCE_EVERY_S - PRESENCE_JITTER_S / 2 - 1;
+    s.tick();
+    expect(sent(w, 'connect')).toHaveLength(4);
+    w.now += 1;
+    s.tick();
+    expect(sent(w, 'connect')).toHaveLength(6);
+    // The machine slept: both rooms are long overdue, and neither announces in the waking second.
+    w.now += 600;
+    s.tick();
+    expect(sent(w, 'connect')).toHaveLength(6);
+    w.now += PRESENCE_JITTER_S / 2;
+    s.tick();
+    expect(sent(w, 'connect')).toHaveLength(8);
+    // Two keys are in use: at stop only the seeding key says goodbye.
+    const seedKey = s.pubkey!;
+    s.stop();
+    await settle();
+    expect(sent(w, 'disconnect').map((e) => e.pubkey)).toEqual([seedKey]);
+  });
+
+  it('one failed poll of the served swarms changes nothing; three in a row end the seeding rooms', async () => {
+    const w = world();
+    const { s, rtc } = signalerIn(w, 'me');
+    const kept = `${SWARM}-kept`;
+    rtc.served = [kept];
+    s.start();
+    await settle();
+    expect(s.keyIn(kept)).toBe(s.pubkey);
+    rtc.down = true;
+    for (let i = 1; i < SWARMS_FAILURES; i++) {
+      w.now += SWARMS_EVERY_S;
+      s.tick();
+      await settle();
+      expect(s.keyIn(kept)).toBe(s.pubkey);
+    }
+    w.now += SWARMS_EVERY_S;
+    s.tick();
+    await settle();
+    expect(s.keyIn(kept)).toBeNull();
+    s.stop();
+  });
+
+  it('every room may always negotiate once; beyond that the rooms share eight places', async () => {
+    const w = world();
+    const { s, rtc } = signalerIn(w, 'me');
+    const swarms = [0, 1, 2, 3].map((i) => `${SWARM}-${String(i)}`);
+    swarms.forEach((swarm, i) => {
+      s.play(`sid-${String(i)}`, swarm);
+    });
+    s.start();
+    await settle();
+    const counts: number[] = [];
+    for (const swarm of swarms) {
+      const me = s.keyIn(swarm)!;
+      const before = rtc.asked;
+      for (let i = 0; i < MAX_PENDING_OFFERS; i++)
+        await send(
+          w,
+          from(me, 'above', (k) => k.presence('connect', nfx.meshRoom(swarm), w.now)),
+        );
+      counts.push(rtc.asked - before);
+    }
+    // 4 and 4 (three beyond the first each), then 3 (two more places were left), then the one
+    // every room has.
+    expect(counts).toEqual([4, 4, 3, 1]);
     s.stop();
   });
 

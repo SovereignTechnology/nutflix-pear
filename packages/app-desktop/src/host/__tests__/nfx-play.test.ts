@@ -424,7 +424,7 @@ describe('#89: a play joins its rendition’s signaling room', () => {
       DEFAULT_NFX_MESH_RELAYS,
     );
 
-    // The worker's peer and reset events reach the signaler without trouble.
+    // The worker's peer and reset events are taken (a smoke check: the play goes on below).
     r.worker().event({ e: 'nfx.rtc.peer', peer: 1, swarm: room.swarm, dir: 'in', open: true });
     r.worker().event({ e: 'nfx.rtc.reset' });
 

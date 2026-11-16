@@ -17,8 +17,11 @@
  *   closed it. Each relay is subscribed on its own so that one relay's forgery under a real
  *   event's id cannot make the pool drop the real event another relay delivers (§6.5); events
  *   are taken once here, by id, only after they verified.
- * - **Presence:** `connect` on joining a room and every 30 s, to the relays it can hear on;
- *   `disconnect` on leaving and at `stop` (best effort, to the relays last used).
+ * - **Presence:** `connect` on joining a room and then every 20 to 30 s, to the relays it can
+ *   hear on; `disconnect` on leaving and at `stop` (best effort, to the relays last used). Each
+ *   room keeps its own randomized beat, a seeding room's first `connect` waits a random part of a
+ *   round, rooms that all fell due together (a suspended machine, no relay) are spread again, and
+ *   at `stop` only one key speaks: sessions of one app must not be told together by their timing.
  * - **Connecting (§6.6):** the lower session key offers. On a valid `connect` from a higher key
  *   this side asks the worker for an offer and sends it; on an offer it asks for the answer and
  *   sends that; the answer to its own pending offer is handed to the worker. With both offers in
@@ -30,18 +33,22 @@
  *   answers an offer from it (an honest peer's own retry comes after its own 30 s).
  * - **Bounds (§6.5, and this host's own):** 256 peers' presence per room; one negotiation per
  *   peer and 16 per room, of which at most 4 own offers and 4 answered offers not yet open;
- *   `MAX_ROOM_PEERS` connections per room; `MAX_UNOPENED` negotiations of each direction in all;
- *   worker calls (`offer`, `answer`) from token buckets per room and in all, one set per
- *   direction, so a flood of offers cannot starve this side's own; a cancelled call stays
- *   counted until the worker has answered it; 8 offers or answers decrypted per sender per 30 s;
+ *   `MAX_ROOM_PEERS` connections per room; `MAX_UNOPENED` negotiations of each direction in all
+ *   beyond each room's first, so a few busy rooms cannot take every place; worker calls (`offer`,
+ *   `answer`) from a token bucket per room and direction, so a flood of offers cannot starve
+ *   this side's own; a cancelled call stays counted until the worker has answered it; 8 offers
+ *   or answers decrypted per sender per 30 s;
  *   the last 4096 event ids per room; a relay's events past `MAX_EVENTS_PER_S` dropped unread;
- *   SDPs over the worker's limit refused. Only a newer offer replaces a peer's connection.
+ *   SDPs over the worker's limit refused. Only an offer newer than a peer's last answered one is
+ *   answered, so a replayed offer neither replaces a connection nor starts one.
  * - **The worker** tells it when a connection opens or closes (`nfx.rtc.peer`), and when its
  *   helper went away (`nfx.rtc.reset`): every connection and negotiation went with it, and
  *   connection ids start over.
  *
  * Nothing here logs an SDP, an address or a key.
  */
+import { randomInt } from 'node:crypto';
+
 import type { NostrEvent, NostrFilter, RelayUrl, UnixSeconds } from '@sovit/core';
 import { nfx, signer } from '@sovit/core';
 
@@ -57,13 +64,20 @@ export const MAX_NEGOTIATIONS = 16;
 export const MAX_PENDING_OFFERS = 4;
 /** Offers answered in one room whose connections are not open yet. */
 export const MAX_PENDING_ANSWERS = 4;
-/** Negotiations of one direction in every room together (the helper holds 32 connections). */
+/**
+ * Negotiations of one direction in every room together, not counting each room's first (the
+ * helper holds 32 connections, and refuses past that).
+ */
 export const MAX_UNOPENED = 8;
 export const MAX_SEEN_IDS = 4096;
 /** Offers and answers decrypted per sender per `DIRECTED_WINDOW_S`. */
 export const DIRECTED_PER_WINDOW = 8;
 export const DIRECTED_WINDOW_S = 30;
 export const PRESENCE_EVERY_S = 30;
+/** A round of presence comes up to this much early, at random per room and round. */
+export const PRESENCE_JITTER_S = 10;
+/** Presence this overdue means the clock stood still: the rooms are spread again. */
+const PRESENCE_STALL_S = 2;
 export const ANSWER_TIMEOUT_S = 15;
 export const OPEN_TIMEOUT_S = 15;
 export const ANSWERED_TIMEOUT_S = 20;
@@ -71,6 +85,10 @@ export const BACKOFF_S = 30;
 export const BACKOFF_MAX_S = 600;
 /** How often the served swarms are asked of the worker again. */
 export const SWARMS_EVERY_S = 60;
+/** The worker failed to say what it serves this many times running: nothing is served. */
+export const SWARMS_FAILURES = 3;
+/** After a reset the worker is asked again this soon (its served table is being rebuilt). */
+const SWARMS_AFTER_RESET_S = 10;
 /** A subscription is remade this often even when nothing changed. */
 export const RESUBSCRIBE_S = 600;
 /** The wait before subscribing again on a relay that closed the subscription; it doubles. */
@@ -78,14 +96,12 @@ export const SUB_RETRY_S = 5;
 export const SUB_RETRY_MAX_S = 300;
 /** A subscription that lived this long before it closed starts that wait over. */
 const SUB_STABLE_S = 60;
-/** Worker calls of one direction: a burst, then one per `*_REFILL_S`, per room and in all. */
+/** Worker calls of one direction in one room: a burst, then one per `ROOM_CALL_REFILL_S`. */
 export const ROOM_CALL_BURST = 4;
 export const ROOM_CALL_REFILL_S = 5;
-export const CALL_BURST = 8;
-export const CALL_REFILL_S = 2;
 /** Events read per relay per second; the rest are dropped unread. */
 export const MAX_EVENTS_PER_S = 100;
-/** Senders whose backoff or decrypt count is remembered per room. */
+/** Senders whose backoff, decrypt count or last offer is remembered per room. */
 const MAX_REMEMBERED = 1024;
 const TICK_MS = 1000;
 
@@ -117,6 +133,8 @@ export interface MeshSignalerDeps {
   /** Unix seconds. */
   readonly now: () => number;
   readonly log: Logger;
+  /** A number in [0, 1) for the jitter of presence (default: the system's random source). */
+  readonly random?: () => number;
   readonly timers?: {
     readonly setInterval: (fn: () => void, ms: number) => unknown;
     readonly clearInterval: (h: unknown) => void;
@@ -173,12 +191,16 @@ interface Room {
   readonly backoff: Map<string, Backoff>;
   readonly seen: Set<string>;
   readonly directed: Map<string, number[]>;
+  /** Session key → `created_at` of its last offer this side answered. */
+  readonly answered: Map<string, number>;
   readonly offers: Bucket;
   readonly answers: Bucket;
   /** Cancelled negotiations whose worker call has not settled (still counted in the caps). */
   readonly zombies: Set<Negotiation>;
-  /** When `connect` last went out (Unix seconds). */
+  /** When `connect` last went out (Unix seconds); `-Infinity` before the first. */
   announcedAt: number;
+  /** When the next `connect` is due. */
+  announceAt: number;
 }
 
 /** One relay's subscription. */
@@ -240,8 +262,7 @@ export class NfxMeshSignaler {
   private relaysUsed: readonly RelayUrl[] = [];
   /** The worker's connection id → where it belongs. */
   private readonly peers = new Map<number, { readonly room: string; readonly from: string }>();
-  private readonly offers: Bucket = { tokens: CALL_BURST, at: 0 };
-  private readonly answers: Bucket = { tokens: CALL_BURST, at: 0 };
+  private swarmFailures = 0;
   private readonly swarmRooms = new Map<string, string>();
 
   constructor(d: MeshSignalerDeps) {
@@ -271,11 +292,7 @@ export class NfxMeshSignaler {
       this.tick();
     }, TICK_MS);
     this.seededAt = Number.NEGATIVE_INFINITY;
-    const now = this.d.now();
-    for (const b of [this.offers, this.answers]) {
-      b.tokens = CALL_BURST;
-      b.at = now;
-    }
+    this.swarmFailures = 0;
     this.tick();
   }
 
@@ -285,7 +302,10 @@ export class NfxMeshSignaler {
     if (seedKey === null) return;
     if (this.timer !== null) (this.d.timers ?? realTimers).clearInterval(this.timer);
     this.timer = null;
-    for (const r of [...this.rooms.values()]) this.leave(r);
+    // Several keys saying goodbye in one second would tell an observer they are one app's: when
+    // more than one is in use, only the seeding key says it (a play's presence just expires).
+    const keys = new Set([...this.rooms.values()].map((r) => r.key));
+    for (const r of [...this.rooms.values()]) this.leave(r, keys.size === 1 || r.owner === SEED);
     for (const s of this.subs.values()) s.off();
     this.subs.clear();
     this.peers.clear();
@@ -349,7 +369,8 @@ export class NfxMeshSignaler {
       r.connected.clear();
       r.zombies.clear();
     }
-    this.seededAt = Number.NEGATIVE_INFINITY;
+    // Asked again soon, not at once: the worker is rebuilding what it serves.
+    this.seededAt = this.d.now() - SWARMS_EVERY_S + SWARMS_AFTER_RESET_S;
   }
 
   /** The clock: served swarms, subscriptions, presence, timeouts. Public so tests can drive it. */
@@ -362,12 +383,16 @@ export class NfxMeshSignaler {
       this.d.rtc.swarms().then(
         (swarms) => {
           if (this.seedKey !== seedKey) return;
+          this.swarmFailures = 0;
           this.seeded = swarms;
           this.reconcile();
         },
         () => {
-          // The worker is down or WebRTC is off: nothing is served, so no seeding room stands.
+          // One failed call (a slow worker) changes nothing. A worker that stays down or has
+          // WebRTC off serves nothing, so no seeding room stands.
           if (this.seedKey !== seedKey) return;
+          this.swarmFailures += 1;
+          if (this.swarmFailures < SWARMS_FAILURES) return;
           this.seeded = [];
           this.reconcile();
         },
@@ -377,9 +402,16 @@ export class NfxMeshSignaler {
     // Presence only where this side can hear the answer to it.
     const hearing = this.d.relays().filter((u) => this.subs.get(u)?.dead === false);
     for (const r of this.rooms.values()) {
-      if (hearing.length > 0 && now - r.announcedAt >= PRESENCE_EVERY_S) {
-        r.announcedAt = now;
-        this.send(hearing, () => r.key.presence('connect', r.room, now));
+      if (hearing.length > 0 && now >= r.announceAt) {
+        // Overdue (the machine slept, or no relay could hear): every room is due in this same
+        // second, so each takes a new random place instead.
+        if (Number.isFinite(r.announcedAt) && now - r.announceAt > PRESENCE_STALL_S)
+          r.announceAt = now + this.jitter(PRESENCE_JITTER_S);
+        if (now >= r.announceAt) {
+          r.announcedAt = now;
+          r.announceAt = now + PRESENCE_EVERY_S - this.jitter(PRESENCE_JITTER_S);
+          this.send(hearing, () => r.key.presence('connect', r.room, now));
+        }
       }
       for (const [from, p] of r.presence) {
         const dead =
@@ -419,7 +451,12 @@ export class NfxMeshSignaler {
     for (const [sid, swarm] of this.playing) {
       if (wanted.size >= MAX_ROOMS) break;
       const k = this.roomKeyOf(swarm);
-      if (!wanted.has(k)) wanted.set(k, { swarm, owner: seededRooms.has(k) ? SEED : sid });
+      if (wanted.has(k)) continue;
+      // A room a play is in stays that play's while it lasts, even once the swarm is seeded:
+      // changing keys in a room would show both in it in the same second.
+      const held = this.rooms.get(k)?.owner;
+      const stays = held !== undefined && held !== SEED && this.playing.get(held) === swarm;
+      wanted.set(k, { swarm, owner: stays ? held : seededRooms.has(k) ? SEED : sid });
     }
     for (const swarm of this.seeded) {
       if (wanted.size >= MAX_ROOMS) break;
@@ -430,9 +467,8 @@ export class NfxMeshSignaler {
     if (relays.length > 0) this.relaysUsed = [...relays];
     const now = this.d.now();
     for (const [k, r] of [...this.rooms]) {
-      // Left, or to be joined again as another session (its play session closed, or the swarm
-      // is seeded now).
-      if (wanted.get(k)?.owner !== r.owner) this.leave(r);
+      // Left, or to be joined again as another session (its play session closed).
+      if (wanted.get(k)?.owner !== r.owner) this.leave(r, true);
     }
     for (const [k, w] of wanted) {
       if (this.rooms.has(k)) continue;
@@ -451,11 +487,15 @@ export class NfxMeshSignaler {
         backoff: new Map(),
         seen: new Set(),
         directed: new Map(),
+        answered: new Map(),
         offers: { tokens: ROOM_CALL_BURST, at: now },
         answers: { tokens: ROOM_CALL_BURST, at: now },
         zombies: new Set(),
-        // Announced by the next tick, once the subscriptions below are up.
         announcedAt: Number.NEGATIVE_INFINITY,
+        // A play wants its peers now: announced by the next tick, once the subscriptions below
+        // are up. A seeding room takes a random place in the round, so the seeding key does not
+        // appear in a room in the very second a play's key left it.
+        announceAt: w.owner === SEED ? now + this.jitter(PRESENCE_EVERY_S) : now,
       });
     }
     this.subscribe(relays, now);
@@ -513,7 +553,10 @@ export class NfxMeshSignaler {
         },
         () => {
           // Deaf on this relay until it is subscribed again: no presence goes there meanwhile.
-          if (!live || sub.dead) return;
+          // The pool has closed it already, so it is never closed from here again (a second
+          // close would be counted against the relay's connection, which other parts share).
+          if (!live) return;
+          live = false;
           const t = this.d.now();
           sub.dead = true;
           sub.failures = t - sub.at >= SUB_STABLE_S ? 1 : sub.failures + 1;
@@ -521,6 +564,7 @@ export class NfxMeshSignaler {
         },
       );
       sub.off = () => {
+        if (!live) return;
         live = false;
         off();
       };
@@ -528,7 +572,7 @@ export class NfxMeshSignaler {
   }
 
   /** Leave a room: its connections and negotiations end, and a `disconnect` goes out. */
-  private leave(r: Room): void {
+  private leave(r: Room, tell: boolean): void {
     if (this.rooms.get(r.room.key) !== r) return;
     this.rooms.delete(r.room.key);
     for (const n of r.negotiations.values()) {
@@ -538,7 +582,7 @@ export class NfxMeshSignaler {
     for (const c of r.connected.values()) this.hangup(c.peer);
     for (const [peer, at] of [...this.peers]) if (at.room === r.room.key) this.peers.delete(peer);
     // Only where a `connect` went: a room never announced has nobody to tell.
-    if (!Number.isFinite(r.announcedAt)) return;
+    if (!tell || !Number.isFinite(r.announcedAt)) return;
     const relays = this.d.relays();
     const to = relays.length > 0 ? relays : this.relaysUsed;
     const now = this.d.now();
@@ -611,9 +655,11 @@ export class NfxMeshSignaler {
         r.presence.set(read.from, { createdAt: read.createdAt, expiration });
         if (read.kind === 'connect') this.maybeOffer(r, read.from);
         else {
-          // It left mid-negotiation: that negotiation ended unopened.
+          // It left mid-negotiation: that negotiation ended unopened. (A `disconnect` from
+          // before its own offer is its earlier session ending, not this one.)
           const n = r.negotiations.get(read.from);
-          if (n !== undefined) this.fail(r, read.from, n, true);
+          if (n !== undefined && (n.own || read.createdAt >= n.offerAt))
+            this.fail(r, read.from, n, true);
         }
         return;
       }
@@ -657,19 +703,26 @@ export class NfxMeshSignaler {
     return c;
   }
 
-  /** Whether a worker call of this direction may be made for `r` now; takes its tokens. */
+  /** Whether a worker call of this direction may be made for `r` now; takes its token. */
   private mayCall(r: Room, own: boolean, now: number): boolean {
     if (r.negotiations.size + r.zombies.size >= MAX_NEGOTIATIONS) return false;
-    let all = 0;
-    for (const x of this.rooms.values()) all += this.pending(x, own);
-    if (all >= MAX_UNOPENED) return false;
-    const [room, total] = own ? [r.offers, this.offers] : [r.answers, this.answers];
-    refill(room, now, ROOM_CALL_BURST, ROOM_CALL_REFILL_S);
-    refill(total, now, CALL_BURST, CALL_REFILL_S);
-    if (room.tokens < 1 || total.tokens < 1) return false;
-    room.tokens -= 1;
-    total.tokens -= 1;
+    // Every room may always have one negotiation of each direction; the rest share a budget.
+    if (this.pending(r, own) > 0) {
+      let extra = 0;
+      for (const x of this.rooms.values()) extra += Math.max(0, this.pending(x, own) - 1);
+      if (extra >= MAX_UNOPENED) return false;
+    }
+    const bucket = own ? r.offers : r.answers;
+    refill(bucket, now, ROOM_CALL_BURST, ROOM_CALL_REFILL_S);
+    if (bucket.tokens < 1) return false;
+    bucket.tokens -= 1;
     return true;
+  }
+
+  /** A whole number in [0, `below`), at random. */
+  private jitter(below: number): number {
+    const x = this.d.random?.() ?? randomInt(0, 1 << 30) / (1 << 30);
+    return Math.min(below - 1, Math.max(0, Math.floor(x * below)));
   }
 
   private begin(own: boolean, now: number, offerAt: number): Negotiation {
@@ -715,10 +768,12 @@ export class NfxMeshSignaler {
         n.offerId = event.id;
         n.at = at;
         n.offerAt = at;
-        if ((await this.d.publish(relays, event)) === 0) this.fail(r, to, n, true);
+        const accepted = await this.d.publish(relays, event);
+        // No relay took it, and no answer has come by another way meanwhile.
+        if (accepted === 0 && n.state === 'offered') this.fail(r, to, n, true);
       } catch {
         // The SDP could not be signaled, or publishing threw.
-        this.fail(r, to, n, true);
+        if (n.state === 'starting' || n.state === 'offered') this.fail(r, to, n, true);
       }
     })();
   }
@@ -731,8 +786,10 @@ export class NfxMeshSignaler {
     const back = r.backoff.get(from);
     if (back !== undefined && back.inUntil > now) return;
     const old = r.connected.get(from);
-    // Only a newer offer replaces a connection: a replayed one must not tear it down.
+    // Only a newer offer replaces a connection or starts one: a replayed one does neither.
     if (old !== undefined && offerAt <= old.offerAt) return;
+    const last = r.answered.get(from);
+    if (last !== undefined && offerAt <= last) return;
     const pending = r.negotiations.get(from);
     // One negotiation per peer. Glare (§6.6): with our own offer to them pending, the lower
     // key's offer stands.
@@ -745,6 +802,7 @@ export class NfxMeshSignaler {
     if (pending !== undefined) this.drop(r, from, pending, true);
     const n = this.begin(false, now, offerAt);
     r.negotiations.set(from, n);
+    remember(r.answered, from, offerAt);
     // A peer that connects again replaces its old connection.
     if (old !== undefined) {
       r.connected.delete(from);
@@ -806,10 +864,11 @@ export class NfxMeshSignaler {
     n.cancelled = true;
     if (r.negotiations.get(from) === n) r.negotiations.delete(from);
     const until = this.d.now() + BACKOFF_S;
+    const back = r.backoff.get(from);
     remember(r.backoff, from, {
-      failures: r.backoff.get(from)?.failures ?? 0,
-      until,
-      inUntil: until,
+      failures: back?.failures ?? 0,
+      until: Math.max(until, back?.until ?? 0),
+      inUntil: Math.max(until, back?.inUntil ?? 0),
     });
     return false;
   }
