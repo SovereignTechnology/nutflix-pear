@@ -323,7 +323,7 @@ export class NfxMeshSignaler {
     }
     const n = r.negotiations.get(at.from);
     if (e.open) {
-      if (n === undefined || n.peer !== e.peer) return;
+      if (n?.peer !== e.peer) return;
       r.negotiations.delete(at.from);
       n.cancelled = true;
       r.connected.set(at.from, { peer: e.peer, offerAt: n.offerAt });
@@ -332,7 +332,7 @@ export class NfxMeshSignaler {
     }
     this.peers.delete(e.peer);
     if (r.connected.get(at.from)?.peer === e.peer) r.connected.delete(at.from);
-    if (n !== undefined && n.peer === e.peer) this.fail(r, at.from, n, false);
+    if (n?.peer === e.peer) this.fail(r, at.from, n, false);
   }
 
   /**
@@ -777,8 +777,7 @@ export class NfxMeshSignaler {
   private onAnswer(r: Room, from: string, offerId: string, sdp: string): void {
     const n = r.negotiations.get(from);
     // Only the answer that names our pending offer.
-    if (n === undefined || n.state !== 'offered' || n.peer === null || n.offerId !== offerId)
-      return;
+    if (n?.state !== 'offered' || n.peer === null || n.offerId !== offerId) return;
     if (sdp.length > MAX_NFX_SDP) {
       this.fail(r, from, n, true);
       return;
