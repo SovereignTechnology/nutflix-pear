@@ -308,7 +308,9 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
     const conf = (await readFile(STRFRY_CONF, 'utf8'))
       .replace(/^db = "\.\/strfry-db\/"$/m, `db = "${join(work, 'strfry-db')}/"`)
       .replace(/^(\s*)port = 7777$/m, `$1port = ${String(s)}`)
-      .replace(/^(\s*)bind = "0\.0\.0\.0"$/m, '$1bind = "127.0.0.1"');
+      .replace(/^(\s*)bind = "0\.0\.0\.0"$/m, '$1bind = "127.0.0.1"')
+      // As the CI user, not root: leave the open-files limit as it is (0 = do not set it).
+      .replace(/^(\s*)nofiles = [0-9]+$/m, '$1nofiles = 0');
     if (!conf.includes(`port = ${String(s)}`) || !conf.includes(join(work, 'strfry-db')))
       throw new Error('strfry.conf: db or port not found');
     await writeFile(join(work, 'strfry.conf'), conf);
