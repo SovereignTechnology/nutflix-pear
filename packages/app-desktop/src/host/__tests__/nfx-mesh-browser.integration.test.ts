@@ -60,7 +60,7 @@ import type { DevTestnet } from '../../worker/dev/fixtures-net.js';
 import { startDevTestnet } from '../../worker/dev/fixtures-net.js';
 import { LoopbackPayHub } from '../../worker/dev/loopback-pay.js';
 import { encodeCtl } from '../../worker/iroh/frames.js';
-import type { HelperChild, HelperSpawn } from '../../worker/iroh/helper.js';
+import type { HelperSpawn } from '../../worker/iroh/helper.js';
 import { packageUploadForNfx } from '../../worker/studio/nfx.js';
 import type { WorkerClient } from '../../worker/__tests__/helpers/harness.js';
 import {
@@ -152,7 +152,7 @@ const loopbackHelperSpawn: HelperSpawn = (file, args) => {
     },
     stdout: child.stdout,
     stderr: child.stderr,
-    on: child.on.bind(child) as HelperChild['on'],
+    on: child.on.bind(child),
     kill: (signal?: 'SIGKILL' | 'SIGTERM'): unknown => child.kill(signal),
   };
 };
@@ -237,10 +237,6 @@ interface PageState {
   rejected: unknown[];
 }
 
-interface PageWindow {
-  __t?: { st: { errors: string[]; playing: boolean }; state(): PageState };
-}
-
 // ---- the suite --------------------------------------------------------------------------------
 
 describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over strfry only', () => {
@@ -320,7 +316,7 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
     await listening(s, 30_000, 'strfry');
     signal = `ws://127.0.0.1:${String(s)}` as RelayUrl;
     // Everything it delivers from now on, whatever its kind.
-    const off = pool.subscribe([signal], [{ since: nowS() } as NostrFilter], {
+    const off = pool.subscribe([signal], [{ since: nowS() }], {
       onevent: (raw) => {
         const ev = nostr.verifyIncoming(raw);
         if (ev !== null) carried.push(ev);
@@ -709,18 +705,10 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
       level: '0',
     });
     await page.goto(`${pages}/?${q.toString()}`);
-    const view = (): Promise<PageState> =>
-      page.evaluate(() => {
-        const t = (window as unknown as PageWindow).__t;
-        if (t === undefined) throw new Error('the page has not started');
-        return t.state();
-      });
+    // Page-side code goes over as text: this package is not compiled against the DOM.
+    const view = (): Promise<PageState> => page.evaluate<PageState>('window.__t.state()');
     await page.waitForFunction(
-      () => {
-        const t = (window as unknown as PageWindow).__t;
-        const v = document.getElementById('v') as HTMLVideoElement;
-        return t !== undefined && (t.st.errors.length > 0 || (t.st.playing && v.currentTime > 3));
-      },
+      "window.__t !== undefined && (window.__t.st.errors.length > 0 || (window.__t.st.playing && document.getElementById('v').currentTime > 3))",
       null,
       { timeout: 120_000 },
     );
@@ -737,12 +725,8 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
     const t0 = before.t;
     expect(t0, 'enough of the clip is left').toBeLessThan(CLIP_SECONDS - 20);
     await page.waitForFunction(
-      (from: number) => {
-        const t = (window as unknown as PageWindow).__t;
-        const v = document.getElementById('v') as HTMLVideoElement;
-        return t === undefined || t.st.errors.length > 0 || v.currentTime > from + 15;
-      },
-      t0,
+      `window.__t.st.errors.length > 0 || document.getElementById('v').currentTime > ${String(t0 + 15)}`,
+      null,
       { timeout: 180_000 },
     );
     const seeded = await view();
@@ -830,7 +814,7 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
       types.add(e.tags.find((t) => t[0] === 't')?.[1] ?? '');
     }
     expect([...types].sort()).toEqual(['answer', 'connect', 'disconnect', 'offer']);
-    const signers = new Set(carried.map((e) => e.pubkey));
+    const signers = new Set<string>(carried.map((e) => e.pubkey));
     expect(signers.has(seedKey), 'the seeding session announced').toBe(true);
     expect(signers.has(playKey), 'the play session announced').toBe(true);
     expect(signers.has(user.pubkey), 'the user’s key never signs signaling').toBe(false);
