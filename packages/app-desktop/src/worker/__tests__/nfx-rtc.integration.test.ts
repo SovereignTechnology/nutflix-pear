@@ -136,6 +136,13 @@ describe.skipIf(HELPER === '' && !IN_CI)('#89: the WebRTC side, worker to worker
       );
       await fetcher.close();
       await seeding.close();
+      // A helper that goes away says so once, so the host forgets the ids it gave.
+      let resets = 0;
+      server.onReset(() => {
+        resets += 1;
+      });
+      await server.close();
+      expect(resets).toBe(1);
     } finally {
       for (const n of nodes) await n.close();
       await tmp.rm();

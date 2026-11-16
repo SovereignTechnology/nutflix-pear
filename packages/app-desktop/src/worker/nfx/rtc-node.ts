@@ -100,6 +100,7 @@ export class NfxRtcNode {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly generationListeners = new Set<() => void>();
   private readonly peerListeners = new Set<(e: NfxRtcPeerEvent) => void>();
+  private readonly resetListeners = new Set<() => void>();
   private readonly table = new Map<number, NfxRtcConnection>();
   generation = 0;
 
@@ -122,6 +123,16 @@ export class NfxRtcNode {
   onPeer(cb: (e: NfxRtcPeerEvent) => void): () => void {
     this.peerListeners.add(cb);
     return () => this.peerListeners.delete(cb);
+  }
+
+  /**
+   * `cb` whenever a helper went away (it exited, or was stopped or replaced), after the `closed`
+   * of each open connection: its half-made connections are gone too, and its connection ids
+   * mean nothing to the next helper. Returns the unsubscribe.
+   */
+  onReset(cb: () => void): () => void {
+    this.resetListeners.add(cb);
+    return () => this.resetListeners.delete(cb);
   }
 
   /** Turn WebRTC on with `config`, or off (`null`). A change of config restarts the helper. */
@@ -290,6 +301,13 @@ export class NfxRtcNode {
     const gone = [...this.table.values()];
     this.table.clear();
     for (const c of gone) this.emit({ t: 'closed', peer: c.peer, swarm: c.swarm, dir: c.dir });
+    for (const cb of [...this.resetListeners]) {
+      try {
+        cb();
+      } catch {
+        // a listener's failure is its own
+      }
+    }
   }
 
   private emit(e: NfxRtcPeerEvent): void {

@@ -282,8 +282,15 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
           });
     this.mesh = new NfxMeshSignaler({
       relays: () => this.meshRelays(),
-      subscribe: (relays, filter, onEvent) =>
-        this.o.pool.subscribe(relays, [filter], { onevent: onEvent }),
+      // One relay per subscription: the pool drops an event id it has seen before it verifies,
+      // so across relays one relay's forgery would hide the real event (NFX-10 §6.5).
+      subscribe: (relay, filter, onEvent, onClose) =>
+        this.o.pool.subscribe([relay], [filter], {
+          onevent: onEvent,
+          onclose: () => {
+            onClose();
+          },
+        }),
       publish: async (relays, event) =>
         (await this.o.pool.publish(relays, event)).filter((r) => r.ok).length,
       rtc: {
@@ -1377,6 +1384,9 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       case 'nfx.rtc.peer':
         this.mesh.onPeer(ev);
         return;
+      case 'nfx.rtc.reset':
+        this.mesh.reset();
+        return;
       case 'ready':
       case 'log':
         return;
@@ -1385,7 +1395,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   /** The worker died: its sessions died with it (links revoked, nothing asked of it). */
   onWorkerDown(): void {
-    this.mesh.onWorkerDown();
+    this.mesh.reset();
     this.sessions.dropAll();
     // Slice 5d: the worker's NFX sessions died with it; revoke their links.
     for (const s of [...this.nfxSessions.values()]) void this.endNfxSession(s, false);

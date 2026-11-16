@@ -628,6 +628,7 @@ export const validateWorkerEvent: {
     dir: oneOf(['in', 'out'] as const),
     open: bool,
   }),
+  'nfx.rtc.reset': ev('nfx.rtc.reset', {}),
   log: ev('log', {
     level: oneOf(['debug', 'info', 'warn', 'error'] as const),
     msg: text(0, LIMITS.maxString, { multiline: true }),
