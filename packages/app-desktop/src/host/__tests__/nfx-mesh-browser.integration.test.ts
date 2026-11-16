@@ -487,9 +487,11 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
    */
   async function gate(
     port: number,
-  ): Promise<{ url: string; block: () => void; refused: () => number }> {
+  ): Promise<{ url: string; block: () => void; refused: () => number; segments: () => number }> {
     let blocked = false;
     let refused = 0;
+    /** Segments the origin served before it was blocked. */
+    let segments = 0;
     // The page is another origin (another port): the gate answers CORS itself, whatever nfxd does.
     const cors = { 'access-control-allow-origin': '*' };
     const server = createServer((req, res) => {
@@ -507,6 +509,7 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
         res.writeHead(503, { ...cors, 'cache-control': 'no-store' }).end();
         return;
       }
+      if (path.endsWith('.m4s')) segments += 1;
       const method = req.method === 'HEAD' ? 'HEAD' : 'GET';
       const range = req.headers.range;
       const up = httpRequest(
@@ -532,6 +535,7 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
         blocked = true;
       },
       refused: () => refused,
+      segments: () => segments,
     };
   }
 
@@ -736,7 +740,9 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
     const detail = `page: ${JSON.stringify(seeded)}\nthe worker said:\n${logs(w1)}`;
     expect(seeded.errors, detail).toEqual([]);
     expect(seeded.t, `playback went on without the origin\n${detail}`).toBeGreaterThan(t0 + 15);
-    expect(g.refused(), 'the origin refused segments').toBeGreaterThan(0);
+    // The gate is on the segments' path (it served some before it closed), so closing it took
+    // the origin away. Once connected, the player may never ask it again: no refusal is required.
+    expect(g.segments(), 'the origin served segments before it closed').toBeGreaterThan(0);
     expect(
       seeded.mesh?.bytes.p2p ?? 0,
       `segment bytes came over WebRTC\n${detail}`,
