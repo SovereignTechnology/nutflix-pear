@@ -575,6 +575,12 @@ export type WorkerEvent =
       readonly dir: 'in' | 'out';
       readonly open: boolean;
     }
+  /**
+   * #89: the WebRTC helper went away (it exited, or was stopped or replaced): every connection
+   * and every offer or answer in the making went with it, and the next helper numbers its
+   * connections from the start again. The host forgets every `peer` id it holds.
+   */
+  | { readonly op: 'ev'; readonly e: 'nfx.rtc.reset' }
   /** Already redacted by the worker's logger. */
   | { readonly op: 'ev'; readonly e: 'log'; readonly level: WorkerLogLevel; readonly msg: string };
 export type WorkerEventName = WorkerEvent['e'];

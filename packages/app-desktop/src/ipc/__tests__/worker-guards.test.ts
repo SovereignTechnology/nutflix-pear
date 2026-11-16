@@ -425,6 +425,7 @@ const EVENTS: { readonly [E in WorkerEventName]: readonly Extract<WorkerEvent, {
     { op: 'ev', e: 'nfx.rtc.peer', peer: 1, swarm: RTC_SWARM, dir: 'in', open: true },
     { op: 'ev', e: 'nfx.rtc.peer', peer: 9, swarm: RTC_SWARM, dir: 'out', open: false },
   ],
+  'nfx.rtc.reset': [{ op: 'ev', e: 'nfx.rtc.reset' }],
   log: [{ op: 'ev', e: 'log', level: 'warn', msg: 'peer banned' }],
 };
 
@@ -1109,5 +1110,8 @@ describe('#89: the WebRTC side (nfx.configure rtc, nfx.rtc.*)', () => {
       { ...ok, sdp: 'v=0' },
     ])
       expect(peer(bad), JSON.stringify(bad)).toBe(false);
+    const reset = validateWorkerEvent['nfx.rtc.reset'];
+    expect(reset({ op: 'ev', e: 'nfx.rtc.reset' })).toBe(true);
+    expect(reset({ op: 'ev', e: 'nfx.rtc.reset', peer: 1 })).toBe(false);
   });
 });

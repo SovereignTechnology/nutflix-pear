@@ -1318,6 +1318,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
         return;
       // #89: the mesh signaler's (the next step); nothing listens yet.
       case 'nfx.rtc.peer':
+      case 'nfx.rtc.reset':
       case 'ready':
       case 'log':
         return;

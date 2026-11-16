@@ -478,6 +478,9 @@ export class WorkerHost {
           open: e.t === 'open',
         });
       });
+      this.nfxRtc.onReset(() => {
+        this.o.emit({ op: 'ev', e: 'nfx.rtc.reset' });
+      });
       this.nfxRtcWire = a.nfx?.rtc ?? null;
       await this.nfxRtc.set(this.rtcConfig());
     }
