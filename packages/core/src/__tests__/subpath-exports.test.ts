@@ -96,11 +96,14 @@ describe('core entry points (ADR 0022)', () => {
       // No cashu code at all (M3 moved the one curve-point check in NFX manifests to @noble/curves).
       expect(packages.has('@cashu/cashu-ts')).toBe(false);
       // No sodium (M4): a page would get sodium-javascript. SHA-256 is @noble/hashes' (nfx/util.ts)
-      // and the NFX-12 bind check @noble/curves' Ed25519 (nfx/beacon.ts).
+      // and the NFX-12 bind check @noble/curves' Ed25519 (nfx/beacon.ts). NFX-10 §6 signaling
+      // (nfx/mesh-signal.ts) takes BIP-340 from the same library, the curve nostr-tools already
+      // brings to a page: a room's public key, and the check of a room proof. It signs nothing.
       expect([...packages.keys()].filter((p) => p.includes('sodium'))).toEqual([]);
       const curves = [...(packages.get('@noble/curves') ?? [])].sort();
+      const CURVE_USERS = ['nfx/manifest.ts', 'nfx/beacon.ts', 'nfx/mesh-signal.ts'];
       expect(
-        curves.every((f) => f === 'nfx/manifest.ts' || f === 'nfx/beacon.ts'),
+        curves.every((f) => CURVE_USERS.includes(f)),
         curves.join(', '),
       ).toBe(true);
       const hashes = [...(packages.get('@noble/hashes') ?? [])];
