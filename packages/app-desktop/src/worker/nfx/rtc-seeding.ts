@@ -100,6 +100,11 @@ export class NfxRtcSeeding {
     return this.served.get(video)?.swarms ?? [];
   }
 
+  /** Every swarm served now. */
+  allSwarms(): string[] {
+    return [...this.served.values()].flatMap((s) => s.swarms);
+  }
+
   /** Serve (`on`) or stop serving. Never throws; serving goes on in the background. */
   set(on: boolean): Promise<void> {
     this.on = on && !this.closed;

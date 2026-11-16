@@ -355,6 +355,7 @@ describe('NfxRtcSeeding (#89)', () => {
       { swarm: addr(v).webStreamSwarmId('720p'), segments: want, append: false },
     ]);
     expect(s.videos).toBe(1);
+    expect(s.allSwarms()).toEqual(s.swarms(v.video));
     expect(s.swarms(v.video)).toEqual([
       addr(v).webStreamSwarmId('360p'),
       addr(v).webStreamSwarmId('720p'),
