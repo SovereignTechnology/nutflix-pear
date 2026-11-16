@@ -847,6 +847,28 @@ describe('NfxMeshSignaler rooms, keys and relays', () => {
     s.stop();
   });
 
+  it('when one of two plays of a video ends, the other’s key does not appear in the same second', async () => {
+    const w = world();
+    const { s } = signalerIn(w, 'me');
+    s.play('one', SWARM);
+    s.play('two', SWARM);
+    s.start();
+    await settle();
+    const first = s.keyIn(SWARM)!;
+    w.random = 0.5;
+    s.unplay('one');
+    await settle();
+    const second = s.keyIn(SWARM)!;
+    expect(second).not.toBe(first);
+    expect(sent(w, 'disconnect').map((e) => e.pubkey)).toEqual([first]);
+    s.tick();
+    expect(sent(w, 'connect', second)).toEqual([]);
+    w.now += PRESENCE_EVERY_S / 2;
+    s.tick();
+    expect(sent(w, 'connect', second)).toHaveLength(1);
+    s.stop();
+  });
+
   it('rooms keep their own beat, are spread again after a stall, and at stop only one key speaks', async () => {
     const w = world();
     const { s, rtc } = signalerIn(w, 'me');

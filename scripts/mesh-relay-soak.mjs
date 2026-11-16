@@ -24,11 +24,13 @@ import WebSocket from 'ws';
 
 const args = process.argv.slice(2);
 let minutes = 10;
-const relays = [];
+const named = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--minutes') minutes = Number(args[++i]);
-  else relays.push(args[i]);
+  else named.push(args[i]);
 }
+// A relay named twice is one relay: two passes of it are not a pair.
+const relays = [...new Set(named.map((r) => r.replace(/\/+$/, '')))];
 if (relays.length === 0 || !(minutes > 0) || relays.some((r) => !/^wss?:\/\//.test(r))) {
   process.stderr.write('usage: mesh-relay-soak.mjs [--minutes N] wss://relay …\n');
   process.exit(2);
