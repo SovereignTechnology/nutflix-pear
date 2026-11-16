@@ -69,7 +69,12 @@ export type NfxRtcPeerEvent =
       readonly swarm: string;
       readonly dir: 'in' | 'out';
     }
-  | { readonly t: 'closed'; readonly peer: number; readonly swarm: string };
+  | {
+      readonly t: 'closed';
+      readonly peer: number;
+      readonly swarm: string;
+      readonly dir: 'in' | 'out';
+    };
 
 function sameConfig(a: NfxRtcConfig | null, b: NfxRtcConfig | null): boolean {
   if (a === null || b === null) return a === b;
@@ -95,6 +100,7 @@ export class NfxRtcNode {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly generationListeners = new Set<() => void>();
   private readonly peerListeners = new Set<(e: NfxRtcPeerEvent) => void>();
+  private readonly resetListeners = new Set<() => void>();
   private readonly table = new Map<number, NfxRtcConnection>();
   generation = 0;
 
@@ -117,6 +123,16 @@ export class NfxRtcNode {
   onPeer(cb: (e: NfxRtcPeerEvent) => void): () => void {
     this.peerListeners.add(cb);
     return () => this.peerListeners.delete(cb);
+  }
+
+  /**
+   * `cb` whenever a helper went away (it exited, or was stopped or replaced), after the `closed`
+   * of each open connection: its half-made connections are gone too, and its connection ids
+   * mean nothing to the next helper. Returns the unsubscribe.
+   */
+  onReset(cb: () => void): () => void {
+    this.resetListeners.add(cb);
+    return () => this.resetListeners.delete(cb);
   }
 
   /** Turn WebRTC on with `config`, or off (`null`). A change of config restarts the helper. */
@@ -257,7 +273,7 @@ export class NfxRtcNode {
         const c = this.table.get(e.peer);
         if (c === undefined) return;
         this.table.delete(e.peer);
-        this.emit({ t: 'closed', peer: e.peer, swarm: c.swarm });
+        this.emit({ t: 'closed', peer: e.peer, swarm: c.swarm, dir: c.dir });
         return;
       }
     }
@@ -270,7 +286,7 @@ export class NfxRtcNode {
     for (const [peer, c] of [...this.table]) {
       if (open.has(peer)) continue;
       this.table.delete(peer);
-      this.emit({ t: 'closed', peer, swarm: c.swarm });
+      this.emit({ t: 'closed', peer, swarm: c.swarm, dir: c.dir });
     }
     for (const p of live) {
       if (!p.open || this.table.size >= MAX_TABLE) continue;
@@ -284,7 +300,14 @@ export class NfxRtcNode {
   private clearTable(): void {
     const gone = [...this.table.values()];
     this.table.clear();
-    for (const c of gone) this.emit({ t: 'closed', peer: c.peer, swarm: c.swarm });
+    for (const c of gone) this.emit({ t: 'closed', peer: c.peer, swarm: c.swarm, dir: c.dir });
+    for (const cb of [...this.resetListeners]) {
+      try {
+        cb();
+      } catch {
+        // a listener's failure is its own
+      }
+    }
   }
 
   private emit(e: NfxRtcPeerEvent): void {
