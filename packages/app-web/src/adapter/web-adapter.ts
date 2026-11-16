@@ -68,7 +68,12 @@ import {
 import { WebAdapterError, fail, unsupported } from '../errors.js';
 import { canonicalNfxAddress } from './address.js';
 import type { NfxPlayerLib } from '../nfx-lib.js';
-import { WEB_FALLBACK_ORIGIN, WEB_ICE_SERVERS, WEB_NFX_NETWORK } from '../settings/defaults.js';
+import {
+  WEB_FALLBACK_ORIGIN,
+  WEB_ICE_SERVERS,
+  WEB_MESH_RELAYS,
+  WEB_NFX_NETWORK,
+} from '../settings/defaults.js';
 import type { WebSettingsStore } from '../settings/store.js';
 import { beaconEndpoints, playEndpoints } from './endpoints.js';
 import type { FetchFn } from './http.js';
@@ -323,11 +328,8 @@ export class WebNetworkAdapter implements NetworkAdapter {
     );
     const found = beaconEndpoints(video, events, now());
     if (found.seeders === 0) fail('no-seeders', 'nobody seeding this NFX video is online');
-    const { origins, trackers } = playEndpoints(
-      found,
-      this.#settings().nfx?.trackers ?? [],
-      WEB_FALLBACK_ORIGIN,
-    );
+    // Trackers are not asked for any more (signaling is over Nostr, pear #89): only the origins.
+    const { origins } = playEndpoints(found, [], WEB_FALLBACK_ORIGIN);
     // Pear #97: when the seeders hold different renditions, the player may play only those
     // someone this page can reach holds, the most-held first (and a rendition the viewer picked
     // first, when it is one of them); each origin is asked only for what it serves.
@@ -343,7 +345,7 @@ export class WebNetworkAdapter implements NetworkAdapter {
       origins,
       renditions:
         allowed === undefined || rendition === undefined ? allowed : preferring(allowed, rendition),
-      trackers,
+      meshRelays: this.#settings().nfx?.meshRelays ?? WEB_MESH_RELAYS,
       iceServers: WEB_ICE_SERVERS,
       pin: rendition,
       player: () => this.#playerReady(),

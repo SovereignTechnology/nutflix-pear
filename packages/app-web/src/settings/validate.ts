@@ -17,7 +17,7 @@
  */
 import type { NfxSettings, RelayConfig, RelayUrl, Settings, TrackerUrl } from '@sovit/core';
 
-import { WEB_MAX_TRACKERS, WEB_NFX_NETWORK } from './defaults.js';
+import { WEB_MAX_MESH_RELAYS, WEB_NFX_NETWORK } from './defaults.js';
 
 type Guard<T> = (x: unknown) => x is T;
 
@@ -128,7 +128,8 @@ const isWebNfx = obj<NfxSettings>(
     network: (x): x is string => x === WEB_NFX_NETWORK,
     scopedRelays: unique(arrayOf(isScopedRelayUrl, MAX_SCOPED_RELAYS)),
   },
-  { trackers: unique(arrayOf(isTrackerUrl, WEB_MAX_TRACKERS)) },
+  // Contracts v18: the signaling relays (absent: the default pair; empty: no mesh).
+  { meshRelays: unique(arrayOf(isScopedRelayUrl, WEB_MAX_MESH_RELAYS)) },
 );
 
 /** The fields a viewer sets on the web; every other `Settings` field is fixed in v1. */

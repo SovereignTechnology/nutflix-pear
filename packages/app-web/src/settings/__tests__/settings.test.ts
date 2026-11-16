@@ -13,7 +13,6 @@ import {
   DEFAULT_WEB_SETTINGS,
   WEB_ICE_SERVERS,
   WEB_SCOPED_RELAY,
-  WEB_TRACKER,
 } from '../defaults.js';
 import {
   MAX_STORED_SETTINGS,
@@ -64,7 +63,7 @@ function caught(fn: () => unknown): WebAdapterError {
 }
 
 describe('defaults (ADR 0022 items 4 to 6)', () => {
-  it("ADR 0009's four read relays, NFX on with relay.nutflix.xyz and the web's tracker, our STUN", () => {
+  it("ADR 0009's four read relays, NFX on with relay.nutflix.xyz and two signaling relays, our STUN", () => {
     expect(DEFAULT_WEB_SETTINGS.relays.map((r) => r.url)).toEqual([
       'wss://relay.damus.io',
       'wss://nos.lol',
@@ -75,7 +74,8 @@ describe('defaults (ADR 0022 items 4 to 6)', () => {
       enabled: true,
       network: 'nfx:testnet:1',
       scopedRelays: ['wss://relay.nutflix.xyz'],
-      trackers: ['wss://web.nutflix.xyz/tracker'],
+      // Pear #89: the pair the desktop app defaults to as well, so the two meet. No tracker.
+      meshRelays: ['wss://relay.primal.net', 'wss://relay.ditto.pub'],
     });
     expect(DEFAULT_WEB_SETTINGS.nfx?.irohRelays).toBeUndefined();
     expect(WEB_ICE_SERVERS).toEqual([{ urls: ['stun:web.nutflix.xyz:3478'] }]);
@@ -99,17 +99,17 @@ describe('isWebSettingsPatch', () => {
     ['hover preview', { hoverPreview: false }],
     ['loadRemoteImages off', { loadRemoteImages: false }],
     [
-      'NFX without trackers',
+      'NFX without a list of signaling relays (the default pair is used)',
       { nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } },
     ],
     [
-      'NFX with a local relay and a local tracker',
+      'NFX with a local relay and a local signaling relay',
       {
         nfx: {
           enabled: true,
           network: 'nfx:testnet:1',
           scopedRelays: ['ws://127.0.0.1:7777'],
-          trackers: ['ws://localhost:8000/announce', WEB_TRACKER],
+          meshRelays: ['ws://127.0.0.1:7778', 'wss://relay.primal.net'],
         },
       },
     ],
@@ -163,19 +163,25 @@ describe('isWebSettingsPatch', () => {
       },
     ],
     [
-      'five trackers',
+      'nine signaling relays',
       {
         nfx: {
           ...nfx,
-          trackers: Array.from({ length: 5 }, (_, i) => `wss://t${String(i)}.example`),
+          meshRelays: Array.from({ length: 9 }, (_, i) => `wss://s${String(i)}.example`),
         },
       },
     ],
-    ['a duplicate tracker', { nfx: { ...nfx, trackers: [WEB_TRACKER, WEB_TRACKER] } }],
-    ['a ws tracker off this computer', { nfx: { ...nfx, trackers: ['ws://tracker.example/a'] } }],
-    ['a tracker with a query', { nfx: { ...nfx, trackers: ['wss://tracker.example/a?x=1'] } }],
-    ['an upper-case tracker', { nfx: { ...nfx, trackers: ['wss://Tracker.example/a'] } }],
-    ['a tracker with a bare /', { nfx: { ...nfx, trackers: ['wss://tracker.example/'] } }],
+    [
+      'a duplicate signaling relay',
+      { nfx: { ...nfx, meshRelays: ['wss://relay.primal.net', 'wss://relay.primal.net'] } },
+    ],
+    [
+      'a ws signaling relay off this computer',
+      { nfx: { ...nfx, meshRelays: ['ws://relay.example'] } },
+    ],
+    ['a signaling relay with a bare /', { nfx: { ...nfx, meshRelays: ['wss://relay.example/'] } }],
+    // Pear #89: trackers are gone from the web's settings.
+    ['a list of trackers', { nfx: { ...nfx, trackers: ['wss://web.nutflix.xyz/tracker'] } }],
   ])('refuses %s', (_name, patch) => {
     expect(isWebSettingsPatch(patch)).toBe(false);
   });
@@ -250,6 +256,32 @@ describe('parseStoredWebSettings: unreadable means defaults', () => {
     expect(s).toEqual({ ...DEFAULT_WEB_SETTINGS, theme: 'light', prefetchSeconds: 10 });
     expect(s.defaultMints).toEqual([]);
     expect(s.seeding.enabled).toBe(false);
+  });
+
+  it('pear #89: a stored nfx from before Nostr signaling loses its trackers, keeps the rest, and gets the default signaling relays', () => {
+    const s = parseStoredWebSettings(
+      stored({
+        nfx: {
+          enabled: true,
+          network: 'nfx:testnet:1',
+          scopedRelays: ['wss://mine.example'],
+          trackers: ['wss://web.nutflix.xyz/tracker'],
+        },
+      }),
+    );
+    expect(s.nfx).toEqual({
+      enabled: true,
+      network: 'nfx:testnet:1',
+      scopedRelays: ['wss://mine.example'],
+      meshRelays: ['wss://relay.primal.net', 'wss://relay.ditto.pub'],
+    });
+    // A list the viewer saved, an empty one included, is kept as it is.
+    for (const meshRelays of [[], ['wss://signal.example']]) {
+      const kept = parseStoredWebSettings(
+        stored({ nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [], meshRelays } }),
+      );
+      expect(kept.nfx?.meshRelays).toEqual(meshRelays);
+    }
   });
 
   it('an nfx that does not check out is replaced by the default one (always on), the rest kept', () => {

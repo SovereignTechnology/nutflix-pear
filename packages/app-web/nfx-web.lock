@@ -31,8 +31,7 @@
 # 6c20bef is nfx #83's merge. Since the last pin (6465cb5, #74: nfxd --stun and the `stun` beacon
 # endpoint):
 #   #75, #80  signaling over Nostr (NFX-10 §6) is available: `open()` takes
-#             `signaling: { kind: 'nostr', relays }`. This site does not use it yet: the deployed
-#             seeder's bridge is tracker-signaled, and Nostr waits for nfxd's mesh endpoint (#71).
+#             `signaling: { kind: 'nostr', relays }`. This site uses it since pear #89.
 #   #76, #77  nfx-package makes one rendition by default, and nfxd may hold only some
 #             (`--seed <a>#360p`, the beacon's `https` endpoint naming its `renditions`).
 #   #83       held renditions: `open()` takes `renditions` (the allowed ids, preferred first) and

@@ -7,17 +7,19 @@
  * host (not web.nutflix.xyz, not the default relays).
  *
  * The page's rules for endpoints are the production ones: beacons may name only `https:` origins
- * and `wss:` trackers on public names, and read relays are `wss:`. So every service sits behind a
+ * on public names, and read and signaling relays are `wss:`. So every service sits behind a
  * TLS front with a `*.e2e.test` name and a throwaway certificate (in the work directory, deleted
  * with it); the browser context ignores certificate errors, as nfx's e2e does.
  *
  *   relay.e2e.test    nfxd A's embedded scoped relay (NIP-50)  strfry.e2e.test  strfry (no NIP-50)
- *   seed.e2e.test     a gate in front of nfxd A's origin       tracker.e2e.test nfxd A's tracker
+ *   seed.e2e.test     a gate in front of nfxd A's origin
  *   liar.e2e.test     a lying proxy in front of nfxd B's origin web.e2e.test     the site
  *   held.e2e.test     a recorder in front of nfxd C's origin
  *
- * nfxd A seeds the lead video (720p and 360p) with `--bridge` (a native WebRTC peer in its
- * tracker's swarms), and its beacons name `https://seed.e2e.test:…` and `wss://tracker.e2e.test:…`.
+ * nfxd A seeds the lead video (720p and 360p) and runs its mesh endpoint (`--mesh-relay`, NFX-10
+ * §6: a native WebRTC peer in the rooms of the renditions it holds), signaling only through
+ * strfry: no tracker and no bridge run (pear #89). Its beacons name `https://seed.e2e.test:…`.
+ * The page's signaling relay is strfry too, by its `wss://strfry.e2e.test` name.
  * nfxd B seeds a second video, its beacons naming only the liar. A third video is published and
  * deleted, a fourth published and seeded by nobody. nfxd C seeds a fifth, made in 720p and 360p,
  * in 360p only (`--seed <a>#360p`, nfx #77): its origin answers 404 for 720p's files, and its
@@ -32,7 +34,8 @@
  *     picker appears once the player knows the renditions, offering them by their hash-list ids
  *     (`720p`, `360p`: the library's `Level.id`).
  *  4. The origin then refuses every segment, and playback goes on 15 s more, past the end of the
- *     last segment the origin served: those bytes came over WebRTC, from the bridge.
+ *     last segment the origin served: those bytes came over WebRTC, from nfxd A's mesh endpoint,
+ *     which the page met over strfry (it sent kind-25050 events there, and spoke to no tracker).
  *  5. Held renditions (pear #97, nfx #83): the fifth video plays past 5 s with nothing refused, as
  *     360p alone (no quality picker), and the page never asks nfxd C's origin for a 720p file
  *     (playlist, init or segment), so it never gets a 404.
@@ -657,12 +660,15 @@ async function offApp(page: Page, site: string, relays: string[], scoped: string
   await settings(page, relays, scoped);
 }
 
+/** The page's signaling relays (NFX-10 §6): strfry's `wss:` name, known once its front is up. */
+const meshRelays: string[] = [];
+
 async function settings(page: Page, relays: string[], scoped: string[]): Promise<void> {
   const value = JSON.stringify({
     v: 1,
     settings: {
       relays: relays.map((url) => ({ url, read: true, write: true })),
-      nfx: { enabled: true, network: NS, scopedRelays: scoped, trackers: [] },
+      nfx: { enabled: true, network: NS, scopedRelays: scoped, meshRelays },
     },
   });
   await page.evaluate(
@@ -720,11 +726,10 @@ async function main(): Promise<void> {
   await waitPort(strfryPort, () => strfry.text());
   const strfryWs = `ws://127.0.0.1:${String(strfryPort)}`;
 
-  // ---- fronts, then nfxd A (the bridge) -------------------------------------------------------
+  // ---- fronts, then nfxd A (the mesh endpoint) -------------------------------------------------
   const relayFront = await tlsFront(tls);
   const strfryFront = await tlsFront(tls);
   const seedFront = await tlsFront(tls);
-  const trackerFront = await tlsFront(tls);
   const liarFront = await tlsFront(tls);
   const heldFront = await tlsFront(tls);
   strfryFront.setUpstream(strfryPort);
@@ -744,27 +749,23 @@ async function main(): Promise<void> {
       '127.0.0.1:0',
       '--origin',
       '127.0.0.1:0',
-      '--embed-tracker',
-      '127.0.0.1:0',
-      '--bridge',
+      // The mesh endpoint signals through strfry alone (nfxd may use `ws:` to this machine).
+      '--mesh-relay',
+      strfryWs,
+      '--mesh-bind',
       '127.0.0.1:0',
       '--https-url',
       `https://seed.e2e.test:${String(seedFront.port)}`,
-      '--tracker-url',
-      `wss://tracker.e2e.test:${String(trackerFront.port)}`,
     ],
     [
       /embedded relay: (ws:\/\/\S+)/,
       /origin: (http:\/\/\S+?)\/?\s/,
-      /embedded tracker: (ws:\/\/\S+)/,
-      /bridge: udp (\S+)/,
+      /mesh: udp \S+, session ([0-9a-f]{64})/,
     ],
   );
   const relayWs = a.matches[0]?.[1] ?? '';
   const originA = (a.matches[1]?.[1] ?? '').replace(/\/$/, '');
-  const trackerWs = a.matches[2]?.[1] ?? '';
   relayFront.setUpstream(Number(new URL(relayWs).port));
-  trackerFront.setUpstream(Number(new URL(trackerWs).port));
   const g = await gate(originA);
   seedFront.setUpstream(g.port);
 
@@ -890,6 +891,7 @@ async function main(): Promise<void> {
   const site = `https://web.e2e.test:${String(sitePort)}`;
   const relay = `wss://relay.e2e.test:${String(relayFront.port)}`;
   const stock = `wss://strfry.e2e.test:${String(strfryFront.port)}`;
+  meshRelays.push(stock);
 
   // ---- the browser ----------------------------------------------------------------------------
   const browser = await chromium.launch({
@@ -983,7 +985,7 @@ async function main(): Promise<void> {
     if (JSON.stringify([...ids].sort()) !== '["360p","720p"]')
       throw new Error(`the quality menu offers ${JSON.stringify(ids)}, not 360p and 720p by id`);
 
-    // 4. The origin refuses every segment from now on; the rest comes from the bridge.
+    // 4. The origin refuses every segment from now on; the rest comes from nfxd A's mesh endpoint.
     const times = segmentTimes(lead);
     g.block();
     const t0 = await videoTime(page);
@@ -996,18 +998,31 @@ async function main(): Promise<void> {
         `the play stopped when the origin went: ${await text(page, '.nf-nfxwatch__problems')}`,
       );
     const t1 = await videoTime(page);
-    results['bridge'] = {
+    // The page signaled over strfry (NFX-10 §6 events of kind 25050), and spoke to no tracker.
+    const signaled = w.frames.filter(
+      (f) =>
+        f.url.startsWith(stock) &&
+        f.payload.startsWith('["EVENT"') &&
+        f.payload.includes('"kind":25050'),
+    ).length;
+    const announces = w.frames.filter((f) => f.payload.includes('"action":"announce"')).length;
+    results['mesh'] = {
       blockedAt: t0,
       playedTo: t1,
       originServedUpTo: servedEnd,
       originRefused: g.refused(),
       unknown,
+      signaled,
+      announces,
     };
+    if (signaled === 0) throw new Error('the page sent no nfx-mesh/1 event to its signaling relay');
+    if (announces > 0)
+      throw new Error(`the page announced to a tracker ${String(announces)} times`);
     if (unknown.length > 0)
       throw new Error(`the origin served segments no playlist lists: ${unknown.join(' ')}`);
     if (!(t1 > servedEnd + 1))
       throw new Error(
-        `played to ${String(t1)} s, but the origin served up to ${String(servedEnd)} s: nothing came from the bridge`,
+        `played to ${String(t1)} s, but the origin served up to ${String(servedEnd)} s: nothing came from the mesh endpoint`,
       );
     if ((await page.locator('.nf-nfxwatch__problems').count()) > 0)
       throw new Error(
@@ -1089,7 +1104,9 @@ async function main(): Promise<void> {
     // 9. Settings: the IP address line, and source.json, whose hashes are the files served.
     await go(page, '#/settings');
     await page
-      .getByText('Trackers and the peers you meet see your IP address.')
+      .getByText('The signaling relays below and the peers you meet see your IP address', {
+        exact: false,
+      })
       .first()
       .waitFor({ timeout: 30_000 });
     const href = await page.locator('.nf-settings__source a').getAttribute('href');

@@ -16,7 +16,8 @@ The desktop app's interface in a browser, working like a Nostr client, for free 
   relays whose NIP-11 document lists it, and matches a plain query in the page elsewhere.
 - **Video over WebRTC.** nfx's web player, as a library pinned by commit and sha256 in
   `nfx-web.lock`, plays a video with hls.js and p2p-media-loader: segments come from other viewers
-  and from bridge seeders, signalled through WebTorrent trackers, with SovTech's own STUN server.
+  and from native peers (nfxd's mesh endpoint, the desktop app), signalled over ordinary Nostr
+  relays (NFX-10 §6, pear #89; no tracker), with SovTech's own STUN server.
   In the first version the hash list, playlists and init segments come over HTTPS, and so do
   segments no peer has.
 - **Checked in WebAssembly.** The manifest's signature, the hash list against the manifest, and
@@ -25,7 +26,7 @@ The desktop app's interface in a browser, working like a Nostr client, for free 
 
 ## What it costs a viewer
 
-The page says so too: relays, trackers, the STUN server, origins and the peers a browser meets all
+The page says so too: relays (the signaling ones as well), the STUN server, origins and the peers a browser meets all
 see the viewer's IP address. A viewer's browser uploads the segments it holds to other viewers of
 the same video. Whoever serves the page can change it; a browser cannot fully protect against that
 (threat T13 in [`SECURITY.md`](../../SECURITY.md)).
@@ -34,9 +35,10 @@ the same video. Whoever serves the page can change it; a browser cannot fully pr
 
 - **`src/adapter/`: the `NetworkAdapter`** (`platform: 'web'`). Feeds, search and the NFX watch page
   go through core's NFX catalogue, with search routed by each relay's NIP-11 document; plays wait
-  for seeders' live beacons (core's beacon watch) and hand nfx's player the origins and trackers
-  they name, checked (`https:` and `wss:` only, no query or user-info, public hosts), then the
-  fallback origin `https://web.nutflix.xyz/o` and the configured trackers, 4 in all. Each origin
+  for seeders' live beacons (core's beacon watch) and hand nfx's player the origins they name,
+  checked (`https:` only, no query or user-info, public hosts), then the fallback origin
+  `https://web.nutflix.xyz/o`, and the signaling relays from Settings (by default
+  `relay.primal.net` and `relay.ditto.pub`, the pair the desktop app uses). Each origin
   goes with the renditions its beacons say it serves, and when the seeders hold different
   renditions the player may play only the held ones, the most-held first (issue #97), so it never
   asks an origin for a file it does not serve. Images load
@@ -85,7 +87,7 @@ built twice from the same commit, at any path, they are the same.
 
 The page's CSP: `default-src 'none'`; scripts, styles and fonts from the page's own origin only,
 plus `'wasm-unsafe-eval'` so that the WASM compiles (never `'unsafe-eval'`); `connect-src 'self'
-https: wss: blob:`, because relays, origins and trackers can be anywhere, and the verified WASM
+https: wss: blob:`, because relays and origins can be anywhere, and the verified WASM
 reaches nfx's `init` as a `blob:` URL; media and images from the page or `blob:`; no frames,
 objects, forms or base URI.
 
@@ -97,8 +99,8 @@ Re-pinning nfx is one line of `nfx-web.lock`: `bash scripts/nfx-lib.sh pin <comm
 - `npm test`: the adapter, settings and shell (jsdom), and the site build's rules
   (`scripts/__tests__`: the lock, the deny list, the tree hash, `source.json`).
 - `e2e/web.e2e.ts`: the built site in headless Chromium under its own headers, against nfxd built
-  from the lock's nfx commit (scoped relay, origin, tracker and a WebRTC bridge) and a stock relay
-  without NIP-50 (strfry), all on loopback. It checks the feed, search on both relays, playback,
+  from the lock's nfx commit (scoped relay, origin and its mesh endpoint) and a stock relay
+  without NIP-50 (strfry), which is also the only signaling path, all on loopback. It checks the feed, search on both relays, playback,
   playback from the bridge once the origin refuses every segment, a video seeded in 360p only
   (`nfxd --seed <a>#360p`) played without one request for its 720p files, a lying origin refused,
   a deleted video, a video nobody seeds, the Settings notices and `source.json`, and that the CSP refused

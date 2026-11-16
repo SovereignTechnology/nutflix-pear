@@ -13,6 +13,7 @@ export type {
   NfxOriginSource,
   NfxPlayerEvent,
   NfxPlayerLib,
+  NfxNostrSignaling,
   NfxTrackerSignaling,
 } from './nfx-lib.js';
 export {
@@ -20,11 +21,12 @@ export {
   DEFAULT_WEB_SETTINGS,
   WEB_FALLBACK_ORIGIN,
   WEB_ICE_SERVERS,
+  WEB_MAX_MESH_RELAYS,
   WEB_MAX_TRACKERS,
+  WEB_MESH_RELAYS,
   WEB_NFX_NETWORK,
   WEB_SCOPED_RELAY,
   WEB_STUN_URL,
-  WEB_TRACKER,
 } from './settings/defaults.js';
 export { isWebSettingsPatch } from './settings/validate.js';
 export {

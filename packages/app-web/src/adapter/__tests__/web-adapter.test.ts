@@ -8,14 +8,7 @@ import { createHash } from 'node:crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type {
-  NetworkAdapter,
-  NfxAddress,
-  NostrEventId,
-  NostrPubkey,
-  Sha256Hex,
-  TrackerUrl,
-} from '@sovit/core';
+import type { NetworkAdapter, NfxAddress, NostrEventId, NostrPubkey, Sha256Hex } from '@sovit/core';
 import { renderHashList } from '@sovit/core/nfx';
 
 import {
@@ -38,7 +31,7 @@ import {
   type Rig,
 } from '../../__tests__/support/nfx.js';
 import { WebAdapterError } from '../../errors.js';
-import { WEB_FALLBACK_ORIGIN, WEB_TRACKER } from '../../settings/defaults.js';
+import { WEB_FALLBACK_ORIGIN, WEB_MESH_RELAYS } from '../../settings/defaults.js';
 import type { FetchFn } from '../http.js';
 import { AUTO_RENDITION, WebNfxSession } from '../session.js';
 import { WebNetworkAdapter } from '../web-adapter.js';
@@ -493,7 +486,7 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     return { addr, creator };
   }
 
-  it('hands the player exactly the resolved origins, trackers and ICE servers', async () => {
+  it('hands the player exactly the resolved origins, the signaling relays and ICE servers; no tracker', async () => {
     const r = make();
     const { addr } = await playable(r);
     await r.adapter.updateSettings({
@@ -501,7 +494,7 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
         enabled: true,
         network: NS,
         scopedRelays: [SCOPED],
-        trackers: [WEB_TRACKER, 'ws://127.0.0.1:8000/announce' as TrackerUrl],
+        meshRelays: ['wss://signal.example' as RelayUrl, 'ws://127.0.0.1:7778' as RelayUrl],
       },
     });
     put(
@@ -533,15 +526,8 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     const { onEvent, signal, manifestJson, ...rest } = options;
     expect(rest).toEqual({
       origins: ['https://seed-1.example/o', 'https://seed-2.example/o', WEB_FALLBACK_ORIGIN],
-      signaling: {
-        kind: 'trackers',
-        urls: [
-          WEB_TRACKER,
-          'ws://127.0.0.1:8000/announce',
-          'wss://bridge-1.example/announce',
-          'wss://bridge-2.example/announce',
-        ],
-      },
+      // Pear #89: over Nostr; the trackers the beacons name are not asked.
+      signaling: { kind: 'nostr', relays: ['wss://signal.example', 'ws://127.0.0.1:7778'] },
       iceServers: [{ urls: ['stun:web.nutflix.xyz:3478'] }],
     });
     expect(typeof onEvent).toBe('function');
@@ -555,10 +541,12 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     await session.close();
   });
 
-  it('with no tracker anywhere the player gets no signalling (every byte from an origin)', async () => {
+  it('with an empty list of signaling relays the player gets no signalling (every byte from an origin)', async () => {
     const r = make();
     const { addr } = await playable(r);
-    await r.adapter.updateSettings({ nfx: { enabled: true, network: NS, scopedRelays: [SCOPED] } });
+    await r.adapter.updateSettings({
+      nfx: { enabled: true, network: NS, scopedRelays: [SCOPED], meshRelays: [] },
+    });
     put(r.relays, [SCOPED], beacon(new Key(), addr, [https('https://seed.example/o')]));
     const session = await r.adapter.playNfx(addr);
     if (session.source.kind !== 'element') throw new Error('not an element source');
@@ -580,7 +568,11 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     if (session.source.kind !== 'element') throw new Error('not an element source');
     session.source.attach(document.createElement('video'));
     await tick();
-    expect(r.player.last.options.signaling?.urls).toEqual([WEB_TRACKER, 'wss://bridge.example/a']);
+    // No list saved: the default pair, the one the desktop app uses too.
+    expect(r.player.last.options.signaling).toEqual({
+      kind: 'nostr',
+      relays: [...WEB_MESH_RELAYS],
+    });
     expect(r.player.last.options.origins).toEqual([WEB_FALLBACK_ORIGIN]);
   });
 
