@@ -64,10 +64,13 @@ These are known limits of the released app, not bugs awaiting a report:
 - **WebRTC peers, a STUN server and signaling relays see you** (on `main`, after 0.1.2; ADR 0023).
   With NFX on, the app trades video with web browsers over WebRTC. The peers it connects to learn
   your IP address; so does the network's STUN server (`web.nutflix.xyz:3478`, asked every 25 s
-  while this runs). The signaling relays (by default `relay.damus.io` and `nos.lol`, NFX-10 §6)
-  learn your IP address and which videos you seed or watch; connection details are encrypted to
-  the peer. Anyone who knows a video can join its room and learn its members' addresses by
-  connecting to them, as with any swarm. Settings › NFX network switches it off.
+  while this runs). The signaling relays (by default `relay.primal.net` and `relay.ditto.pub`,
+  NFX-10 §6) learn your IP address and which videos you seed or watch; connection details are
+  encrypted to the peer. Anyone reading those relays sees that some app is in a video's room,
+  under a random session key: a new one for each video you watch, and one for what the app seeds
+  (which its beacons already announce), never your own key. Anyone who knows a video can join
+  its room and learn its members' addresses by connecting to them, as with any swarm, and can
+  keep others from connecting by filling it. Settings › NFX network switches it off.
 - **Images can reveal your IP.** With remote images off (the default), an `https` image is fetched
   only when its publisher signed its hash, and the host it comes from still sees your address.
 - **Builds are signed by key, not by a vendor.** There is no operating-system code signing and no
@@ -176,6 +179,11 @@ packages/core/src/wallet/spend.ts
 packages/core/src/wallet/seed.ts
 packages/gateway/src/auth/
 ```
+
+`packages/core/src/signer/mesh-key.ts` (ADR 0023) holds the session keys of WebRTC signaling
+(NFX-10 §6): random, in secure memory, never an identity key. It signs only the four `nfx-mesh/1`
+events it builds itself and encrypts only an SDP; it offers no general signing or encryption
+call.
 
 ## No model writes crypto
 

@@ -58,9 +58,9 @@ four public relays (`relay.damus.io`, `nos.lol`, `relay.primal.net`, `relay.ditt
 what you ask them for. NFX (free video) is on, on its test network's public relays, which SovTech
 runs: `wss://relay.nutflix.xyz` and `https://iroh.nutflix.xyz/`, and they see your IP address too.
 With NFX on, the app also trades video with web browsers over WebRTC (on `main`, after 0.1.2): the
-web viewers it connects to see your IP address, as does the network's STUN server
-(`web.nutflix.xyz:3478`), and two of the default relays (`relay.damus.io`, `nos.lol`) carry the
-signaling, so they learn which videos you seed or watch.
+peers it connects to see your IP address, as does the network's STUN server
+(`web.nutflix.xyz:3478`), and two of the default relays (`relay.primal.net`, `relay.ditto.pub`)
+carry the signaling, so they learn which videos you seed or watch.
 You can change the relays and mints in Settings, and switch NFX off or change its relays in
 Settings › NFX network.
 

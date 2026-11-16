@@ -47,14 +47,17 @@ export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
 /**
  * Contracts v18 (the maintainer, 2026-11-15): WebRTC connections are signaled over ordinary Nostr
  * relays (NFX-10 §6), and the scoped relay refuses that kind, so two of the app's default public
- * relays carry it: the two that passed `scripts/mesh-relay-soak.mjs` (every kind-25050 event
- * accepted and delivered for ten minutes). The web client signals on the same pair, so a browser
- * and this app meet there. They learn which videos the user seeds or watches and the user's IP
- * address; Settings › NFX network lists them, and either can be replaced or removed.
+ * relays carry it. They are picked by `scripts/mesh-relay-soak.mjs`: on 2026-11-16 nos.lol,
+ * relay.primal.net and relay.ditto.pub each accepted and delivered every kind-25050 event for ten
+ * minutes, and relay.damus.io refused the connection (HTTP 403). These two are the pair with
+ * different operators and no history of rate-limiting this project's own traffic. The web
+ * client signals on the same pair, so a browser and this app meet there. They learn the user's
+ * IP address and which videos' rooms it is in; Settings › NFX network lists them, and either can
+ * be replaced or removed.
  */
 export const DEFAULT_NFX_MESH_RELAYS: readonly RelayUrl[] = Object.freeze([
-  'wss://relay.damus.io' as RelayUrl,
-  'wss://nos.lol' as RelayUrl,
+  'wss://relay.primal.net' as RelayUrl,
+  'wss://relay.ditto.pub' as RelayUrl,
 ]);
 export const DEFAULT_NFX: NfxSettings = Object.freeze({
   enabled: true,

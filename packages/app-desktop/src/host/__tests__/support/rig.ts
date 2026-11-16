@@ -63,6 +63,8 @@ export interface RigOptions {
   readonly recoveryCore?: HostOptions['recoveryCore'];
   /** Contracts v10: `Settings.nfx`, set with the test relays at start. */
   readonly nfx?: NfxSettings;
+  /** #89: a path for the iroh helper, as a packaged build has (the fake worker never runs it). */
+  readonly irohHelper?: string;
 }
 
 /** Polls `check` every few ms until it returns a value, or fails with `what` after `ms`. */
@@ -113,6 +115,7 @@ export async function rig(o: RigOptions = {}): Promise<Rig> {
     ...(o.nip46 === undefined ? {} : { nip46: o.nip46 }),
     ...(o.topUp === undefined ? {} : { topUp: o.topUp }),
     ...(o.recoveryCore === undefined ? {} : { recoveryCore: o.recoveryCore }),
+    ...(o.irohHelper === undefined ? {} : { irohHelper: o.irohHelper }),
     imageTransport: o.imageTransport ?? (() => Promise.reject(new Error('no network in tests'))),
   });
   late.host = host;

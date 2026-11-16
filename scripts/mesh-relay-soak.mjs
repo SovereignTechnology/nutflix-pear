@@ -14,7 +14,7 @@
 //   node scripts/mesh-relay-soak.mjs [--minutes 10] wss://relay.one wss://relay.two …
 //
 // It contacts only the relays named. What they see: two random keys, a random room key, timing,
-// and ciphertext. Exit 0 always; read the table.
+// and ciphertext. Exit 0 when at least two relays passed (a default pair exists), else 1.
 import { randomBytes } from 'node:crypto';
 import process from 'node:process';
 import { clearInterval, setInterval, setTimeout } from 'node:timers';
@@ -207,4 +207,4 @@ async function soak(url) {
 const results = await Promise.all(relays.map((r) => soak(r)));
 process.stdout.write(`mesh-relay-soak: ${minutes} min, ${new Date().toISOString()}\n`);
 for (const r of results) process.stdout.write(`${JSON.stringify(r)}\n`);
-process.exit(0);
+process.exit(results.filter((r) => r.verdict === 'PASS').length >= 2 ? 0 : 1);

@@ -344,7 +344,7 @@ export function NfxSection({
         <SwitchRow
           id={`${id}-webrtc`}
           label="Trade video with web browsers"
-          description="Seeds the videos you keep to people watching in a web browser, and fetches parts of a video from them, over WebRTC. Off: no WebRTC at all."
+          description="Fetches parts of a video you watch from people watching it in a web browser and, while seeding is on, seeds the free videos you keep to them, over WebRTC. Off: no WebRTC at all."
           checked={webrtcOn}
           disabled={!nfx.enabled}
           busy={pending.has('nfx')}
@@ -356,7 +356,9 @@ export function NfxSection({
           The web viewers you trade video with see your IP address, and so does the network&apos;s
           STUN server, which this app asks for its public address while it runs. The signaling
           relays below learn which videos you seed or watch, and your IP address; they never see how
-          you connect.
+          you connect. Anyone reading those relays can see that some app is in a video&apos;s room,
+          under a random key (a new one for each video you watch), and can learn its IP address by
+          connecting to it.
         </Note>
       ) : null}
       {show.meshRelays ? (
