@@ -174,7 +174,8 @@ export function isCanonicalSocketAddr(s: string): boolean {
     return !mapped;
   }
   const m = IPV4.exec(host);
-  return m !== null && m.slice(1).every((o) => Number(o) <= 255);
+  if (m === null) return false;
+  return m.slice(1).every((o) => Number(o) <= 255);
 }
 
 const encoder = new TextEncoder();
