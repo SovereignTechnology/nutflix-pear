@@ -25,6 +25,8 @@ on:
       - 'packages/app-desktop/src/worker/iroh/**'
       - 'packages/app-desktop/src/host/nfx/**'
       - 'packages/app-desktop/src/host/__tests__/nfx-exit.integration.test.ts'
+      - 'packages/app-desktop/src/host/__tests__/nfx-mesh-browser.integration.test.ts'
+      - 'packages/app-web/nfx-web.lock'
       - 'packages/app-desktop/e2e/nfx-exit-app.e2e.ts'
       - 'crates/iroh-helper/**'
       - '.github/workflows/nfx-exit.yml'
@@ -43,6 +45,8 @@ env:
   # nfxd code nfx v0.1.0 ships.
   NFX_SHA: '5d628db55ad0eb203ab01b4cbf8280b0d1a8c587'
   IROH_RELAY_VERSION: '1.2.0'
+  # strfry 1.1.3 (released 2026-09-04), as web-site.yml pins it: the commit its tag names.
+  STRFRY_SHA: '16c00df04e264f4d68db5e10a48127f015c7824b'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
 
@@ -194,4 +198,135 @@ jobs:
         with:
           name: nfx-exit-app-logs
           path: ${{ runner.temp }}/exit-app-logs/
+          retention-days: 30
+
+  # #89 (ADR 0023): the app (the real worker under Node, the real helper's WebRTC side, the host's
+  # mesh signaler) and headless Chromium running nfx's web player library trade a video with a
+  # stock Nostr relay (strfry) as the only signaling path:
+  # packages/app-desktop/src/host/__tests__/nfx-mesh-browser.integration.test.ts. The library is
+  # the tar packages/app-web/nfx-web.lock pins, built as helper-webrtc.yml builds it; strfry is
+  # built as web-site.yml builds it; nfxd (the build job's) only fetches the video over iroh and
+  # serves the browser's origin. Chromium's sandbox stays on. Everything runs on 127.0.0.1:
+  # nothing here is a server for anyone but the run's own browser.
+  mesh-browser:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: the lock's pins
+        id: lock
+        run: bash packages/app-web/scripts/nfx-lib.sh show | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: the lock's Rust toolchain and the wasm32 target (the runner's rustup)
+        env:
+          LOCK_RUST_VERSION: ${{ steps.lock.outputs.RUST_VERSION }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$LOCK_RUST_VERSION" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$LOCK_RUST_VERSION"
+          rustc -V
+      - name: wasm-pack and wasm-bindgen (the lock's releases, sha256-checked)
+        env:
+          WASM_PACK_VERSION: ${{ steps.lock.outputs.WASM_PACK_VERSION }}
+          WASM_PACK_SHA256: ${{ steps.lock.outputs.WASM_PACK_SHA256 }}
+          WASM_BINDGEN_VERSION: ${{ steps.lock.outputs.WASM_BINDGEN_VERSION }}
+          WASM_BINDGEN_SHA256: ${{ steps.lock.outputs.WASM_BINDGEN_SHA256 }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/tools"
+          mkdir -p "$d"
+          curl -sSfL --retry 8 --retry-all-errors -o "$d/wasm-pack.tgz" \
+            "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${WASM_PACK_SHA256}  $d/wasm-pack.tgz" | sha256sum -c -
+          curl -sSfL --retry 8 --retry-all-errors -o "$d/wasm-bindgen.tgz" \
+            "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${WASM_BINDGEN_SHA256}  $d/wasm-bindgen.tgz" | sha256sum -c -
+          tar -xzf "$d/wasm-pack.tgz" -C "$d"
+          tar -xzf "$d/wasm-bindgen.tgz" -C "$d"
+          sudo install -m 0755 "$d/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack" /usr/local/bin/
+          sudo install -m 0755 "$d/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl/wasm-bindgen" /usr/local/bin/
+      - name: the player library from the pinned source (refused unless its tar is the lock's)
+        run: |
+          set -euo pipefail
+          bash packages/app-web/scripts/nfx-lib.sh build --out "$RUNNER_TEMP/nfx-lib"
+          tar="$(ls "$RUNNER_TEMP"/nfx-lib/nfx-web-lib-*.tar)"
+          bash packages/app-web/scripts/nfx-lib.sh check "$tar"
+          mkdir -p "$RUNNER_TEMP/lib"
+          tar -xf "$tar" -C "$RUNNER_TEMP/lib" --no-same-owner
+          ls -lR "$RUNNER_TEMP/lib"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hoytech/strfry
+          ref: ${{ env.STRFRY_SHA }}
+          path: strfry
+          submodules: recursive
+          persist-credentials: false
+      - name: strfry cache (keyed by its commit, shared with web-site.yml's)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/strfry-bin
+          key: web-site-strfry-${{ env.STRFRY_SHA }}-ubuntu-24.04
+      - name: strfry (the stock relay, from its pinned commit with its own Makefile)
+        run: |
+          set -euo pipefail
+          [ "$(git -C strfry rev-parse HEAD)" = "$STRFRY_SHA" ]
+          bin="$RUNNER_TEMP/strfry-bin"
+          if [ ! -x "$bin/strfry" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends g++ make pkg-config libtool \
+              libssl-dev zlib1g-dev liblmdb-dev libflatbuffers-dev libsecp256k1-dev libzstd-dev
+            make -C strfry setup-golpe
+            make -C strfry -j"$(nproc)"
+            mkdir -p "$bin"
+            strip -o "$bin/strfry" strfry/strfry
+          fi
+          install -m 0644 strfry/strfry.conf "$RUNNER_TEMP/strfry.conf"
+      - name: system packages (ffmpeg for the clip; strfry's shared libraries)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg liblmdb-dev libsecp256k1-dev libzstd-dev
+          ! ldd "$RUNNER_TEMP/strfry-bin/strfry" | grep 'not found'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Playwright's Chromium
+        run: npx --no-install playwright-core install --with-deps chromium
+      # Chromium's sandbox stays on (the run never passes --no-sandbox): Ubuntu 24.04 restricts the
+      # unprivileged user namespaces it uses, so lift that on this throwaway runner, as
+      # screenshots.yml does.
+      - name: allow Chrome's user-namespace sandbox on this runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nfx-exit-bins
+          path: ${{ runner.temp }}/bins
+      - name: binaries (artifacts drop the executable bit)
+        run: chmod 0755 "$RUNNER_TEMP"/bins/* && ls -l "$RUNNER_TEMP/bins" && mkdir -p "$RUNNER_TEMP/mesh-logs"
+      - name: the mesh run (the app and a browser, signaled over strfry only)
+        env:
+          NUTFLIX_MESH_RUN: '1'
+          NUTFLIX_EXIT_LOGS: ${{ runner.temp }}/mesh-logs
+          NFXD: ${{ runner.temp }}/bins/nfxd
+          NFX_PACKAGE: ${{ runner.temp }}/bins/nfx-package
+          IROH_RELAY: ${{ runner.temp }}/bins/iroh-relay
+          NUTFLIX_IROH_HELPER: ${{ runner.temp }}/bins/nutflix-iroh-helper
+          STRFRY: ${{ runner.temp }}/strfry-bin/strfry
+          STRFRY_CONF: ${{ runner.temp }}/strfry.conf
+          NFX_LIB: ${{ runner.temp }}/lib
+        run: npx vitest run --project app-desktop packages/app-desktop/src/host/__tests__/nfx-mesh-browser.integration.test.ts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: nfx-mesh-browser-logs
+          path: ${{ runner.temp }}/mesh-logs/
+          if-no-files-found: ignore
           retention-days: 30

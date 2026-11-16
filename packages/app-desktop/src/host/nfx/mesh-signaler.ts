@@ -466,9 +466,13 @@ export class NfxMeshSignaler {
     const relays = this.d.relays();
     if (relays.length > 0) this.relaysUsed = [...relays];
     const now = this.d.now();
+    /** Rooms another key of this app left just now. */
+    const handed = new Set<string>();
     for (const [k, r] of [...this.rooms]) {
       // Left, or to be joined again as another session (its play session closed).
-      if (wanted.get(k)?.owner !== r.owner) this.leave(r, true);
+      if (wanted.get(k)?.owner === r.owner) continue;
+      this.leave(r, true);
+      if (wanted.has(k)) handed.add(k);
     }
     for (const [k, w] of wanted) {
       if (this.rooms.has(k)) continue;
@@ -493,9 +497,9 @@ export class NfxMeshSignaler {
         zombies: new Set(),
         announcedAt: Number.NEGATIVE_INFINITY,
         // A play wants its peers now: announced by the next tick, once the subscriptions below
-        // are up. A seeding room takes a random place in the round, so the seeding key does not
-        // appear in a room in the very second a play's key left it.
-        announceAt: w.owner === SEED ? now + this.jitter(PRESENCE_EVERY_S) : now,
+        // are up. A seeding room takes a random place in the round, and so does any room one of
+        // this app's keys just left: no key appears in a room in the very second another left it.
+        announceAt: w.owner === SEED || handed.has(k) ? now + this.jitter(PRESENCE_EVERY_S) : now,
       });
     }
     this.subscribe(relays, now);
