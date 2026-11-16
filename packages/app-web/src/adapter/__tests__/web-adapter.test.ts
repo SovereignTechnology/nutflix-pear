@@ -8,7 +8,14 @@ import { createHash } from 'node:crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { NetworkAdapter, NfxAddress, NostrEventId, NostrPubkey, Sha256Hex } from '@sovit/core';
+import type {
+  NetworkAdapter,
+  NfxAddress,
+  NostrEventId,
+  NostrPubkey,
+  RelayUrl,
+  Sha256Hex,
+} from '@sovit/core';
 import { renderHashList } from '@sovit/core/nfx';
 
 import {
