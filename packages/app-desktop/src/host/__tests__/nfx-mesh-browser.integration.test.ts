@@ -736,7 +736,11 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
       { timeout: 180_000 },
     );
     const seeded = await view();
-    const played = seeded.mesh?.swarms.find((s) => s.rendition !== null);
+    // The page may be in several renditions' swarms: the one it is connected to the app in is the
+    // one it played from the app (and the one the second app fetches below).
+    const played =
+      seeded.mesh?.swarms.find((s) => s.rendition !== null && opened(w1, s.swarm).length > 0) ??
+      seeded.mesh?.swarms.find((s) => s.rendition !== null);
     const detail = `page: ${JSON.stringify(seeded)}\nthe worker said:\n${logs(w1)}`;
     expect(seeded.errors, detail).toEqual([]);
     expect(seeded.t, `playback went on without the origin\n${detail}`).toBeGreaterThan(t0 + 15);
@@ -756,7 +760,7 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
     expect(served, 'the worker serves the swarm the page joined').toContain(played.swarm);
     expect(
       opened(w1, played.swarm).length,
-      'a connection opened in the seeding app',
+      `a connection opened in the seeding app, in a swarm the page is in\n${detail}\nthe app's peers: ${JSON.stringify(w1.events.filter((e) => e.e === 'nfx.rtc.peer'))}`,
     ).toBeGreaterThan(0);
 
     // ---- 2. fetch: another app gets that rendition from the browser ----
