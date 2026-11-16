@@ -379,7 +379,12 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
     return nfx.listNfxVideos(NS, events, [], nowS()).find((v) => v.id === address) ?? null;
   }
 
-  /** A worker whose helper may use loopback for WebRTC, with NFX and its WebRTC side on. */
+  /**
+   * A worker whose helper may use loopback for WebRTC, with NFX and its WebRTC side on. Both
+   * kinds get the development payment providers: those bind the worker's HyperDHT node to
+   * loopback, where the two must meet on this one machine (a watcher without providers dials
+   * from a node that is never loopback-bound, by design).
+   */
   async function worker(seeding: boolean): Promise<WorkerClient> {
     const d = await tempDir('nf-mesh-worker-');
     teardown.push(() => d.rm());
@@ -388,9 +393,8 @@ describe.skipIf(!RUN)('#89: the app and a browser trade a video, signaled over s
       logLevel: 'info',
       testBootstrap: testnet.bootstrap,
       runtime: { ...nodeRuntime(), spawnHelper: loopbackHelperSpawn },
-      ...(seeding
-        ? { hub, providers: () => devMockProviders({ hub, label: `mesh-${hex(4)}` }) }
-        : {}),
+      hub,
+      providers: () => devMockProviders({ hub, label: `mesh-${hex(4)}` }),
     });
     teardown.push(() => w.close());
     await w.call('init', {
