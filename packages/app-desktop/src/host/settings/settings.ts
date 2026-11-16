@@ -44,6 +44,18 @@ const FILE_V = 1 as const;
 export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
   'web.nutflix.xyz:3478' as StunServer,
 ]);
+/**
+ * Contracts v18 (the maintainer, 2026-11-15): WebRTC connections are signaled over ordinary Nostr
+ * relays (NFX-10 §6), and the scoped relay refuses that kind, so two of the app's default public
+ * relays carry it: the two that passed `scripts/mesh-relay-soak.mjs` (every kind-25050 event
+ * accepted and delivered for ten minutes). The web client signals on the same pair, so a browser
+ * and this app meet there. They learn which videos the user seeds or watches and the user's IP
+ * address; Settings › NFX network lists them, and either can be replaced or removed.
+ */
+export const DEFAULT_NFX_MESH_RELAYS: readonly RelayUrl[] = Object.freeze([
+  'wss://relay.damus.io' as RelayUrl,
+  'wss://nos.lol' as RelayUrl,
+]);
 export const DEFAULT_NFX: NfxSettings = Object.freeze({
   enabled: true,
   network: 'nfx:testnet:1',
@@ -51,6 +63,7 @@ export const DEFAULT_NFX: NfxSettings = Object.freeze({
   irohRelays: Object.freeze(['https://iroh.nutflix.xyz/' as IrohRelayUrl]),
   webrtc: true,
   stunServers: DEFAULT_NFX_STUN_SERVERS,
+  meshRelays: DEFAULT_NFX_MESH_RELAYS,
 });
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -115,20 +128,39 @@ export function parseStoredSettings(raw: unknown): StoredSettings | null {
   const sizes: unknown = publishSizes === undefined ? {} : { publishSizes };
   const nfxPatch: unknown = nfx === undefined ? {} : { nfx };
   // A stored `nfx` this build cannot read never becomes "on": it falls back to the defaults, off.
-  // Contracts v17: when only its WebRTC fields are unreadable, WebRTC alone goes off.
+  // Contracts v17/v18: when only its WebRTC fields are unreadable, WebRTC alone goes off.
   const kept = isSettingsPatch(nfxPatch)
     ? nfxPatch
     : (withoutWebrtc(nfx) ?? { nfx: { ...DEFAULT_NFX, enabled: false } });
+  // Contracts v18: a stored `nfx` from before the signaling relays gets the default pair, so
+  // Settings lists the relays actually used (absent means that default) and the user can edit it.
+  const filled: Partial<Settings> =
+    kept.nfx === undefined || kept.nfx.meshRelays !== undefined
+      ? kept
+      : { nfx: { ...kept.nfx, meshRelays: DEFAULT_NFX_MESH_RELAYS } };
   return {
     v: FILE_V,
-    settings: { ...DEFAULT_SETTINGS, ...rest, ...kept, ...(isSettingsPatch(sizes) ? sizes : {}) },
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...rest,
+      ...filled,
+      ...(isSettingsPatch(sizes) ? sizes : {}),
+    },
   };
 }
 
-/** `nfx` with WebRTC off and no STUN servers, if that much of it is readable; else `null`. */
+/**
+ * `nfx` with WebRTC off, and none of its STUN servers or signaling relays, if that much of it is
+ * readable; else `null`.
+ */
 function withoutWebrtc(nfx: unknown): Partial<Settings> | null {
   if (typeof nfx !== 'object' || nfx === null || Array.isArray(nfx)) return null;
-  const { webrtc: _webrtc, stunServers: _stun, ...rest } = nfx as Record<string, unknown>;
+  const {
+    webrtc: _webrtc,
+    stunServers: _stun,
+    meshRelays: _relays,
+    ...rest
+  } = nfx as Record<string, unknown>;
   const patch: unknown = { nfx: { ...rest, webrtc: false } };
   return isSettingsPatch(patch) ? patch : null;
 }

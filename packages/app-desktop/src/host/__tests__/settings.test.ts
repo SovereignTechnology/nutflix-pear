@@ -17,6 +17,7 @@ import type {
 import { memoryLogger } from '../log.js';
 import {
   DEFAULT_NFX,
+  DEFAULT_NFX_MESH_RELAYS,
   DEFAULT_SETTINGS,
   SETTINGS_FILE,
   SettingsStore,
@@ -102,7 +103,8 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: 'dark',
-      nfx,
+      // Contracts v18: a stored value from before the signaling relays gains the default pair.
+      nfx: { ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] },
     });
     // A network a newer build added, or a cleartext relay off this computer: only `nfx` goes.
     for (const bad of [
@@ -128,10 +130,19 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       ...nfx,
       webrtc: false,
       stunServers: ['stun.example:3478', '[2001:db8::1]:19302'],
+      meshRelays: ['wss://signal.example', 'ws://127.0.0.1:7777'],
     };
     expect(parseStoredSettings({ v: 1, settings: { nfx: rtc } })?.settings.nfx).toEqual(rtc);
-    // A stored v16 value (neither field) stays as it is: absent WebRTC is on, at the default STUN.
-    expect(parseStoredSettings({ v: 1, settings: { nfx } })?.settings.nfx).toEqual(nfx);
+    // A stored v16 value (none of them): absent WebRTC is on, at the default STUN, and the
+    // default signaling pair is filled in so Settings lists what is used.
+    expect(parseStoredSettings({ v: 1, settings: { nfx } })?.settings.nfx).toEqual({
+      ...nfx,
+      meshRelays: [...DEFAULT_NFX_MESH_RELAYS],
+    });
+    // An emptied list stays empty: the user turned signaling off.
+    expect(
+      parseStoredSettings({ v: 1, settings: { nfx: { ...nfx, meshRelays: [] } } })?.settings.nfx,
+    ).toEqual({ ...nfx, meshRelays: [] });
     for (const bad of [
       { ...nfx, webrtc: 'yes' },
       { ...nfx, stunServers: ['stun:stun.example:3478'] },
@@ -139,10 +150,19 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       { ...nfx, stunServers: ['stun.example:70000'] },
       { ...nfx, stunServers: ['a.example:1', 'a.example:1'] },
       { ...nfx, stunServers: ['a:1', 'b:1', 'c:1', 'd:1', 'e:1'] },
+      // Contracts v18: a signaling relay over cleartext elsewhere, a repeat, nine of them.
+      { ...nfx, meshRelays: ['ws://signal.example'] },
+      { ...nfx, meshRelays: ['wss://a.example', 'wss://a.example'] },
+      { ...nfx, meshRelays: Array.from({ length: 9 }, (_, i) => `wss://r${String(i)}.example`) },
+      { ...nfx, meshRelays: 'wss://a.example' },
     ]) {
       const parsed = parseStoredSettings({ v: 1, settings: { nfx: bad } });
       // NFX stays on; WebRTC, which this build could not read, is off.
-      expect(parsed?.settings.nfx, JSON.stringify(bad)).toEqual({ ...nfx, webrtc: false });
+      expect(parsed?.settings.nfx, JSON.stringify(bad).slice(0, 120)).toEqual({
+        ...nfx,
+        webrtc: false,
+        meshRelays: [...DEFAULT_NFX_MESH_RELAYS],
+      });
     }
     // Anything else wrong still turns NFX off, WebRTC fields or not.
     expect(
@@ -160,7 +180,13 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       // ADR 0023: WebRTC with browsers on, from the network's own STUN server.
       webrtc: true,
       stunServers: ['web.nutflix.xyz:3478'],
+      // Contracts v18: the relays WebRTC is signaled on (NFX-10 §6).
+      meshRelays: [...DEFAULT_NFX_MESH_RELAYS],
     });
+    for (const r of DEFAULT_NFX_MESH_RELAYS) {
+      // Two of the app's own default relays, so a first run contacts no new host for signaling.
+      expect(DEFAULT_SETTINGS.relays.map((x) => x.url)).toContain(r);
+    }
     // The defaults pass the same checks a user's settings do (wss://, the iroh relay's form).
     expect(parseStoredSettings({ v: 1, settings: { nfx: DEFAULT_NFX } })?.settings.nfx).toEqual(
       DEFAULT_NFX,
@@ -189,13 +215,14 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: 'dark',
-      nfx,
+      // Contracts v18: a stored value from before the signaling relays gains the default pair.
+      nfx: { ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] },
     });
     const s = new SettingsStore(dir, memoryLogger());
     await s.load();
     await s.update({ nfx });
     const reread = new SettingsStore(dir, memoryLogger());
-    expect((await reread.load()).nfx).toEqual(nfx);
+    expect((await reread.load()).nfx).toEqual({ ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] });
     // Not iroh's normal form, cleartext off this computer, a duplicate, more than 4.
     for (const irohRelays of [
       ['https://relay.example'],
@@ -225,13 +252,14 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: 'dark',
-      nfx,
+      // Contracts v18: a stored value from before the signaling relays gains the default pair.
+      nfx: { ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] },
     });
     const s = new SettingsStore(dir, memoryLogger());
     await s.load();
     await s.update({ nfx });
     const reread = new SettingsStore(dir, memoryLogger());
-    expect((await reread.load()).nfx).toEqual(nfx);
+    expect((await reread.load()).nfx).toEqual({ ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] });
     // Not the player's form, cleartext off this computer, a query, a duplicate, more than 4.
     for (const trackers of [
       ['WSS://tracker.example'],

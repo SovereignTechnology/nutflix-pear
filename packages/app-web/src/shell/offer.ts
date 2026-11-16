@@ -27,6 +27,8 @@ export const WEB_OFFER: ShellOffer = Object.freeze({
     meshNotice: true,
     // A browser trades over WebRTC by being one: there is no switch for it.
     webrtc: false,
+    // Signaling is over trackers here still (the Nostr kind is the next step of #89).
+    meshRelays: false,
   }),
   appearanceParts: Object.freeze({ remoteImages: false }),
   signIn: false,

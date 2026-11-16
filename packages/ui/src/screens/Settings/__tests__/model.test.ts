@@ -5,6 +5,7 @@ import {
   AUTO_TOP_UP_MAX_SATS_PER_DAY,
   MAX_NFX_IROH_RELAYS,
   MAX_NFX_SCOPED_RELAYS,
+  MAX_NFX_MESH_RELAYS,
   MAX_NFX_TRACKERS,
   NFX_NETWORKS,
 } from '@sovit/core';
@@ -26,6 +27,7 @@ import {
   validateMintUrl,
   UI_MAX_NFX_IROH_RELAYS,
   UI_MAX_NFX_SCOPED_RELAYS,
+  UI_MAX_NFX_MESH_RELAYS,
   UI_MAX_NFX_TRACKERS,
   UI_NFX_NETWORK,
   validateIrohRelayUrl,
@@ -131,6 +133,7 @@ describe('validateTrackerUrl (contracts v14)', () => {
 
   it('mirrors core: the same tracker cap', () => {
     expect(UI_MAX_NFX_TRACKERS).toBe(MAX_NFX_TRACKERS);
+    expect(UI_MAX_NFX_MESH_RELAYS).toBe(MAX_NFX_MESH_RELAYS);
   });
 
   it("writes nfx's player's form: lower case, default port and a bare / dropped, the path kept", () => {

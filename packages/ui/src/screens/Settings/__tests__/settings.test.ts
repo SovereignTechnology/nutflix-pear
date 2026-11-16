@@ -867,18 +867,19 @@ describe('Settings — NFX network (contracts v10)', () => {
   });
 });
 
-describe('Settings — WebRTC with web browsers (contracts v17)', () => {
+describe('Settings — WebRTC with web browsers (contracts v17, v18)', () => {
   const ON = { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } as const;
 
-  it('is on when absent, says who sees the IP address, and switches off and on', async () => {
+  it('is on when absent, says who sees what, and switches off and on', async () => {
     const adapter = adapterWith({}, { nfx: ON });
     const update = vi.spyOn(adapter, 'updateSettings');
-    const { r } = await ready(adapter, { nfxParts: { webrtc: true } });
+    const { r } = await ready(adapter);
     expect(section(r, 'NFX network').textContent).toContain('Trade video with web browsers');
     expect(input(r, '-nfx-webrtc').checked).toBe(true);
     const notice = r.get('[id$="-nfx-webrtc-notice"]');
     expect(notice.textContent).toContain('see your IP address');
     expect(notice.textContent).toContain('STUN server');
+    expect(notice.textContent).toContain('signaling relays below learn which videos');
     click(input(r, '-nfx-webrtc'));
     await flush();
     expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: { ...ON, webrtc: false } });
@@ -889,19 +890,61 @@ describe('Settings — WebRTC with web browsers (contracts v17)', () => {
     expect(update.mock.calls.at(-1)![0]).toEqual({ nfx: { ...ON, webrtc: true } });
   });
 
-  it('is greyed out, with no notice, while NFX is off; hidden unless a shell shows it', async () => {
-    const { r } = await ready(adapterWith(), { nfxParts: { webrtc: true } });
+  it('is greyed out, with no notice, while NFX is off; a shell can leave it out', async () => {
+    const { r } = await ready(adapterWith());
     expect(input(r, '-nfx-webrtc').disabled).toBe(true);
     expect(r.container.querySelector('[id$="-nfx-webrtc-notice"]')).toBeNull();
     const web = await ready(adapterWith({}, { nfx: ON }), {
       sections: ['nfx'],
-      nfxParts: { toggle: false, irohRelays: false, trackers: true, webrtc: false },
+      nfxParts: {
+        toggle: false,
+        irohRelays: false,
+        trackers: true,
+        webrtc: false,
+        meshRelays: false,
+      },
     });
     expect(web.r.container.querySelector('[id$="-nfx-webrtc"]')).toBeNull();
     expect(web.r.container.querySelector('[id$="-nfx-webrtc-notice"]')).toBeNull();
-    // Until the desktop app can signal (nfx #71), its default parts leave the switch out too.
-    const desktop = await ready(adapterWith({}, { nfx: ON }));
-    expect(desktop.r.container.querySelector('[id$="-nfx-webrtc"]')).toBeNull();
+    expect(web.r.container.querySelector('[id$="-nfx-mesh-add"]')).toBeNull();
+  });
+
+  it('lists the signaling relays: adds wss:// (ws:// to this computer only) and removes', async () => {
+    const adapter = adapterWith({}, { nfx: { ...ON, meshRelays: ['wss://one.example'] } } as never);
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    expect(section(r, 'NFX network').textContent).toContain('Signaling relays');
+    expect(section(r, 'NFX network').textContent).toContain('wss://one.example');
+    const field = input(r, '-nfx-mesh-add');
+    type(field, 'ws://signal.example');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(update).not.toHaveBeenCalled();
+    type(field, 'wss://two.example');
+    submit(field);
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({
+      nfx: { ...ON, meshRelays: ['wss://one.example', 'wss://two.example'] },
+    });
+    click(r.get('[aria-label="Remove wss://one.example"]'));
+    await flush();
+    expect(update.mock.calls.at(-1)![0]).toEqual({
+      nfx: { ...ON, meshRelays: ['wss://two.example'] },
+    });
+  });
+
+  it('says nobody can reach the app with no signaling relay, and stops at eight', async () => {
+    const none = await ready(adapterWith({}, { nfx: { ...ON, meshRelays: [] } }));
+    expect(section(none.r, 'NFX network').textContent).toContain('No signaling relays');
+    const eight = Array.from({ length: 8 }, (_, i) => `wss://s${String(i)}.example`);
+    const adapter = adapterWith({}, { nfx: { ...ON, meshRelays: eight } } as never);
+    const update = vi.spyOn(adapter, 'updateSettings');
+    const { r } = await ready(adapter);
+    const field = input(r, '-nfx-mesh-add');
+    type(field, 'wss://s9.example');
+    submit(field);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

@@ -121,5 +121,10 @@
  *       Additive: `NfxSettings.webrtc?` (absent = on), `NfxSettings.stunServers?` (`StunServer`,
  *       `host:port`; absent = the network's default), `MAX_NFX_STUN_SERVERS` (4). A stored v10 to
  *       v16 `nfx` stays valid. Every v16 consumer compiles.
+ *  18 — 2026-11-15 (ADR 0023, pear #89: WebRTC connections signaled over Nostr, NFX-10 §6; the
+ *       maintainer's decision of 2026-11-15: a list of signaling relays with public defaults).
+ *       Additive: `NfxSettings.meshRelays?` (absent = the shell's default; empty = WebRTC off) and
+ *       `MAX_NFX_MESH_RELAYS` (8). A stored v10 to v17 `nfx` stays valid. Every v17 consumer
+ *       compiles.
  */
-export const CONTRACTS_VERSION = 17 as const;
+export const CONTRACTS_VERSION = 18 as const;
