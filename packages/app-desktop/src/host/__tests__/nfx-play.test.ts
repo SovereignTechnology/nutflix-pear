@@ -268,6 +268,61 @@ describe('openNfxSession (contracts v11)', () => {
     expect(r.worker().calls('nfx.play.open')).toHaveLength(0);
   });
 
+  /** An `https` endpoint naming `renditions` (the desktop plays over iroh and HyperDHT only). */
+  const origin = (renditions: readonly string[]): nfx.Endpoint => ({
+    t: 'https',
+    url: 'https://origin.example/nfx',
+    renditions,
+  });
+
+  it('pear #104: a beacon whose https endpoint lists no rendition, or one twice, is no seeder', async () => {
+    r = await rig({ nfx: { ...NFX_ON, irohRelays: [IROH_RELAY] } });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-9');
+    // NFX-03 §4 rejects these beacons whole: their HyperDHT and iroh endpoints are not used either.
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-9', {
+      endpoints: (hyperdht) => [hyperdht, irohEndpoint('a1'.repeat(32)), origin([])],
+    });
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-9', {
+      endpoints: () => [irohEndpoint('b2'.repeat(32)), origin(['720p', '720p'])],
+    });
+    await expect(
+      r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-9')),
+    ).rejects.toThrow(/no-seeders/);
+    expect(r.worker().calls('nfx.play.open')).toHaveLength(0);
+  });
+
+  it('pear #104: beside such beacons, only the valid seeder is named and counted', async () => {
+    r = await rig({ nfx: { ...NFX_ON, irohRelays: [IROH_RELAY] } });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-10');
+    const { peer } = await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-10', {
+      endpoints: (hyperdht) => [hyperdht, irohEndpoint('a1'.repeat(32)), origin([])],
+    });
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-10', {
+      endpoints: () => [irohEndpoint('b2'.repeat(32)), origin(['720p', '720p'])],
+    });
+    const tickets = new Map([
+      ['meta', ticket('a')],
+      ['1080p', ticket('c')],
+    ]);
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-10', {
+      endpoints: () => [irohEndpoint('c3'.repeat(32), { tickets }), origin(['1080p'])],
+    });
+    await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-10'));
+    const [open] = r.worker().calls('nfx.play.open');
+    expect(validateWorkerArgs['nfx.play.open'](open)).toBe(true);
+    expect(open).toMatchObject({ peers: [], iroh: [{ node: 'c3'.repeat(32) }] });
+    expect((open as { peers: { peer: string }[] }).peers.map((p) => p.peer)).not.toContain(peer);
+    const held = (open as { held: { seeders: number; all: number; named: { $map: unknown[] } } })
+      .held;
+    expect(held.seeders).toBe(1);
+    expect(held.all).toBe(0);
+    expect(new Map(held.named.$map as [string, number][])).toEqual(new Map([['1080p', 1]]));
+  });
+
   it('no live free beacon by a seeder for this manifest means no-seeders', async () => {
     r = await rig({ nfx: NFX_ON });
     await r.ready();

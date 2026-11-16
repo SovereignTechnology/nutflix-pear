@@ -223,17 +223,38 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
     renditions,
   });
 
-  it('absent is every rendition, a list those, an empty list none', () => {
+  it('absent is every rendition, a list those', () => {
     const events = [
       beacon(new Key(), video.id, [https('https://all.example/o')]),
       beacon(new Key(), video.id, [held('https://some.example/o', ['360p', '720p'])]),
-      beacon(new Key(), video.id, [held('https://none.example/o', [])]),
     ];
     expect(beaconEndpoints(video, events, T).origins).toEqual([
       { url: 'https://all.example/o' },
       { url: 'https://some.example/o', renditions: ['360p', '720p'] },
-      { url: 'https://none.example/o', renditions: [] },
     ]);
+  });
+
+  it('pear #104: a beacon whose list is empty or repeats an id is invalid whole (NFX-03 §4)', () => {
+    const events = [
+      beacon(new Key(), video.id, [
+        https('https://all.example/o'),
+        held('https://o.example/o', []),
+      ]),
+      beacon(new Key(), video.id, [held('https://o.example/o', ['720p', '720p'])]),
+    ];
+    expect(beaconEndpoints(video, events, T)).toEqual({
+      origins: [],
+      trackers: [],
+      seeders: 0,
+      reachable: 0,
+    });
+    // So it narrows no other seeder's claim about that origin either.
+    const other = beacon(new Key(), video.id, [https('https://o.example/o')]);
+    expect(beaconEndpoints(video, [...events, other], T)).toMatchObject({
+      origins: [{ url: 'https://o.example/o' }],
+      seeders: 1,
+      reachable: 1,
+    });
   });
 
   it('several seeders naming one origin: only what every one of them says it serves', () => {
@@ -276,7 +297,11 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
   });
 
   it('an origin serving nothing makes no seeder reachable, but still narrows the others’ claims', () => {
-    const empty = beacon(new Key(), video.id, [held('https://o.example/o', [])]);
+    // One beacon naming the origin twice with lists that share nothing leaves it serving nothing.
+    const empty = beacon(new Key(), video.id, [
+      held('https://o.example/o', ['360p']),
+      held('https://o.example/o/', ['720p']),
+    ]);
     expect(beaconEndpoints(video, [empty], T)).toMatchObject({ seeders: 1, reachable: 0 });
     const other = beacon(new Key(), video.id, [https('https://o.example/o')]);
     expect(beaconEndpoints(video, [empty, other], T)).toMatchObject({
