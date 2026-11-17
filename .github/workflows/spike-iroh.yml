@@ -35,12 +35,12 @@ env:
   RUST_VERSION: '1.98.0'
   CARGO_DENY_VERSION: '0.20.2'
   CARGO_DENY_SHA256: '9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f'
-  # The nfx commit whose nfxd the helper is judged against: nfx main with #18 (`nfxd
-  # --iroh-relay-ca`), so nfxd can use the matrix's TLS relay and every TLS cell is judged in all
-  # four pairings. The matrix's port-forwarded seeder cells (fwdseed-*) need nfx N1's
-  # `--iroh-bind`/`--iroh-external` and skip until this pin is bumped to a commit that has them
-  # (run.sh reads nfxd's usage text, never this pin).
-  NFX_SHA: '5d628db55ad0eb203ab01b4cbf8280b0d1a8c587'
+  # The nfx commit whose nfxd the helper is judged against: nfx v0.1.2's release commit (#92).
+  # It has `--iroh-relay-ca` (since #18), so nfxd can use the matrix's TLS relay and every TLS
+  # cell is judged in all four pairings, and nfx N1's `--iroh-bind`/`--iroh-external`, so the
+  # port-forwarded seeder cells (fwdseed-*) run too (run.sh reads nfxd's usage text, never this
+  # pin).
+  NFX_SHA: '491d35ec3c70e5bdd7b8871bb6a64946d4ed3761'
   IROH_RELAY_VERSION: '1.2.0'
   # strfry 1.1.3 (released 2026-09-04): the commit its tag names. Built with its own Makefile;
   # run with its own default strfry.conf, only the database, address and port changed.

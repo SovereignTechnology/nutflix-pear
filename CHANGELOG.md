@@ -70,6 +70,10 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   The digests are the same bytes. The bind check gives libsodium's answers, except for a signature
   by a public key with a small-order part, which no key generator makes: refused now, where
   libsodium accepted about one in eight. Files are still checked through libsodium in the worker.
+- **The web client is built with nfx 0.1.2's player library** (`packages/app-web/nfx-web.lock`,
+  nfx 491d35e). The library now asks each origin which renditions it holds before playing from
+  it; what seeders' beacons claim is only a hint, so a stranger's beacon can no longer keep an
+  origin out of play (nfx #85). It also takes hls.js 1.7.4. The desktop app is unchanged by it.
 
 - **NFX is on by default, on the test network's public relays** (ADR 0020's 2026-11-08
   amendment): `wss://relay.nutflix.xyz` to find videos and `https://iroh.nutflix.xyz/` to reach
@@ -99,6 +103,18 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   path such as the public one. The suite fails at once if it is set without iroh relays, and passes
   nfxd no gossip flag, which nfxd refuses with it. Dispatch only; the app and its tests are
   unchanged.
+
+- **The interop runs judge the app against nfx 0.1.2** (nfx 491d35e, its release commit):
+  `nfx-exit`, `nfx-exit-two-host`, `spike-iroh` and `nfx-web-e2e` build nfxd from it, where they
+  built 0.1.0's (5d628db) or the 0.1.1 candidate (20f78ac). At this nfxd the NAT matrix's
+  port-forwarded seeder cells (nfx N1, `--iroh-bind`/`--iroh-external`) run instead of skipping,
+  and `nfx-web-e2e` uses wasm-pack 0.15.1, the release nfx's own CI pins.
+
+- **A live testnet check for releases** (`host/__tests__/nfx-live.integration.test.ts`, only with
+  `NUTFLIX_LIVE_RUN=1`): the real worker and iroh helper, with a fresh install's settings and the
+  host's catalogue and beacon reader, find a video somebody seeds on `nfx:testnet:1` (Network tab,
+  search, by address) and play it end to end over the internet. It publishes and seeds nothing.
+  No workflow runs it; it is run by hand before a release.
 
 ## [0.1.2] - 2026-11-07
 
