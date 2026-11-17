@@ -39,11 +39,10 @@ concurrency:
 
 env:
   RUST_VERSION: '1.98.0'
-  # nfx 0.1.1's release commit candidate: nfx main (#26, the relay searches titles) with the crate
-  # versions at 0.1.1.
-  NFX_SHA: '20f78acf41bcd804909faf7a576d35303ad6a73b'
-  WASM_PACK_VERSION: '0.13.1'
-  WASM_PACK_SHA256: 'c539d91ccab2591a7e975bcf82c82e1911b03335c80aa83d67ad25ed2ad06539'
+  # nfx v0.1.2's release commit (#92). wasm-pack is the release that commit's own CI pins.
+  NFX_SHA: '491d35ec3c70e5bdd7b8871bb6a64946d4ed3761'
+  WASM_PACK_VERSION: '0.15.1'
+  WASM_PACK_SHA256: '410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
 

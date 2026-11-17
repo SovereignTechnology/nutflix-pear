@@ -69,8 +69,8 @@ concurrency:
 
 env:
   RUST_VERSION: '1.98.0'
-  # nfx main with #18 (`nfxd --iroh-relay-ca`), the nfxd code nfx v0.1.0 ships.
-  NFX_SHA: '5d628db55ad0eb203ab01b4cbf8280b0d1a8c587'
+  # nfx v0.1.2's release commit (#92): the nfxd code that release ships.
+  NFX_SHA: '491d35ec3c70e5bdd7b8871bb6a64946d4ed3761'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
   NFX_SCOPED_RELAYS: ${{ inputs.scoped_relays }}
