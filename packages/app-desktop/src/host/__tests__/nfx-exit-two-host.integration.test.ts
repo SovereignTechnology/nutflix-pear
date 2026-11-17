@@ -290,6 +290,9 @@ describe.skipIf(!TWO_HOST)(`slice 5f two-host run, role ${ROLE}`, () => {
         pkg,
         '--max-height',
         '720',
+        // Two sizes: nfx-package makes one by default since nfx #76.
+        '--renditions',
+        '720p,360p',
         '--preset',
         'veryfast',
       ]);

@@ -18,7 +18,7 @@ This repository, `nutflix-pear`, is the JavaScript implementation: an Electron d
 [Bare](https://github.com/holepunchto/bare) worker, plus the seeder and gateway daemons. A Rust
 implementation built on iroh lives in [nfx](https://github.com/SovereignTechnology/nfx).
 
-> **Status: experimental.** Desktop 0.1.2 for Linux x86_64 was released on 2026-11-07. It is a
+> **Status: experimental.** Desktop 0.1.3 for Linux x86_64 was released on 2026-11-17. It is a
 > demo, not a product you should trust with money you cannot afford to lose. Read
 > [Known limitations](#known-limitations) before you install it.
 
@@ -57,7 +57,7 @@ Defaults are chosen for privacy and safety: no default mint, seeding off, remote
 four public relays (`relay.damus.io`, `nos.lol`, `relay.primal.net`, `relay.ditto.pub`) that see your IP address and
 what you ask them for. NFX (free video) is on, on its test network's public relays, which SovTech
 runs: `wss://relay.nutflix.xyz` and `https://iroh.nutflix.xyz/`, and they see your IP address too.
-With NFX on, the app also trades video with web browsers over WebRTC (on `main`, after 0.1.2): the
+With NFX on, the app also trades video with web browsers over WebRTC (since 0.1.3): the
 peers it connects to see your IP address, as does the network's STUN server
 (`web.nutflix.xyz:3478`), and two of the default relays (`relay.primal.net`, `relay.ditto.pub`)
 carry the signaling, so they learn which videos you seed or watch.
@@ -83,17 +83,19 @@ Settings › NFX network.
    list, in the seeder's list and in the viewer's own wallet. Neither side is ever more than the
    unpaid window of blocks ahead of the other, which bounds what a cheat can gain.
 
-That is the protocol the app speaks today. It is also becoming an implementation of
+That is the protocol the app speaks for paid videos. For free videos it also speaks
 [NFX](https://github.com/SovereignTechnology/nfx), the protocol suite nfx speaks, so the two share
-one network: NFX videos over HyperDHT, beside the protocol above, which stays as it is
-([ADR 0020](docs/decisions/0020-speak-nfx.md)). None of it has shipped yet.
+one network ([ADR 0020](docs/decisions/0020-speak-nfx.md)): over iroh through the bundled helper
+with nfxd and other apps ([ADR 0021](docs/decisions/0021-speak-iroh-through-a-helper.md)), over
+HyperDHT between Nutflix apps, and over WebRTC with web browsers, signaled over Nostr
+([ADR 0023](docs/decisions/0023-webrtc-in-the-helper.md)). The protocol above stays as it is.
 
 The threat model, the money-path invariants and the review of the implementation are in
 [SECURITY.md](SECURITY.md) and [docs/security-review.md](docs/security-review.md).
 
 ## Known limitations
 
-These are the things you would otherwise find out by trying them. Release 0.1.2:
+These are the things you would otherwise find out by trying them. Release 0.1.3:
 
 - **Free videos (NFX) use SovTech's test-network relays unless you change them.** NFX is on by
   default, on `nfx:testnet:1`'s public scoped relay `wss://relay.nutflix.xyz` (where videos are
@@ -120,9 +122,10 @@ These are the things you would otherwise find out by trying them. Release 0.1.2:
   incoming ones.
 - **Linux x86_64 only.** There is no Windows, macOS or arm64 build, no automatic update, and no
   operating-system code signing. You verify downloads yourself ([below](#verify-a-download)).
-- **There is no web app yet.** `packages/app-web` will hold a web client for NFX videos at
-  web.nutflix.xyz ([ADR 0022](docs/decisions/0022-a-web-client-for-nfx.md)). It is not built yet.
-  The web portal of the early plans, with Hypercore in the page, is not part of this repository.
+- **The web client plays free NFX videos only.** `packages/app-web` is the client at
+  https://web.nutflix.xyz/ ([ADR 0022](docs/decisions/0022-a-web-client-for-nfx.md)); paid videos,
+  the wallet and Studio are in the desktop app alone. The web portal of the early plans, with
+  Hypercore in the page, is not part of this repository.
 
 ## Install
 
@@ -135,7 +138,7 @@ Download the files for the latest release from the
 | `Nutflix-<version>-x64.AppImage` | Other distributions. **Not Ubuntu 24.04 or later**: it cannot start there, so use the `.deb` |
 
 ```sh
-sudo apt install ./nutflix_0.1.2_amd64.deb      # the ./ matters
+sudo apt install ./nutflix_0.1.3_amd64.deb      # the ./ matters
 nutflix                                          # or start Nutflix from your menu
 ```
 
@@ -159,7 +162,7 @@ To check the signature, use a checkout of this repository (Node 22.18 or newer; 
 ```sh
 git clone https://github.com/SovereignTechnology/nutflix-pear.git && cd nutflix-pear
 npm ci --ignore-scripts
-node scripts/release-verify.mjs release-event.json nutflix_0.1.2_amd64.deb   # one or more files
+node scripts/release-verify.mjs release-event.json nutflix_0.1.3_amd64.deb   # one or more files
 node scripts/release-verify.mjs release-event.json --all ~/Downloads          # needs both files
 ```
 

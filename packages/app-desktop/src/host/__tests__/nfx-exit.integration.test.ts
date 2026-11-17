@@ -216,6 +216,9 @@ describe.skipIf(!EXIT)('slice 5f: the exit run, nutflix-pear ⇄ nfxd over iroh'
       pkg,
       '--max-height',
       '720',
+      // Two sizes: nfx-package makes one by default since nfx #76.
+      '--renditions',
+      '720p,360p',
       '--preset',
       'veryfast',
     ]);

@@ -16,19 +16,18 @@
 # honoured (--locked), least-privilege token, no secrets, inputs only through env. Downloads, all
 # for a test that runs no project code beyond nfx's own: the runner's rustup, wasm-pack (a pinned
 # release, sha256-checked, the pin nfx's own CI uses), ffmpeg (apt), and Playwright's Chromium
-# (the player's own test dependency, installed with `playwright install`). Not a required check.
+# (the player's own test dependency, installed with `playwright install`). Not a required check,
+# and it keeps no cache.
 name: nfx-web-e2e
 
 on:
   pull_request:
     paths:
       - '.github/workflows/nfx-web-e2e.yml'
+  # By hand too, but only at the pinned commit: a run that took any nfx commit as an input ran
+  # that code in this repository's default-branch scope (CodeQL actions/cache-poisoning). To try
+  # another nfx commit, move NFX_SHA in a pull request.
   workflow_dispatch:
-    inputs:
-      nfx_sha:
-        description: 'nfx commit to test (40 lowercase hex); empty = the pinned one'
-        required: false
-        default: ''
 
 permissions:
   contents: read
@@ -39,11 +38,10 @@ concurrency:
 
 env:
   RUST_VERSION: '1.98.0'
-  # nfx 0.1.1's release commit candidate: nfx main (#26, the relay searches titles) with the crate
-  # versions at 0.1.1.
-  NFX_SHA: '20f78acf41bcd804909faf7a576d35303ad6a73b'
-  WASM_PACK_VERSION: '0.13.1'
-  WASM_PACK_SHA256: 'c539d91ccab2591a7e975bcf82c82e1911b03335c80aa83d67ad25ed2ad06539'
+  # nfx v0.1.2's release commit (#92). wasm-pack is the release that commit's own CI pins.
+  NFX_SHA: '491d35ec3c70e5bdd7b8871bb6a64946d4ed3761'
+  WASM_PACK_VERSION: '0.15.1'
+  WASM_PACK_SHA256: '410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
 
@@ -56,17 +54,12 @@ jobs:
         shell: bash
     steps:
       - name: the nfx commit (40 lowercase hex)
-        id: sha
-        env:
-          INPUT_SHA: ${{ inputs.nfx_sha }}
         run: |
-          s="${INPUT_SHA:-$NFX_SHA}"
-          [[ $s =~ ^[0-9a-f]{40}$ ]] || { echo "::error::nfx_sha must be 40 lowercase hex"; exit 1; }
-          echo "sha=$s" >> "$GITHUB_OUTPUT"
+          [[ $NFX_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "::error::NFX_SHA must be 40 lowercase hex"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SovereignTechnology/nfx
-          ref: ${{ steps.sha.outputs.sha }}
+          ref: ${{ env.NFX_SHA }}
           path: nfx
           persist-credentials: false
       - name: the pinned toolchain and wasm target (the runner's rustup)
@@ -83,20 +76,11 @@ jobs:
           wasm-pack --version
       - name: ffmpeg (the tests generate and package a clip)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      # No caches: the run is not a required check, and builds cold (as release.yml does).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: nfx/web/player/package-lock.json
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            nfx/crates/target
-          key: nfx-web-e2e-${{ env.RUST_VERSION }}-${{ steps.sha.outputs.sha }}
-          restore-keys: |
-            nfx-web-e2e-${{ env.RUST_VERSION }}-
+          package-manager-cache: false
       - name: nfxd and nfx-package, debug builds (the tests look in crates/target/debug)
         working-directory: nfx/crates
         run: cargo build --locked -p nfxd -p nfx-media --bins
@@ -105,9 +89,10 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
-      - name: build the player (WASM and bundle)
+      # Since nfx #80, e2e:mesh also drives the library build (out-lib/player.js) as a client.
+      - name: build the player (WASM and bundle) and the library
         working-directory: nfx/web/player
-        run: npm run build
+        run: npm run build && npm run build:lib
       - name: unit
         working-directory: nfx/web/player
         run: npm run unit
