@@ -111,7 +111,7 @@ describe.skipIf(!LIVE)('the live testnet: a fresh install finds and plays a seed
         `search "${SEARCH}" finds it among ${String(found.items.length)}`,
       ).toBe(true);
     }
-    console.log(
+    console.warn(
       `listed: ${video.title} (${String(video.segs)} files, root ${video.root.slice(0, 12)}…, ` +
         `${String(video.durationSec ?? '?')} s)`,
     );
@@ -148,7 +148,7 @@ describe.skipIf(!LIVE)('the live testnet: a fresh install finds and plays a seed
       `iroh endpoints in ${String(events.length)} beacons`,
     ).toBeGreaterThan(0);
     const named = [...sources.held.named.$map];
-    console.log(
+    console.warn(
       `beacons: ${String(events.length)}, seeders ${String(sources.held.seeders)} ` +
         `(${String(sources.held.all)} hold all), iroh ${String(sources.iroh.length)}, ` +
         `hyperdht ${String(sources.hyperdht.length)}, held ${JSON.stringify(named)}`,
@@ -191,7 +191,7 @@ describe.skipIf(!LIVE)('the live testnet: a fresh install finds and plays a seed
     const first = open();
     const t0 = Date.now();
     const opened = await within(w.call('nfx.play.open', first), 180_000, 'open').catch(say);
-    console.log(
+    console.warn(
       `opened ${opened.rendition} in ${String(Date.now() - t0)} ms; renditions ` +
         opened.renditions
           .map((r) => `${r.id}${r.resolution === undefined ? '' : ` ${r.resolution}`}`)
@@ -202,7 +202,7 @@ describe.skipIf(!LIVE)('the live testnet: a fresh install finds and plays a seed
     const secs = (Date.now() - t1) / 1000;
     expect(whole.status, 'the whole view').toBe(200);
     expect(whole.body.length).toBeGreaterThan(MIB);
-    console.log(
+    console.warn(
       `${opened.rendition}: ${String(whole.body.length)} bytes in ${secs.toFixed(1)} s ` +
         `(${((whole.body.length * 8) / secs / 1e6).toFixed(1)} Mbit/s), sha256 ${sha256(whole.body).slice(0, 16)}…`,
     );
@@ -241,7 +241,7 @@ describe.skipIf(!LIVE)('the live testnet: a fresh install finds and plays a seed
       }).catch(say);
       expect(middle.status, `${r}: a middle MiB`).toBe(206);
       expect(middle.body.length).toBe(MIB);
-      console.log(`${r}: ${String(size)} bytes; first and middle MiB served`);
+      console.warn(`${r}: ${String(size)} bytes; first and middle MiB served`);
       await w.call('nfx.play.close', { sid: o.sid });
     }
   });

@@ -16,7 +16,8 @@
 # honoured (--locked), least-privilege token, no secrets, inputs only through env. Downloads, all
 # for a test that runs no project code beyond nfx's own: the runner's rustup, wasm-pack (a pinned
 # release, sha256-checked, the pin nfx's own CI uses), ffmpeg (apt), and Playwright's Chromium
-# (the player's own test dependency, installed with `playwright install`). Not a required check.
+# (the player's own test dependency, installed with `playwright install`). Not a required check,
+# and it keeps no cache.
 name: nfx-web-e2e
 
 on:
@@ -82,20 +83,13 @@ jobs:
           wasm-pack --version
       - name: ffmpeg (the tests generate and package a clip)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      # No caches (CodeQL actions/cache-poisoning): a dispatch may build any nfx commit, and its
+      # code runs in this repository's default-branch cache scope. The run is not a required check;
+      # it builds cold.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: nfx/web/player/package-lock.json
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            nfx/crates/target
-          key: nfx-web-e2e-${{ env.RUST_VERSION }}-${{ steps.sha.outputs.sha }}
-          restore-keys: |
-            nfx-web-e2e-${{ env.RUST_VERSION }}-
+          package-manager-cache: false
       - name: nfxd and nfx-package, debug builds (the tests look in crates/target/debug)
         working-directory: nfx/crates
         run: cargo build --locked -p nfxd -p nfx-media --bins
