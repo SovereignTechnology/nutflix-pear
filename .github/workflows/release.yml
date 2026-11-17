@@ -7,6 +7,11 @@
 #   push a `desktop-v<version>` tag   build, manifest, then a DRAFT GitHub release (not public:
 #                                      Cameron publishes it once the notice is signed)
 #   a PR that touches the packaging    the same build and manifest, no release (a dry run)
+#   dispatched on a branch             the same build and manifest of that branch's head, no
+#                                      release: run on the commit to be tagged, before the tag,
+#                                      it shows the artifacts' sha256 in advance, and a second
+#                                      dispatch that they reproduce (SOURCE_DATE_EPOCH is the
+#                                      commit's time, so the tag's build makes the same bytes)
 #
 # No job holds a key or signs anything. Only `draft-release` can write (contents: write), only
 # on a tag, and it runs no project code: it attaches files the read-only jobs made.
@@ -22,6 +27,7 @@ on:
       - 'packages/app-desktop/packaging/**'
       - 'packages/app-desktop/package.json'
       - 'scripts/release-manifest.mjs'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -66,8 +72,15 @@ jobs:
           cd crates/iroh-helper
           cargo build --release --locked
           sha256sum target/release/nutflix-iroh-helper
+      # Not pinned (the runner's apt), so the build log records them: a dispatch build and the
+      # tag's build of one commit must make the same bytes, and a tool that moved between them is
+      # the first thing to compare.
       - name: system packages (dpkg's fakeroot, mksquashfs for the AppImage)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fakeroot squashfs-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fakeroot squashfs-tools
+          dpkg-query -W fakeroot squashfs-tools dpkg
+          echo "runner image: ${ImageOS:-?} ${ImageVersion:-?}"
       - run: npm ci --ignore-scripts
       - run: npm run build
       # Not an npm package: the pinned dated release. Checked here for a clear error; the maker
