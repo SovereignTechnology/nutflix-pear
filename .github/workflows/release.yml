@@ -72,8 +72,15 @@ jobs:
           cd crates/iroh-helper
           cargo build --release --locked
           sha256sum target/release/nutflix-iroh-helper
+      # Not pinned (the runner's apt), so the build log records them: a dispatch build and the
+      # tag's build of one commit must make the same bytes, and a tool that moved between them is
+      # the first thing to compare.
       - name: system packages (dpkg's fakeroot, mksquashfs for the AppImage)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fakeroot squashfs-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fakeroot squashfs-tools
+          dpkg-query -W fakeroot squashfs-tools dpkg
+          echo "runner image: ${ImageOS:-?} ${ImageVersion:-?}"
       - run: npm ci --ignore-scripts
       - run: npm run build
       # Not an npm package: the pinned dated release. Checked here for a clear error; the maker
