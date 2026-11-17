@@ -104,9 +104,10 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
-      - name: build the player (WASM and bundle)
+      # Since nfx #80, e2e:mesh also drives the library build (out-lib/player.js) as a client.
+      - name: build the player (WASM and bundle) and the library
         working-directory: nfx/web/player
-        run: npm run build
+        run: npm run build && npm run build:lib
       - name: unit
         working-directory: nfx/web/player
         run: npm run unit

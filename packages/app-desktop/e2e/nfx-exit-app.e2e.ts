@@ -375,6 +375,9 @@ void describe(
         pkg,
         '--max-height',
         '720',
+        // Two sizes: nfx-package makes one by default since nfx #76.
+        '--renditions',
+        '720p,360p',
         '--preset',
         'veryfast',
       ]);
