@@ -110,6 +110,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   port-forwarded seeder cells (nfx N1, `--iroh-bind`/`--iroh-external`) run instead of skipping,
   and `nfx-web-e2e` uses wasm-pack 0.15.1, the release nfx's own CI pins.
 
+- **A live testnet check for releases** (`host/__tests__/nfx-live.integration.test.ts`, only with
+  `NUTFLIX_LIVE_RUN=1`): the real worker and iroh helper, with a fresh install's settings and the
+  host's catalogue and beacon reader, find a video somebody seeds on `nfx:testnet:1` (Network tab,
+  search, by address) and play it end to end over the internet. It publishes and seeds nothing.
+  No workflow runs it; it is run by hand before a release.
+
 ## [0.1.2] - 2026-11-07
 
 A Network tab: every free video on the NFX network, in one place.
