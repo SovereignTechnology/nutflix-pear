@@ -22,6 +22,11 @@ ignore = [
     # the same two nfx ignores. Revisit at every iroh bump.
     { id = "RUSTSEC-2024-0436", reason = "paste (proc macro) via iroh > netwatch > netdev > netlink-packet-core; unmaintained notice only" },
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error (proc macro) via iroh-blobs > bao-tree > genawaiter; unmaintained notice only" },
+    # chrono 0.4.45, pulled in by iroh-blobs and by wmi (netwatch's Windows network watcher, under
+    # iroh and portmapper). RustSec marks every chrono version unmaintained (informational, no
+    # patched release; it suggests jiff or time); no vulnerability is reported. Remove when iroh,
+    # iroh-blobs and netwatch drop chrono. Revisit at every iroh bump, and by 2026-12-31.
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4.45 via iroh-blobs, and iroh > netwatch > wmi (Windows); unmaintained notice only, no patched release; revisit by 2026-12-31" },
     # nfx's row, verbatim in substance: crypto-bigint 0.5.5 via str0m 0.24.1 > dimpl 0.7 (and
     # str0m-rust-crypto 0.6) > ecdsa/p256/p384 > elliptic-curve 0.13, the WebRTC DTLS path only.
     # Fixed only in crypto-bigint >= 0.7.6, which no dimpl or str0m release uses yet. Remove at the

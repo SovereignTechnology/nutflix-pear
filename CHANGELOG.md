@@ -7,6 +7,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### CI
+
+- **`rust-advisories`** ignores RUSTSEC-2026-0543 (chrono is unmaintained; every version, no patched
+  release), which reaches the iroh helper through iroh-blobs and netwatch's Windows watcher. It is a
+  maintenance notice, not a vulnerability; the ignore is dated like the helper's others (revisit by
+  2026-12-31, and at every iroh bump).
+
 ## [0.1.3] - 2026-11-17
 
 Free video with no setup: NFX is on by default, on the test network's public relays, and the app
