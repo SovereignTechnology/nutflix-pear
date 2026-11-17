@@ -26,9 +26,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { NfxAddress, NfxVideo, RelayUrl } from '@sovit/core';
+import type { NfxAddress, NfxVideo } from '@sovit/core';
 import { nfx, nostr } from '@sovit/core';
+import { useWebSocketImplementation } from 'nostr-tools/pool';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import WebSocket from 'ws';
 
 import type { WorkerEvent } from '../../ipc/worker-protocol.js';
 import type { WorkerClient } from '../../worker/__tests__/helpers/harness.js';
@@ -41,6 +43,20 @@ import { DEFAULT_NFX, DEFAULT_SETTINGS } from '../settings/settings.js';
 import { BIN, nowS, runOnce, sha256, sid, tail } from './support/nfx-exit-kit.js';
 
 vi.setConfig({ testTimeout: 1_200_000, hookTimeout: 120_000 });
+
+// As scripts/release-publish.mjs: under Node 22 (undici's WebSocket), nostr-tools 2.25.2's
+// onerror -> close() on a socket still connecting re-fires `error` synchronously until the stack
+// overflows, so a default relay that refuses the connection (relay.damus.io answers some networks
+// with 403) throws uncaught RangeErrors. The app runs on Electron's Node 24, where it does not
+// happen. So the pool uses `ws` here, and every socket keeps an error listener of its own (`ws`
+// emits one after nostr-tools has dropped its handlers when a connect times out).
+class RelaySocket extends WebSocket {
+  constructor(...args: ConstructorParameters<typeof WebSocket>) {
+    super(...args);
+    this.on('error', () => undefined);
+  }
+}
+if (process.env['NUTFLIX_LIVE_RUN'] === '1') useWebSocketImplementation(RelaySocket);
 
 const LIVE = process.env['NUTFLIX_LIVE_RUN'] === '1';
 const ADDRESS = (process.env['NFX_LIVE_ADDRESS'] ?? '') as NfxAddress;
