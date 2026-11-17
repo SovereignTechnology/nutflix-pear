@@ -7,6 +7,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-17
+
+Free video with no setup: NFX is on by default, on the test network's public relays, and the app
+trades video with web browsers over WebRTC, signaled over Nostr.
+
 ### Added
 
 - **The app trades video with web browsers, directly** (issue #89, ADR 0023; the maintainer's
@@ -74,7 +79,6 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   nfx 491d35e). The library now asks each origin which renditions it holds before playing from
   it; what seeders' beacons claim is only a hint, so a stranger's beacon can no longer keep an
   origin out of play (nfx #85). It also takes hls.js 1.7.4. The desktop app is unchanged by it.
-
 - **NFX is on by default, on the test network's public relays** (ADR 0020's 2026-11-08
   amendment): `wss://relay.nutflix.xyz` to find videos and `https://iroh.nutflix.xyz/` to reach
   seeders behind home routers, both run by SovTech. Free videos show up with no setup. Everything
@@ -87,9 +91,6 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   nothing; this relay is free, open and does. It also means one more relay operator sees a fresh
   install's IP address and queries (README, SECURITY.md). A saved relay list still replaces the
   defaults, so existing installs are unchanged.
-- **Docs: the public iroh relay.** `nfx:testnet:1` now has a public iroh relay,
-  `https://iroh.nutflix.xyz/`. The README's known limitations say how to opt in (Settings › NFX
-  network › iroh relays; nothing is added for you, the URL must be exactly `https://host/`, at most 4) and that there is still no public scoped Nostr relay. No code, defaults or contracts changed.
 
 ### CI
 
@@ -107,8 +108,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 - **The interop runs judge the app against nfx 0.1.2** (nfx 491d35e, its release commit):
   `nfx-exit`, `nfx-exit-two-host`, `spike-iroh` and `nfx-web-e2e` build nfxd from it, where they
   built 0.1.0's (5d628db) or the 0.1.1 candidate (20f78ac). At this nfxd the NAT matrix's
-  port-forwarded seeder cells (nfx N1, `--iroh-bind`/`--iroh-external`) run instead of skipping,
-  and `nfx-web-e2e` uses wasm-pack 0.15.1, the release nfx's own CI pins.
+  port-forwarded seeder cells (nfx N1, `--iroh-bind`/`--iroh-external`) run instead of skipping
+  (69 of 69 cells pass), and `nfx-web-e2e` uses wasm-pack 0.15.1, the release nfx's own CI pins.
+  nfx-package makes one size by default since nfx #76, so the exit runs ask it for two
+  (`--renditions 720p,360p`). `nfx-web-e2e` builds the player library too, keeps no cache, and
+  no longer takes an nfx commit as a dispatch input: it builds its pinned one, and another is
+  tried by moving the pin in a pull request (CodeQL `actions/cache-poisoning`).
 
 - **A live testnet check for releases** (`host/__tests__/nfx-live.integration.test.ts`, only with
   `NUTFLIX_LIVE_RUN=1`): the real worker and iroh helper, with a fresh install's settings and the
@@ -428,7 +433,8 @@ The first release of the desktop app, for Linux x86_64. It is experimental: read
 - Windows, macOS and arm64 builds, automatic updates and operating-system code signing.
 - A web app: `packages/app-web` is an empty scaffold.
 
-[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.2...HEAD
+[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.3...HEAD
+[0.1.3]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.2...desktop-v0.1.3
 [0.1.2]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.1...desktop-v0.1.2
 [0.1.1]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.0...desktop-v0.1.1
 [0.1.0]: https://github.com/SovereignTechnology/nutflix-pear/releases/tag/desktop-v0.1.0

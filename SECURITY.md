@@ -61,7 +61,7 @@ These are known limits of the released app, not bugs awaiting a report:
   (ADR 0009), and so do NFX's two default relays, `relay.nutflix.xyz` and `iroh.nutflix.xyz`, which
   SovTech runs (ADR 0020, 2026-11-08); switch NFX off in Settings to stop contacting them. The app
   makes no private-browsing claim.
-- **WebRTC peers, a STUN server and signaling relays see you** (on `main`, after 0.1.2; ADR 0023).
+- **WebRTC peers, a STUN server and signaling relays see you** (since 0.1.3; ADR 0023).
   With NFX on, the app trades video with web browsers over WebRTC. The peers it connects to learn
   your IP address; so does the network's STUN server (`web.nutflix.xyz:3478`, asked every 25 s
   while this runs). The signaling relays (by default `relay.primal.net` and `relay.ditto.pub`,
