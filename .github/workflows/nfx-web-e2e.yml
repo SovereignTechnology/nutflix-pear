@@ -24,12 +24,10 @@ on:
   pull_request:
     paths:
       - '.github/workflows/nfx-web-e2e.yml'
+  # By hand too, but only at the pinned commit: a run that took any nfx commit as an input ran
+  # that code in this repository's default-branch scope (CodeQL actions/cache-poisoning). To try
+  # another nfx commit, move NFX_SHA in a pull request.
   workflow_dispatch:
-    inputs:
-      nfx_sha:
-        description: 'nfx commit to test (40 lowercase hex); empty = the pinned one'
-        required: false
-        default: ''
 
 permissions:
   contents: read
@@ -56,17 +54,12 @@ jobs:
         shell: bash
     steps:
       - name: the nfx commit (40 lowercase hex)
-        id: sha
-        env:
-          INPUT_SHA: ${{ inputs.nfx_sha }}
         run: |
-          s="${INPUT_SHA:-$NFX_SHA}"
-          [[ $s =~ ^[0-9a-f]{40}$ ]] || { echo "::error::nfx_sha must be 40 lowercase hex"; exit 1; }
-          echo "sha=$s" >> "$GITHUB_OUTPUT"
+          [[ $NFX_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "::error::NFX_SHA must be 40 lowercase hex"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SovereignTechnology/nfx
-          ref: ${{ steps.sha.outputs.sha }}
+          ref: ${{ env.NFX_SHA }}
           path: nfx
           persist-credentials: false
       - name: the pinned toolchain and wasm target (the runner's rustup)
@@ -83,9 +76,7 @@ jobs:
           wasm-pack --version
       - name: ffmpeg (the tests generate and package a clip)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
-      # No caches (CodeQL actions/cache-poisoning): a dispatch may build any nfx commit, and its
-      # code runs in this repository's default-branch cache scope. The run is not a required check;
-      # it builds cold.
+      # No caches: the run is not a required check, and builds cold (as release.yml does).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
