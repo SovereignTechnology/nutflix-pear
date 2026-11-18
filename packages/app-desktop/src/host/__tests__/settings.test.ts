@@ -37,17 +37,17 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe('the first-run relays (ADR 0009 and its 2026-11-07 amendment)', () => {
-  it('are exactly the four public relays the README and SECURITY.md name, each read and write over wss', () => {
+describe('the first-run relays (ADR 0009, its 2026-11-07 amendment, and 2026-11-18)', () => {
+  it('are exactly the two public relays the README and SECURITY.md name, each read and write over wss', () => {
+    // The maintainer, 2026-11-18: relay.damus.io (refuses this project's address) and nos.lol
+    // (has rate-limited it) are out; relay.nutflix.xyz is not a general relay (NFX's kinds only).
     expect(DEFAULT_SETTINGS.relays.map((r) => r.url)).toEqual([
-      'wss://relay.damus.io',
-      'wss://nos.lol',
       'wss://relay.primal.net',
       // The only free, open relay found that answers NIP-50, which Search relies on.
       'wss://relay.ditto.pub',
     ]);
     expect(DEFAULT_SETTINGS.relays.every((r) => r.read && r.write)).toBe(true);
-    expect(new Set(DEFAULT_SETTINGS.relays.map((r) => r.url)).size).toBe(4);
+    expect(new Set(DEFAULT_SETTINGS.relays.map((r) => r.url)).size).toBe(2);
   });
 
   it('are replaced, not extended, by a stored list: an install with saved relays is unchanged', () => {
@@ -103,7 +103,7 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: 'dark',
-      // Contracts v18: a stored value from before the signaling relays gains the default pair.
+      // Contracts v18: a stored value from before the signaling relays gains the default list.
       nfx: { ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] },
     });
     // A network a newer build added, or a cleartext relay off this computer: only `nfx` goes.
@@ -134,7 +134,7 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     };
     expect(parseStoredSettings({ v: 1, settings: { nfx: rtc } })?.settings.nfx).toEqual(rtc);
     // A stored v16 value (none of them): absent WebRTC is on, at the default STUN, and the
-    // default signaling pair is filled in so Settings lists what is used.
+    // default signaling list is filled in so Settings lists what is used.
     expect(parseStoredSettings({ v: 1, settings: { nfx } })?.settings.nfx).toEqual({
       ...nfx,
       meshRelays: [...DEFAULT_NFX_MESH_RELAYS],
@@ -143,6 +143,16 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(
       parseStoredSettings({ v: 1, settings: { nfx: { ...nfx, meshRelays: [] } } })?.settings.nfx,
     ).toEqual({ ...nfx, meshRelays: [] });
+    // A saved list stays as it is, the defaults before 2026-11-18 included (no migration rewrites
+    // a saved list), and a signaling endpoint on a path is a relay like any other.
+    for (const meshRelays of [
+      ['wss://relay.primal.net', 'wss://relay.ditto.pub'],
+      ['wss://relay.nutflix.xyz/mesh'],
+    ]) {
+      expect(
+        parseStoredSettings({ v: 1, settings: { nfx: { ...nfx, meshRelays } } })?.settings.nfx,
+      ).toEqual({ ...nfx, meshRelays });
+    }
     for (const bad of [
       { ...nfx, webrtc: 'yes' },
       { ...nfx, stunServers: ['stun:stun.example:3478'] },
@@ -183,9 +193,20 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       // Contracts v18: the relays WebRTC is signaled on (NFX-10 §6).
       meshRelays: [...DEFAULT_NFX_MESH_RELAYS],
     });
+    // The maintainer, 2026-11-18: the network's own signaling endpoint first (on a path of the
+    // scoped relay's host, which refuses kind 25050 itself), then two of the app's default relays.
+    expect(DEFAULT_NFX_MESH_RELAYS).toEqual([
+      'wss://relay.nutflix.xyz/mesh',
+      'wss://relay.primal.net',
+      'wss://relay.ditto.pub',
+    ]);
+    const firstRunHosts = [
+      ...DEFAULT_SETTINGS.relays.map((x) => x.url),
+      ...DEFAULT_NFX.scopedRelays,
+    ].map((u) => new URL(u).host);
     for (const r of DEFAULT_NFX_MESH_RELAYS) {
-      // Two of the app's own default relays, so a first run contacts no new host for signaling.
-      expect(DEFAULT_SETTINGS.relays.map((x) => x.url)).toContain(r);
+      // Hosts a first run contacts anyway, so signaling adds no new one.
+      expect(firstRunHosts).toContain(new URL(r).host);
     }
     // The defaults pass the same checks a user's settings do (wss://, the iroh relay's form).
     expect(parseStoredSettings({ v: 1, settings: { nfx: DEFAULT_NFX } })?.settings.nfx).toEqual(
@@ -215,7 +236,7 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: 'dark',
-      // Contracts v18: a stored value from before the signaling relays gains the default pair.
+      // Contracts v18: a stored value from before the signaling relays gains the default list.
       nfx: { ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] },
     });
     const s = new SettingsStore(dir, memoryLogger());
@@ -252,7 +273,7 @@ describe('SettingsStore (atomic JSON in userData)', () => {
     expect(parseStoredSettings({ v: 1, settings: { theme: 'dark', nfx } })?.settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: 'dark',
-      // Contracts v18: a stored value from before the signaling relays gains the default pair.
+      // Contracts v18: a stored value from before the signaling relays gains the default list.
       nfx: { ...nfx, meshRelays: [...DEFAULT_NFX_MESH_RELAYS] },
     });
     const s = new SettingsStore(dir, memoryLogger());

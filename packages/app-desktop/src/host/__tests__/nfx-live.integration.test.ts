@@ -5,7 +5,7 @@
  * helper, and the host's own NFX code: the catalogue (`NfxCatalog` over the host's `NostrClient`
  * and Nostr pool, its NIP-11 search routing), the beacon reader (`NfxBeaconWatch`, `beaconPeers`)
  * and the worker's NFX settings (`nfxWorkerArgs` of `DEFAULT_SETTINGS`). The relays are the
- * defaults this version ships: the four public read relays, `wss://relay.nutflix.xyz` and
+ * defaults this version ships: the two public read relays, `wss://relay.nutflix.xyz` and
  * `https://iroh.nutflix.xyz/`.
  *
  *   1. The catalogue's Network feed lists the video, its search finds it by `NFX_LIVE_SEARCH`, and
@@ -46,8 +46,8 @@ vi.setConfig({ testTimeout: 1_200_000, hookTimeout: 120_000 });
 
 // As scripts/release-publish.mjs: under Node 22 (undici's WebSocket), nostr-tools 2.25.2's
 // onerror -> close() on a socket still connecting re-fires `error` synchronously until the stack
-// overflows, so a default relay that refuses the connection (relay.damus.io answers some networks
-// with 403) throws uncaught RangeErrors. The app runs on Electron's Node 24, where it does not
+// overflows, so a relay that refuses the connection (relay.damus.io, a default until 2026-11-18,
+// answers some networks with 403) throws uncaught RangeErrors. The app runs on Electron's Node 24, where it does not
 // happen. So the pool uses `ws` here, and every socket keeps an error listener of its own (`ws`
 // emits one after nostr-tools has dropped its handlers when a connect times out).
 class RelaySocket extends WebSocket {

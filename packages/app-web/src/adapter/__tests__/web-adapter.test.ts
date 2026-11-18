@@ -578,7 +578,7 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     if (session.source.kind !== 'element') throw new Error('not an element source');
     session.source.attach(document.createElement('video'));
     await tick();
-    // No list saved: the default pair, the one the desktop app uses too.
+    // No list saved: the default list, the one the desktop app uses too.
     expect(r.player.last.options.signaling).toEqual({
       kind: 'nostr',
       relays: [...WEB_MESH_RELAYS],

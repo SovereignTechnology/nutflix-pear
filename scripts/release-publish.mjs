@@ -65,11 +65,15 @@ class RelaySocket extends WebSocket {
 }
 useWebSocketImplementation(RelaySocket);
 
-/** Where the notice is published (Cameron, 2026-10-02: the app's three default relays). */
+/**
+ * Where the notice is published (Cameron, 2026-10-02: the app's three default relays, then).
+ * 2026-11-18: relay.damus.io is out (it refuses this project's address, and the 0.1.3 notice
+ * failed there) and relay.ditto.pub is in; nos.lol stays (it took the 0.1.3 notice).
+ */
 export const RELEASE_RELAYS = Object.freeze([
-  'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',
+  'wss://relay.ditto.pub',
 ]);
 /** How long each relay has to answer the publish. */
 export const PUBLISH_TIMEOUT_MS = 15_000;

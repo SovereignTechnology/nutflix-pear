@@ -480,7 +480,9 @@ step on the maintainer's machine:
 4. **The result is checked by the same `verifyRelease`** users run, and saved as
    `release-event.json`, never over an existing file.
 5. **Publishing** happens only after typing `publish`, to `wss://relay.damus.io`,
-   `wss://nos.lol` and `wss://relay.primal.net`, and each relay's answer is reported.
+   `wss://nos.lol` and `wss://relay.primal.net`, and each relay's answer is reported. (Since
+   2026-11-18: `wss://nos.lol`, `wss://relay.primal.net` and `wss://relay.ditto.pub`; see open
+   question 6.)
 
 An already signed event skips the signing (verify, confirm, publish: a retry), and `--dry-run`
 stops before publishing. Every relay socket uses `ws`: under Node 22's built-in WebSocket,
@@ -588,6 +590,9 @@ as a dry run. The Windows and macOS jobs stay in the GitLab file for later.
    only). History stays in git tags and the GitHub releases; the update check reads one event.
    The signed notice goes to the app's default relays: `wss://relay.damus.io`, `wss://nos.lol`,
    `wss://relay.primal.net`.
+   **Note 2026-11-18:** the notice relays are now `wss://nos.lol`, `wss://relay.primal.net` and
+   `wss://relay.ditto.pub` (`RELEASE_RELAYS`): relay.damus.io refuses this project's address and
+   the 0.1.3 notice failed there.
 7. Confirm the pinned AppImage runtime digests, for example with
    `gh release view 20251108 -R AppImage/type2-runtime` or by checking the `.sig` files. They
    were read from GitHub's release listing. A wrong pin fails closed.

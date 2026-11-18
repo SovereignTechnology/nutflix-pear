@@ -48,8 +48,8 @@ describe('nfxWorkerArgs (#89)', () => {
     expect(nfxWorkerArgs(with_({ ...NFX, irohRelays }), true).irohRelays).toEqual(irohRelays);
   });
 
-  it('signals on the default pair unless the user lists relays', () => {
-    expect(DEFAULT_NFX_MESH_RELAYS).toHaveLength(2);
+  it('signals on the default list unless the user lists relays', () => {
+    expect(DEFAULT_NFX_MESH_RELAYS).toHaveLength(3);
     expect(nfxMeshRelays(with_(NFX))).toEqual(DEFAULT_NFX_MESH_RELAYS);
     expect(nfxMeshRelays(DEFAULT_SETTINGS)).toEqual(DEFAULT_NFX_MESH_RELAYS);
     const meshRelays = ['wss://signal.test' as RelayUrl];

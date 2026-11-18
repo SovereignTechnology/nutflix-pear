@@ -63,10 +63,10 @@ function caught(fn: () => unknown): WebAdapterError {
 }
 
 describe('defaults (ADR 0022 items 4 to 6)', () => {
-  it("ADR 0009's four read relays, NFX on with relay.nutflix.xyz and two signaling relays, our STUN", () => {
+  it('two public read relays, NFX on with relay.nutflix.xyz and three signaling relays, our STUN', () => {
+    // The maintainer, 2026-11-18: no relay.damus.io and no nos.lol, and not relay.nutflix.xyz
+    // either (it keeps NFX's kinds only; comments, reactions and profiles go elsewhere).
     expect(DEFAULT_WEB_SETTINGS.relays.map((r) => r.url)).toEqual([
-      'wss://relay.damus.io',
-      'wss://nos.lol',
       'wss://relay.primal.net',
       'wss://relay.ditto.pub',
     ]);
@@ -74,8 +74,13 @@ describe('defaults (ADR 0022 items 4 to 6)', () => {
       enabled: true,
       network: 'nfx:testnet:1',
       scopedRelays: ['wss://relay.nutflix.xyz'],
-      // Pear #89: the pair the desktop app defaults to as well, so the two meet. No tracker.
-      meshRelays: ['wss://relay.primal.net', 'wss://relay.ditto.pub'],
+      // Pear #89: the list the desktop app defaults to as well, so the two meet. No tracker. The
+      // network's own signaling endpoint first (2026-11-18), on a path beside the scoped relay.
+      meshRelays: [
+        'wss://relay.nutflix.xyz/mesh',
+        'wss://relay.primal.net',
+        'wss://relay.ditto.pub',
+      ],
     });
     expect(DEFAULT_WEB_SETTINGS.nfx?.irohRelays).toBeUndefined();
     expect(WEB_ICE_SERVERS).toEqual([{ urls: ['stun:web.nutflix.xyz:3478'] }]);
@@ -99,8 +104,19 @@ describe('isWebSettingsPatch', () => {
     ['hover preview', { hoverPreview: false }],
     ['loadRemoteImages off', { loadRemoteImages: false }],
     [
-      'NFX without a list of signaling relays (the default pair is used)',
+      'NFX without a list of signaling relays (the default list is used)',
       { nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } },
+    ],
+    [
+      'a signaling relay on a path (the network signaling endpoint beside its scoped relay)',
+      {
+        nfx: {
+          enabled: true,
+          network: 'nfx:testnet:1',
+          scopedRelays: ['wss://relay.nutflix.xyz'],
+          meshRelays: ['wss://relay.nutflix.xyz/mesh'],
+        },
+      },
     ],
     [
       'NFX with a local relay and a local signaling relay',
@@ -265,10 +281,19 @@ describe('parseStoredWebSettings: unreadable means defaults', () => {
       enabled: true,
       network: 'nfx:testnet:1',
       scopedRelays: ['wss://mine.example'],
-      meshRelays: ['wss://relay.primal.net', 'wss://relay.ditto.pub'],
+      meshRelays: [
+        'wss://relay.nutflix.xyz/mesh',
+        'wss://relay.primal.net',
+        'wss://relay.ditto.pub',
+      ],
     });
-    // A list the viewer saved, an empty one included, is kept as it is.
-    for (const meshRelays of [[], ['wss://signal.example']]) {
+    // A list the viewer saved, an empty one included, is kept as it is: the defaults before
+    // 2026-11-18 too, once saved (no migration rewrites a saved list).
+    for (const meshRelays of [
+      [],
+      ['wss://signal.example'],
+      ['wss://relay.primal.net', 'wss://relay.ditto.pub'],
+    ]) {
       const kept = parseStoredWebSettings(
         stored({ nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [], meshRelays } }),
       );

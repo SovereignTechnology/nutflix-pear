@@ -54,13 +54,14 @@ implementation built on iroh lives in [nfx](https://github.com/SovereignTechnolo
 - **Sign in** with a local key (kept encrypted on disk) or a NIP-46 remote signer such as a bunker.
 
 Defaults are chosen for privacy and safety: no default mint, seeding off, remote images off, and
-four public relays (`relay.damus.io`, `nos.lol`, `relay.primal.net`, `relay.ditto.pub`) that see your IP address and
+two public relays (`relay.primal.net`, `relay.ditto.pub`) that see your IP address and
 what you ask them for. NFX (free video) is on, on its test network's public relays, which SovTech
 runs: `wss://relay.nutflix.xyz` and `https://iroh.nutflix.xyz/`, and they see your IP address too.
 With NFX on, the app also trades video with web browsers over WebRTC (since 0.1.3): the
 peers it connects to see your IP address, as does the network's STUN server
-(`web.nutflix.xyz:3478`), and two of the default relays (`relay.primal.net`, `relay.ditto.pub`)
-carry the signaling, so they learn which videos you seed or watch.
+(`web.nutflix.xyz:3478`), and the signaling relays (the network's own
+`wss://relay.nutflix.xyz/mesh`, then `relay.primal.net` and `relay.ditto.pub`) learn which videos
+you seed or watch.
 You can change the relays and mints in Settings, and switch NFX off or change its relays in
 Settings › NFX network.
 
