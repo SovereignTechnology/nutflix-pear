@@ -5,7 +5,12 @@
  * a mint outage, a lost response after the mint spent the inputs, and a mint that strips DLEQ.
  */
 import { describe, expect, it } from 'vitest';
-import { getPubKeyFromPrivKey, hasValidDleq, Amount, type RequestFn } from '@cashu/cashu-ts';
+import {
+  getPubKeyFromPrivKey,
+  verifyMintSignatures,
+  Amount,
+  type RequestFn,
+} from '@cashu/cashu-ts';
 
 import type { CashuP2pkPubkey, MintUrl, Sats, UnixSeconds } from '../../contracts/index.js';
 import { TestMint } from '../../mocks/test-mint.js';
@@ -176,7 +181,13 @@ describe('CashuWallet (NUT-04 / NUT-11 / NUT-03 / NUT-05 over a real mint)', () 
     expect(proofTotal(set.proofs)).toBe(10);
     for (const p of set.proofs) {
       expect(p.dleq?.r).toBeDefined();
-      expect(hasValidDleq({ ...p, amount: Amount.from(p.amount) }, mint.keyset())).toBe(true);
+      const checked = await verifyMintSignatures(
+        [{ ...p, amount: Amount.from(p.amount) }],
+        () => mint.keyset(),
+        { require: true },
+      );
+      expect(checked.invalid).toEqual([]);
+      expect(checked.valid).toHaveLength(1);
       expect(checkPayLock(p.secret, to.pub, { binding: seller })).toEqual({ ok: true });
     }
     const fee = 100 - 10 - (await wallet.balance(MINT));
@@ -426,7 +437,13 @@ describe('F31: a lost answer loses nothing (journal + NUT-09 restore)', () => {
     const keys = await wallet.keyset(MINT, mint.keysetId);
     for (const p of set.proofs) {
       expect(checkPayLock(p.secret, recipient).ok).toBe(true);
-      expect(hasValidDleq({ ...p, amount: Amount.from(p.amount) }, keys)).toBe(true);
+      const checked = await verifyMintSignatures(
+        [{ ...p, amount: Amount.from(p.amount) }],
+        () => keys,
+        { require: true },
+      );
+      expect(checked.invalid).toEqual([]);
+      expect(checked.valid).toHaveLength(1);
     }
     expect(await wallet.balance(MINT)).toBe(13);
     expect(await store.pending(MINT)).toEqual([]);

@@ -15,7 +15,7 @@
  * streams, three full seeders and 48 blocks read at once: 65–67 deliveries without this router,
  * 48 with it.
  *
- * What it changes on each attached core (hypercore 11.35.3; `__tests__/one-peer-router.test.ts`
+ * What it changes on each attached core (hypercore 11.40.3; `__tests__/one-peer-router.test.ts`
  * pins every internal named here and fails loudly when one moves):
  *
  *   1. `replicator.hotswaps` becomes a queue that never races. `pick(peer)` yields a block only
@@ -75,7 +75,7 @@ import type { Logger } from '../log/logger.js';
 import { toHex } from '../util/hex.js';
 
 /** The hypercore release whose internals this module was written and tested against. */
-export const ROUTED_HYPERCORE_VERSION = '11.35.3';
+export const ROUTED_HYPERCORE_VERSION = '11.40.3';
 /**
  * A request unanswered this long, from a peer that delivered nothing for as long, is moved to
  * another peer that has the block. A 64 KiB block takes well under a second from any peer worth
@@ -170,7 +170,7 @@ export interface OnePeerRouterStats {
   readonly failovers: number;
   /**
    * Blocks seen in flight at two peers at once without a failover — a request path this module
-   * does not know about (the pinned tests say hypercore 11.35.3 has none). Logged as an error.
+   * does not know about (the pinned tests say hypercore 11.40.3 has none). Logged as an error.
    */
   readonly raced: number;
 }
@@ -759,7 +759,7 @@ export class OnePeerRouter {
 
   private addPeer(route: Route, p: unknown): void {
     if (!isRoutablePeer(p)) {
-      // The pinned tests make this unreachable on 11.35.3. Should it happen, the peer cannot be
+      // The pinned tests make this unreachable on 11.40.3. Should it happen, the peer cannot be
       // capped by its credit, so it is asked for nothing at all: say so loudly.
       askNothing(p);
       this.log.error('replication peer without the pinned fields: asked for nothing');

@@ -622,6 +622,9 @@ export class Spender {
       throw new WalletError('bad-mint-response', 'locked outputs do not add up to the amount');
     const keys = w.getKeyset(sent[0]?.id);
     for (const p of result.send) {
+      // Sync `hasValidDleq`, deprecated in cashu-ts 4.11 for the async `verifyMintSignatures` and removed
+      // in v5; kept on purpose, with payment/engine.ts's `dleqOk` (same reason, same follow-up).
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- see above
       if (p.dleq?.r === undefined || !hasValidDleq(p, keys))
         throw new WalletError('bad-mint-response', 'a locked output has no valid DLEQ');
       const lock = checkPayLock(p.secret, opts.p2pk, binding === undefined ? {} : { binding });
