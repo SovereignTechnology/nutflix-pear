@@ -3,7 +3,7 @@
  * replication streams — no swarm, nothing leaves the process.
  *
  * The first block PINS the hypercore internals the router reaches into (it was written against
- * hypercore 11.35.3): the version, the objects and fields, and the lines of `lib/replicator.js`
+ * hypercore 11.40.3): the version, the objects and fields, and the lines of `lib/replicator.js`
  * whose order the router depends on. If any of it moves, these fail loudly — re-verify
  * `net/one-peer.ts` against the new release before touching the pin.
  *
@@ -279,7 +279,11 @@ describe('hypercore internals the router relies on (pinned)', () => {
     for (const m of ['_updatePeer', '_updatePeerNonPrimary'])
       expect(src(R[m])).toContain('peer.inflight >= peer.getMaxInflight()');
     // … and a queued `get` is taken by one peer; a range block is skipped while one is in flight.
-    expect(src(R['_updatePeer'])).toContain('b.queued === false || peer._requestBlock(b) === true');
+    // (11.40: a stale `queued === false` entry is dropped and the walk goes on, where 11.35 ended
+    // the walk on it; either way a block is requested only through `peer._requestBlock(b)`.)
+    expect(src(R['_updatePeer'])).toContain(
+      'if (b.queued === false) { blks.dequeue() continue } if (peer._requestBlock(b) === true) {',
+    );
     expect(src(P['_requestRangeBlock'])).toContain('if (b.inflight.length > 0)');
     // The one other path that sends a block request without that check is off by default.
     expect(src(P['_includeLastBlock'])).toContain(
