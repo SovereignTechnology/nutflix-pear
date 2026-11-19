@@ -527,6 +527,43 @@ describe('NFX-10 §1: the STUN servers a play’s beacons name reach the worker'
     expect(stunCalls().at(-1)).toEqual({ named: [] });
   });
 
+  it('keeps a shared named server until the last play closes, without redundant pushes', async () => {
+    r = await rig({ nfx: NFX_ON, irohHelper: HELPER });
+    await r.ready();
+    const a = r.host.adapter;
+    const address = await seeded('stun-shared-1');
+    const first = await a.openNfxSession(7, address);
+    await eventually(() => stunCalls().length === 1, 'the first STUN pick');
+    const second = await a.openNfxSession(8, address);
+    // updateSettings waits for the queued STUN selection to finish.
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls()).toEqual([{ named: [TWO_KEYS] }]);
+    await a.closeNfxSession(7, first.sid);
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls()).toEqual([{ named: [TWO_KEYS] }]);
+    await a.closeNfxSession(8, second.sid);
+    await eventually(() => stunCalls().length === 2, 'the last play clearing STUN');
+    expect(stunCalls()).toEqual([{ named: [TWO_KEYS] }, { named: [] }]);
+  });
+
+  it('combines distinct signers across plays and removes their votes when a play closes', async () => {
+    r = await rig({ nfx: NFX_ON, irohHelper: HELPER });
+    await r.ready();
+    const a = r.host.adapter;
+    const first = await a.openNfxSession(7, await seeded('stun-votes-1'));
+    await eventually(() => stunCalls().length === 1, 'the first STUN pick');
+    const second = await a.openNfxSession(8, await seeded('stun-votes-2'));
+    await a.updateSettings({ prefetchSeconds: 20 });
+    // ONE_KEY has one signer in each video; together they meet the two-key threshold.
+    expect(stunCalls()).toEqual([{ named: [TWO_KEYS] }, { named: [TWO_KEYS, ONE_KEY] }]);
+    await a.closeNfxSession(7, first.sid);
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls().at(-1)).toEqual({ named: [TWO_KEYS] });
+    await a.closeNfxSession(8, second.sid);
+    await eventually(() => stunCalls().length === 4, 'the last play clearing STUN');
+    expect(stunCalls().at(-1)).toEqual({ named: [] });
+  });
+
   it('names none while there is no WebRTC side: no helper, switched off, or no STUN server of the user’s own', async () => {
     for (const o of [
       { nfx: NFX_ON },

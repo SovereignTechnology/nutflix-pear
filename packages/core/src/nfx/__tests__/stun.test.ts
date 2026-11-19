@@ -8,7 +8,8 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { describe, expect, it } from 'vitest';
 
-import type { NfxVideo, NostrEvent } from '../../contracts/index.js';
+import type { NfxVideo, NostrEvent, NostrPubkey } from '../../contracts/index.js';
+import { MAX_AVAILABILITY_EVENTS, MAX_AVAILABILITY_SEEDERS } from '../availability.js';
 import { beaconContentText, beaconTags, type Endpoint } from '../beacon.js';
 import { VideoAddr } from '../namespace.js';
 import {
@@ -108,6 +109,19 @@ describe('isGlobalStunAddr', () => {
   });
 });
 
+describe('STUN address boundaries', () => {
+  it.each([
+    ['[1fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:3478', false],
+    ['[2000::]:3478', true],
+    ['[3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff]:3478', false],
+    ['[3fff:1000::]:3478', true],
+    ['[3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:3478', true],
+    ['[4000::]:3478', false],
+  ])('classifies %s at the global-unicast and documentation boundaries', (addr, allowed) => {
+    expect(isGlobalStunAddr(addr)).toBe(allowed);
+  });
+});
+
 describe('stunServerKey', () => {
   it('compares hosts case-blind, IPv6 in RFC 5952 form, ports without leading zeros', () => {
     expect(stunServerKey('WEB.Nutflix.XYZ:3478')).toBe('web.nutflix.xyz:3478');
@@ -204,6 +218,34 @@ describe('selectStunServers (NFX-10 §1)', () => {
     expect(pick([OWN], six, 0)).toEqual([]);
   });
 
+  it.each([-1, 0.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    'selects nothing for an invalid capacity %s',
+    (max) => {
+      expect(selectStunServers([OWN], [claim('a', A), claim('b', A)], max)).toEqual({
+        own: [],
+        named: [],
+      });
+    },
+  );
+
+  it('distinguishes ports on the same host while deduping configured spellings', () => {
+    const otherPort = '185.147.157.180:19302';
+    expect(
+      selectStunServers(
+        ['185.147.157.180:03478', A],
+        [claim('a', A), claim('b', A), claim('a', otherPort), claim('b', otherPort)],
+      ),
+    ).toEqual({ own: ['185.147.157.180:03478'], named: [otherPort] });
+  });
+
+  it('accepts a one-shot iterable and leaves caller-owned inputs unchanged', () => {
+    const own = Object.freeze([OWN]);
+    const claims = Object.freeze([Object.freeze(claim('a', B)), Object.freeze(claim('b', B))]);
+    expect(selectStunServers(own, claims.values())).toEqual({ own: [OWN], named: [B] });
+    expect(own).toEqual([OWN]);
+    expect(claims).toEqual([claim('a', B), claim('b', B)]);
+  });
+
   it(`reads at most ${String(MAX_STUN_CLAIMS)} claims`, () => {
     const junk = Array.from({ length: MAX_STUN_CLAIMS }, (_, i) =>
       claim(`k${String(i)}`, '10.0.0.1:1'),
@@ -283,6 +325,64 @@ describe('beaconStunClaims: the servers live beacons name, by their seeders', ()
     expect(claims).toEqual([claim(getPublicKey(one), B), claim(getPublicKey(two), B)]);
     // Two keys name B: beside a server of the user's own, it is the one added.
     expect(selectStunServers([OWN], claims)).toEqual({ own: [OWN], named: [B] });
+  });
+
+  it('withdraws an older claim when the newest beacon has no STUN endpoint or is paid', () => {
+    const sk = generateSecretKey();
+    const old = beacon([stun(A)], { sk, at: NOW - 60 });
+    const https: Endpoint = { t: 'https', url: 'https://origin.example/nfx' };
+    for (const latest of [
+      beacon([https], { sk, at: NOW - 1 }),
+      beacon([stun(B)], { sk, at: NOW - 1, free: false }),
+    ])
+      expect(beaconStunClaims(VIDEO, [old, latest], NOW)).toEqual([]);
+  });
+
+  it('ignores a newer forged beacon without suppressing the valid older claim', () => {
+    const sk = generateSecretKey();
+    const old = beacon([stun(A)], { sk, at: NOW - 60 });
+    const forged = { ...beacon([stun(B)], { sk, at: NOW - 1 }), sig: '00'.repeat(64) };
+    expect(beaconStunClaims(VIDEO, [old, forged], NOW)).toEqual([claim(getPublicKey(sk), A)]);
+  });
+
+  it('requires the manifest author as well as the video address to match', () => {
+    expect(
+      beaconStunClaims(
+        { ...VIDEO, author: getPublicKey(generateSecretKey()) as NostrPubkey },
+        [beacon([stun(A)])],
+        NOW,
+      ),
+    ).toEqual([]);
+  });
+
+  it('limits distinct seeders after sorting by newest beacon', () => {
+    const events = Array.from({ length: MAX_AVAILABILITY_SEEDERS + 1 }, (_, i) =>
+      beacon([stun(A)], { at: NOW - i }),
+    );
+    const original = [...events].reverse();
+    expect(beaconStunClaims(VIDEO, original, NOW)).toEqual(
+      events.slice(0, MAX_AVAILABILITY_SEEDERS).map((ev) => claim(ev.pubkey, A)),
+    );
+    expect(original).toEqual([...events].reverse());
+  });
+
+  it('does not fall back to a valid event beyond the newest-event bound', () => {
+    const old = beacon([stun(A)], { at: NOW - 60 });
+    const invalid = { ...beacon([stun(B)], { at: NOW - 1 }), sig: '00'.repeat(64) };
+    expect(
+      beaconStunClaims(
+        VIDEO,
+        [old, ...Array.from({ length: MAX_AVAILABILITY_EVENTS }, () => invalid)],
+        NOW,
+      ),
+    ).toEqual([]);
+    expect(
+      beaconStunClaims(
+        VIDEO,
+        [old, ...Array.from({ length: MAX_AVAILABILITY_EVENTS - 1 }, () => invalid)],
+        NOW,
+      ),
+    ).toEqual([claim(old.pubkey, A)]);
   });
 
   it('a beacon without a stun endpoint names none', () => {

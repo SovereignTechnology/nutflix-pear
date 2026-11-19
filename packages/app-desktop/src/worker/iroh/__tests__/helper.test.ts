@@ -653,6 +653,58 @@ describe('IrohHelper, WebRTC side (ADR 0023)', () => {
     ).toThrow(RangeError);
   });
 
+  it('clears named servers live and keeps them cleared after restart', async () => {
+    const { helper, children } = rtcSetup(
+      (msg, child) => {
+        child.reply({ id: msg['id'], ok: true, servers: (msg['stun'] as unknown[]).length });
+      },
+      { init: { rtc: { ...RTC, named: ['1.2.3.4:3478'] } } },
+    );
+    try {
+      await helper.startRtc();
+      await expect(helper.rtcStun([])).resolves.toBe(0);
+      expect(children[0]!.requests.at(-1)).toMatchObject({ op: 'rtc-stun', stun: [] });
+      children[0]!.exit(70, null);
+      await vi.waitFor(() => {
+        expect(helper.restarts).toBe(1);
+      });
+      expect(children[1]!.requests.map((m) => m['op'])).toEqual(['rtc-init']);
+    } finally {
+      await helper.close();
+    }
+  });
+
+  it('keeps a defensive copy of named servers set before the helper starts', async () => {
+    const { helper, children } = rtcSetup((msg, child) => {
+      child.reply({ id: msg['id'], ok: true, servers: (msg['stun'] as unknown[]).length });
+    });
+    try {
+      const named = ['1.2.3.4:3478'];
+      expect(await rejection(helper.rtcStun(named))).toBe('not-ready');
+      named[0] = '8.8.8.8:3478';
+      await helper.startRtc();
+      expect(children[0]!.requests[1]).toMatchObject({ op: 'rtc-stun', stun: ['1.2.3.4:3478'] });
+    } finally {
+      await helper.close();
+    }
+  });
+
+  it.each([undefined, -1, 0.5, '1'])(
+    'rejects a malformed rtc-stun server count %s',
+    async (servers) => {
+      const { helper, children } = rtcSetup((msg, child) => {
+        child.reply({ id: msg['id'], ok: true, servers });
+      });
+      try {
+        await helper.startRtc();
+        expect(await rejection(helper.rtcStun(['1.2.3.4:3478']))).toBe('violation');
+        expect(children[0]!.kills).toContain('SIGKILL');
+      } finally {
+        await helper.close();
+      }
+    },
+  );
+
   it('a malformed rtc-init reply kills the helper and fails the start', async () => {
     const children: FakeChild[] = [];
     const helper = new IrohHelper({
