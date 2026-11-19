@@ -197,6 +197,31 @@ describe('Player chrome', () => {
     r.unmount();
   });
 
+  it('clamps the context menu and restores focus on Escape', () => {
+    const { r } = mount();
+    const player = r.get('.nf-player');
+    Object.defineProperties(player, { clientWidth: { value: 400 }, clientHeight: { value: 300 } });
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(160);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(40);
+    const open = (clientX: number, clientY: number) => {
+      fire(
+        r.get('[data-testid="media"]'),
+        new MouseEvent('contextmenu', { bubbles: true, clientX, clientY }),
+      );
+    };
+    open(390, 295);
+    expect(r.get('.nf-nerd-menu').style.left).toBe('240px');
+    expect(r.get('.nf-nerd-menu').style.top).toBe('260px');
+    keydown(r.get('.nf-nerd-menu button'), 'Escape');
+    expect(document.activeElement).toBe(player);
+    open(20, 30);
+    expect(r.get('.nf-nerd-menu').style.left).toBe('20px');
+    expect(r.get('.nf-nerd-menu').style.top).toBe('30px');
+    width.mockRestore();
+    height.mockRestore();
+    r.unmount();
+  });
+
   it('v19: stats for nerds from the settings menu and the video menu; its overlay when shown', () => {
     const { r, onAction } = mount();
     click(r.get('button[aria-label="Settings: quality and speed"]'));
@@ -221,6 +246,7 @@ describe('Player chrome', () => {
       nerdStats: createElement('div', { 'data-testid': 'nerd' }),
     });
     expect(shown.r.get('.nf-player__nerd [data-testid="nerd"]')).toBeTruthy();
+    expect(document.activeElement).toBe(shown.r.get('.nf-player__nerd'));
     shown.r.unmount();
   });
 });

@@ -1507,7 +1507,7 @@ export function Watch({
   // v19 (ADR 0024): the paid seeders (`onPeers`) and the element, while the panel is open; the
   // seeders' addresses only while the viewer has switched them on.
   const bindingAddresses = binding?.session.addresses?.bind(binding.session);
-  const nerd = useNerdStats(showNerd && binding !== null, {
+  const nerd = useNerdStats(showNerd && binding !== null && !player.mini, {
     addresses: bindingAddresses,
     element: () => videoElRef.current,
   });

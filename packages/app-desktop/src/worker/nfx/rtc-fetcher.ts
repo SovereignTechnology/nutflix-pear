@@ -176,6 +176,7 @@ export class RtcFetcher implements NfxFetcher {
     const reasons: RtcFetchReason[] = [];
     for (const c of asks) {
       if (this.isClosed()) throw new NfxFetchError(['closed']);
+      this.tally(c.peer, 0, 0);
       try {
         const bytes = await this.turn(c.peer, () =>
           client.rtcGetFile(c.peer, c.index, { sha256: sha, maxBytes: size }),
@@ -260,6 +261,7 @@ export class RtcFetcher implements NfxFetcher {
       files,
       connected,
     });
+    for (const peer of open) this.tally(peer, 0, 0);
     for (const t of this.tallies.values()) {
       const id = rtcId(t.generation, t.peer);
       rows.set(id, row(id, t.bytes, t.files, t.generation === generation && open.has(t.peer)));
@@ -312,7 +314,7 @@ export class RtcFetcher implements NfxFetcher {
     return this.o.generation?.() ?? 0;
   }
 
-  private tally(peer: number, bytes: number): void {
+  private tally(peer: number, bytes: number, files = 1): void {
     const generation = this.generation();
     const key = rtcId(generation, peer);
     let t = this.tallies.get(key);
@@ -322,7 +324,7 @@ export class RtcFetcher implements NfxFetcher {
       this.tallies.set(key, t);
     }
     t.bytes += bytes;
-    t.files++;
+    t.files += files;
   }
 
   close(): Promise<void> {

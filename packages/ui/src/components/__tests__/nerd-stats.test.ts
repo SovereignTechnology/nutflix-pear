@@ -148,7 +148,8 @@ describe('stats for nerds: the model', () => {
         rttMs: undefined as never,
       }),
     ).toBe('relayed via turn.example');
-    expect(pathText({ ...ADDRESS, path: 'unknown' })).toBe('–');
+    expect(pathText({ ...ADDRESS, path: 'unknown' })).toBe('srflx/udp, 24 ms');
+    expect(pathText({ kind: 'webrtc', id: KEY, address: '', path: 'unknown' })).toBe('–');
   });
 
   it('copy: short ids only, and addresses only while shown', () => {
@@ -250,6 +251,29 @@ describe('stats for nerds: the panel', () => {
     await flush();
     expect((r.get('.nf-nerd__switch input') as HTMLInputElement).checked).toBe(false);
     expect(r.all('.nf-nerd__addr')).toHaveLength(0);
+  });
+
+  it('ignores older stats that finish after a newer request', async () => {
+    vi.useFakeTimers();
+    let resolveOld!: (s: NfxPlayStats) => void;
+    const old = new Promise<NfxPlayStats>((resolve) => {
+      resolveOld = resolve;
+    });
+    const stats = vi
+      .fn()
+      .mockReturnValueOnce(old)
+      .mockResolvedValue({ ...STATS, engine: 'newer' });
+    mounted = render(createElement(Harness, { open: true, feed: { stats, element: () => null } }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(mounted.container.textContent).toContain('newer');
+    await act(async () => {
+      resolveOld({ ...STATS, engine: 'older' });
+      await Promise.resolve();
+    });
+    expect(mounted.container.textContent).toContain('newer');
+    expect(mounted.container.textContent).not.toContain('older');
   });
 
   it('a play that cannot say where its connections go has no switch', async () => {

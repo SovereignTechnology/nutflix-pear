@@ -39,6 +39,32 @@ const MESH = {
 };
 
 describe('stats for nerds on a web play (contracts v19)', () => {
+  it('ranks the combined sources before retaining the best 64', () => {
+    const stats = playStats({
+      engine: 'test',
+      origin: 'https://o.example',
+      verified: 0,
+      rejected: [],
+      originBytes: 1,
+      mesh: {
+        ...MESH,
+        bytes: { http: 0, p2p: 0 },
+        peerList: Array.from({ length: 70 }, (_, i) => ({
+          id: `p${i}`,
+          via: 'nostr:',
+          down: i + 2,
+          up: 0,
+          segments: 0,
+          connected: i !== 69,
+        })),
+      },
+    });
+    expect(stats.sources).toHaveLength(64);
+    expect(stats.sources[0]?.id).toBe('p68');
+    expect(stats.sources.at(-1)?.id).toBe('p5');
+    expect(stats.sources.some((s) => s.kind === 'origin')).toBe(false);
+  });
+
   it('maps the origin and each mesh peer, open first as the library ordered them', () => {
     const s = playStats({
       engine: 'hls.js 1.7.4 + p2p-media-loader 4.0.0',
@@ -120,8 +146,8 @@ describe('stats for nerds on a web play (contracts v19)', () => {
       mesh: MESH,
     });
     expect(s.sources.map((x) => [x.kind, x.id, x.bytesDown, x.bytesUp])).toEqual([
-      ['origin', 'o.example', 1000, 0],
       ['webrtc', 'all peers', 3000, 500],
+      ['origin', 'o.example', 1000, 0],
     ]);
     expect(s.peers).toBeUndefined();
     expect(s.signaling).toEqual({ kind: 'nostr', endpoints: ['relay.example', 'r2.example'] });

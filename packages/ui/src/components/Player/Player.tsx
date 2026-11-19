@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -123,6 +124,37 @@ export function Player({
   const [idle, setIdle] = useState(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const menuId = useId();
+  const playerRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const statsRef = useRef<HTMLDivElement>(null);
+  const previousMenu = useRef(menu);
+  const previousStats = useRef(false);
+  const attachPlayer = useCallback(
+    (node: HTMLDivElement | null) => {
+      playerRef.current = node;
+      if (typeof ref === 'function') return ref(node);
+      if (ref !== undefined && ref !== null) ref.current = node;
+    },
+    [ref],
+  );
+
+  useLayoutEffect(() => {
+    const node = contextMenuRef.current;
+    const player = playerRef.current;
+    if (typeof menu === 'object' && node !== null && player !== null) {
+      node.style.left = `${Math.max(0, Math.min(menu.x, player.clientWidth - node.offsetWidth))}px`;
+      node.style.top = `${Math.max(0, Math.min(menu.y, player.clientHeight - node.offsetHeight))}px`;
+    }
+    if (menu === 'none' && previousMenu.current !== 'none') player?.focus();
+    previousMenu.current = menu;
+  }, [menu]);
+
+  useLayoutEffect(() => {
+    const visible = showNerdStats && !state.mini && nerdStats !== undefined;
+    if (visible && !previousStats.current) statsRef.current?.focus();
+    if (!visible && previousStats.current) playerRef.current?.focus();
+    previousStats.current = visible;
+  }, [showNerdStats, state.mini, nerdStats]);
   const playing = state.status === 'playing';
 
   const poke = useCallback((): void => {
@@ -184,7 +216,7 @@ export function Player({
 
   return (
     <div
-      ref={ref}
+      ref={attachPlayer}
       className={cx(
         'nf-player',
         `nf-player--${state.status}`,
@@ -216,6 +248,7 @@ export function Player({
 
       {typeof menu === 'object' ? (
         <div
+          ref={contextMenuRef}
           className="nf-nerd-menu"
           role="menu"
           style={{ left: `${String(menu.x)}px`, top: `${String(menu.y)}px` }}
@@ -235,7 +268,9 @@ export function Player({
       ) : null}
 
       {showNerdStats && nerdStats !== undefined && !state.mini ? (
-        <div className="nf-player__nerd">{nerdStats}</div>
+        <div ref={statsRef} tabIndex={-1} className="nf-player__nerd">
+          {nerdStats}
+        </div>
       ) : null}
 
       {/* Big centre affordance: play when paused/idle/ended, spinner when loading, error card. */}

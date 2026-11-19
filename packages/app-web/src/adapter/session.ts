@@ -112,7 +112,9 @@ export function playStats(s: NfxLibStats): NfxPlayStats {
   );
   const open = mesh?.signal?.open;
   return {
-    sources: sources.slice(0, MAX_SOURCES),
+    sources: sources
+      .sort((a, b) => Number(b.connected) - Number(a.connected) || b.bytesDown - a.bytesDown)
+      .slice(0, MAX_SOURCES),
     engine: printable(s.engine, 120),
     ...(mesh?.connected === undefined
       ? {}

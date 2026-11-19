@@ -208,10 +208,11 @@ export function addressText(a: PlaySourceAddress | undefined): string {
 
 /** A path cell: direct or relayed (through whom), the transport's detail, the round trip. */
 export function pathText(a: PlaySourceAddress | undefined): string {
-  if (a === undefined || a.path === 'unknown') return '–';
+  if (a === undefined) return '–';
   const parts: string[] = [];
   if (a.detail !== undefined && a.detail !== '') parts.push(printable(a.detail, 24));
   if (a.rttMs !== undefined) parts.push(`${String(a.rttMs)} ms`);
+  if (a.path === 'unknown') return parts.length > 0 ? parts.join(', ') : '–';
   const via = a.path === 'relayed' && a.via !== undefined ? ` via ${printable(a.via, 64)}` : '';
   return `${a.path}${via}${parts.length > 0 ? ` (${parts.join(', ')})` : ''}`;
 }

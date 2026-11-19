@@ -67,6 +67,8 @@ export interface NfxPeerLease {
   release(): void;
   /** Pear #123: whether the connection is open now. */
   open(): boolean;
+  /** Whether this lease’s dial ever established a connection. */
+  established(): boolean;
   /** Pear #123: where it goes (`''`: unknown), read now. Another host's address: never logged. */
   remote(): string;
 }
@@ -84,6 +86,7 @@ interface Entry {
   connection: Promise<NfxConnection | null>;
   /** Pear #123: the connection once dialled, until it closes. */
   live: NfxConnection | null;
+  established: boolean;
   failure: NfxFetchFailure;
   /** Transfers in flight by `<video> <sha>`. */
   readonly transfers: Map<string, Promise<NfxFetchOutcome>>;
@@ -129,6 +132,7 @@ export class NfxPeerPool {
     return {
       fetch: (video, sha, size, exact) => this.fetchOn(e, video, sha, size, exact),
       open: () => !released && live() !== null,
+      established: () => e.established,
       remote: () => {
         const c = released ? null : live();
         return c === null ? '' : streamRemote(c.socket);
@@ -162,6 +166,7 @@ export class NfxPeerPool {
       refs: 0,
       connection: Promise.resolve(null),
       live: null,
+      established: false,
       failure: 'unreachable',
       transfers: new Map(),
       channels: new Map(),
@@ -206,6 +211,7 @@ export class NfxPeerPool {
         r.connection.destroy('no play session needs it');
         return null;
       }
+      entry.established = true;
       entry.live = r.connection;
       return r.connection;
     } catch (err) {
@@ -315,14 +321,6 @@ interface Peer {
   files: number;
 }
 
-/** Pear #123: failures that come before any connection, or from this side's own close. */
-const UNCONNECTED: ReadonlySet<NfxFetchFailure> = new Set<NfxFetchFailure>([
-  'unreachable',
-  'dial-timeout',
-  'wrong-key',
-  'closed',
-]);
-
 /** Failures that say nothing against the seeder: it lacks this one file, or we asked too much. */
 const KEEP: ReadonlySet<NfxFetchFailure> = new Set<NfxFetchFailure>([
   'missing',
@@ -375,7 +373,7 @@ export class HyperdhtFetcher implements NfxFetcher {
       ]);
       if (this.isClosed()) break;
       // Pear #123: it answered over a connection (whatever it answered).
-      if (r.ok || !UNCONNECTED.has(r.reason)) peer.seen = true;
+      if (peer.lease.established()) peer.seen = true;
       // A transfer shared with another session was asked for with that one's bounds.
       if (r.ok && (exact ? r.bytes.byteLength === size : r.bytes.byteLength <= size)) {
         peer.bytes += r.bytes.byteLength;
@@ -395,6 +393,7 @@ export class HyperdhtFetcher implements NfxFetcher {
     this.closed = true;
     this.abort?.();
     for (const peer of this.peers) {
+      if (peer.lease?.established()) peer.seen = true;
       peer.lease?.release();
       peer.lease = null;
     }
@@ -406,7 +405,7 @@ export class HyperdhtFetcher implements NfxFetcher {
     const sources: PlaySourceStat[] = [];
     for (const p of this.peers) {
       const connected = this.isOpen(p);
-      if (connected) p.seen = true;
+      if (p.lease?.established()) p.seen = true;
       if (!p.seen) continue;
       sources.push({
         kind: 'hyperdht',

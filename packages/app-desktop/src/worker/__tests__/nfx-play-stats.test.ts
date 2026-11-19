@@ -101,6 +101,7 @@ class FakePool {
         this.released.push(peer);
       },
       open: () => this.open.get(peer) ?? true,
+      established: () => this.open.get(peer) ?? true,
       remote: () => this.remotes.get(peer) ?? '',
     };
   }
@@ -155,6 +156,18 @@ describe('pear #123: HyperdhtFetcher', () => {
     expect(f.stats().sources.at(-1)).toEqual(row(C, 4, 1, false));
     await f.close();
     expect(f.stats().sources.map((x) => x.connected)).toEqual([false, false, false]);
+  });
+
+  it('retains a connected peer whose first queued request closes, excluding failed dials', async () => {
+    const pool = new FakePool(() => ({ ok: false, reason: 'closed' }));
+    pool.open.set(toHex(B), false);
+    const f = fetcher(pool, [A, B]);
+    await expect(f.fetch('x', 4, true)).rejects.toThrow();
+    expect(f.stats().sources).toMatchObject([
+      { id: toHex(A), bytesDown: 0, files: 0, connected: false },
+    ]);
+    await f.close();
+    expect(f.stats().sources).toHaveLength(1);
   });
 
   it('addresses are the open connections’ remote ends, read when asked', async () => {

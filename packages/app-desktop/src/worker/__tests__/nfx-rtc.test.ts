@@ -291,8 +291,8 @@ describe('RtcFetcher (#89)', () => {
     // 9 lied (refused, hung up); 1 served both; 2 is connected with nothing delivered.
     expect(f.stats()).toEqual({
       sources: [
-        row('rtc:1.1', bodies[0]!.length + bodies[1]!.length, 2, true),
         row('rtc:1.9', 0, 0, true),
+        row('rtc:1.1', bodies[0]!.length + bodies[1]!.length, 2, true),
         row('rtc:1.2', 0, 0, true),
       ],
       refused: 1,
@@ -302,11 +302,13 @@ describe('RtcFetcher (#89)', () => {
     conns.splice(0, 3, conn(1, all));
     await f.fetch(v.segmentShas[2]!, bodies[2]!.length, true);
     expect(f.stats().sources).toEqual([
+      row('rtc:1.9', 0, 0, false),
       row('rtc:1.1', bodies[0]!.length + bodies[1]!.length, 2, false),
+      row('rtc:1.2', 0, 0, false),
       row('rtc:2.1', bodies[2]!.length, 1, true),
     ]);
     await f.close();
-    expect(f.stats().sources.map((x) => x.connected)).toEqual([false, false]);
+    expect(f.stats().sources.map((x) => x.connected)).toEqual([false, false, false, false]);
   });
 
   it('pear #123: addresses are each connected peer’s last datagram source, never starting a helper', async () => {

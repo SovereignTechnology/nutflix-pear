@@ -221,13 +221,15 @@ export function useNerdStats<S = NfxPlayStats>(
     setAddresses(NO_ADDRESSES);
     if (!open) return undefined;
     let live = true;
+    let request = 0;
     const tick = (): void => {
       const f = feedRef.current;
       const el = f.element();
       setSample(el === null ? null : sampleElement(el));
+      const currentRequest = ++request;
       f.stats?.().then(
         (s) => {
-          if (live) setStats(s);
+          if (live && currentRequest === request) setStats(s);
         },
         () => undefined,
       );
