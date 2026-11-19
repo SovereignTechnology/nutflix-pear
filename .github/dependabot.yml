@@ -46,6 +46,12 @@ updates:
       - dependency-name: 'bare-subprocess'
         versions:
           - '> 6.1.0'
+      # TypeScript 7 (the native port) is outside typescript-eslint's peer range, `>=4.8.4 <6.1.0` on
+      # 8.72.2 and on the latest 8.73.0, and the lint here is type-aware through the compiler API.
+      # Lift when typescript-eslint supports 7. Minor and patch of 6.x still flow.
+      - dependency-name: 'typescript'
+        update-types:
+          - 'version-update:semver-major'
       # jsdom 30 requires Node ^22.22.2 and .npmrc sets engine-strict, so every dev and CI image on an
       # older 22.x (the repo's floor is 22.12) would refuse `npm ci`. Raising that floor is a decision
       # for the maintainer, with the images that must follow; lift this when it is made.
