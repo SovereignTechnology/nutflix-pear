@@ -48,7 +48,7 @@
     "pear-runtime": "1.3.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "sodium-native": "5.2.0"
+    "sodium-native": "5.2.1"
   },
   "devDependencies": {
     "@electron-forge/core": "8.0.1",
@@ -59,10 +59,10 @@
     "@electron/asar": "4.3.1",
     "@electron/fuses": "2.1.3",
     "@scure/bip39": "2.0.1",
-    "electron": "45.2.1",
+    "electron": "45.3.1",
     "esbuild": "0.28.2",
     "hyperdht": "6.36.0",
-    "jsdom": "29.1.1",
+    "jsdom": "30.1.3",
     "playwright-core": "1.65.0"
   }
 }
