@@ -18,8 +18,8 @@
  *   private, shared (CGNAT, 100.64/10), loopback, link-local, IETF protocol assignments,
  *   benchmarking, documentation, multicast, reserved and broadcast addresses. For IPv6 only 2000::/3
  *   passes (so no unspecified, loopback, link-local, ULA or multicast address), less the
- *   documentation prefixes 2001:db8::/32 and 3ff0::/12. A beacon from anywhere must not point the
- *   user's app at their own network.
+ *   documentation prefixes 2001:db8::/32 and 3fff::/20 (RFC 9637), exactly. A beacon from
+ *   anywhere must not point the user's app at their own network.
  * - **Selection** (`selectStunServers`):
  *   1. the client's own servers first, each once (`stunServerKey`), never dropped for a named one;
  *   2. then the named servers that pass the check above and are not its own, ranked by the number
@@ -81,7 +81,11 @@ function v4Global([a = 0, b = 0, c = 0]: readonly number[]): boolean {
 
 /** IPv6 as the helper's `v6_global` counts it: 2000::/3, less the documentation prefixes. */
 function v6Global([a = 0, b = 0]: readonly number[]): boolean {
-  return (a & 0xe000) === 0x2000 && !(a === 0x2001 && b === 0x0db8) && (a & 0xfff0) !== 0x3ff0;
+  return (
+    (a & 0xe000) === 0x2000 &&
+    !(a === 0x2001 && b === 0x0db8) &&
+    !(a === 0x3fff && (b & 0xf000) === 0)
+  );
 }
 
 /**

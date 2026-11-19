@@ -50,6 +50,11 @@ describe('isGlobalStunAddr', () => {
       '198.20.0.0:3478',
       '[2001:4860::8888]:3478',
       '[3fef:ffff::1]:3478',
+      // Only 3fff::/20 is documentation (RFC 9637); the rest of 3ff0::/12 is global unicast.
+      '[3ff0::1]:3478',
+      '[3fff:1000::1]:3478',
+      '[3fff:ffff::1]:3478',
+      '[2001:db9::1]:3478',
     ])
       expect(isGlobalStunAddr(a), a).toBe(true);
   });
@@ -70,6 +75,7 @@ describe('isGlobalStunAddr', () => {
         '203.0.113.10:3478',
         '[2001:db8::1]:3478',
         '[3fff::1]:3478',
+        '[3fff:fff::1]:3478',
       ],
       'benchmarking, IETF': ['198.18.0.1:3478', '198.19.255.255:3478', '192.0.0.8:3478'],
       'reserved, broadcast': ['240.0.0.1:3478', '255.255.255.255:3478', '[4000::1]:3478'],
