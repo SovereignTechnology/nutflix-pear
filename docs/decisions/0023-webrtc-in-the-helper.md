@@ -56,8 +56,9 @@ trickle candidates), and both directions.
      maintainer, 2026-11-15): the scoped relay refuses kind 25050. The default is two of the
      app's default public relays, picked by `scripts/mesh-relay-soak.mjs`; the web client uses
      the same pair, so the two meet. An empty list leaves WebRTC off.
-     **Note 2026-11-18 (the maintainer):** NFX-04, amended that day as an exception to its
-     freeze, lets a scoped relay admit kind 25050 `nfx-mesh/1` (ephemeral, never stored). The
+     **Note 2026-11-18 (the maintainer):** NFX-04 §1, amended that day as an exception to its
+     freeze, lets a scoped relay accept kind 25050 `nfx-mesh/1` as an ephemeral (never stored),
+     within §2's rate and size limits; one that does says so in its NIP-11 `nfx.kinds` (§3). The
      network's own relay, `wss://relay.nutflix.xyz`, now comes first, ahead of those two; the web
      client's list is the same.
 4. **It moves bytes and decides nothing,** as ADR 0021 §3. It serves the files the worker names

@@ -47,9 +47,10 @@ export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
 /**
  * Contracts v18 (the maintainer, 2026-11-15): WebRTC connections are signaled over Nostr relays
  * (NFX-10 §6). The maintainer's 2026-11-18 decision puts the network's own relay first:
- * `wss://relay.nutflix.xyz`, the scoped relay itself, which SovTech runs. NFX-04, amended that day
- * as an exception to its freeze, lets a scoped relay admit kind 25050 `nfx-mesh/1`, ephemeral and
- * never stored. The two public relays after it are the app's default relays, picked by
+ * `wss://relay.nutflix.xyz`, the scoped relay itself, which SovTech runs. NFX-04 §1, amended that
+ * day as an exception to its freeze, lets a scoped relay accept kind 25050 `nfx-mesh/1` as an
+ * ephemeral (never stored); one that does lists 25050 in its NIP-11 `nfx.kinds` (§3). The two
+ * public relays after it are the app's default relays, picked by
  * `scripts/mesh-relay-soak.mjs`: on 2026-11-16 nos.lol, relay.primal.net and relay.ditto.pub each
  * accepted and delivered every kind-25050 event for ten minutes, and relay.damus.io refused the
  * connection (HTTP 403). These two are the pair with different operators and no history of

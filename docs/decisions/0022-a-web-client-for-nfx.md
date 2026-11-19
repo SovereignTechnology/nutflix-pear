@@ -71,7 +71,7 @@ A client that does only that avoids every reason ADR 0019 gave:
    The page says that the signaling relays and peers see the viewer's IP address, and that the
    relays learn which videos are watched.
    **Note 2026-11-18 (the maintainer):** the default signaling relays are now
-   `wss://relay.nutflix.xyz` (the network's scoped relay, which NFX-04, amended that day, lets
+   `wss://relay.nutflix.xyz` (the network's scoped relay, which NFX-04 §1, amended that day, lets
    carry kind 25050 `nfx-mesh/1`), `relay.primal.net` and `relay.ditto.pub`, the desktop app's list
    too.
 4. **Our own STUN server.** `iceServers` lists `stun:web.nutflix.xyz:3478` and nothing else: a
