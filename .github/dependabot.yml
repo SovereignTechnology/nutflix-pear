@@ -53,6 +53,14 @@ updates:
       cargo-minor:
         update-types:
           - 'minor'
+    # iroh-blobs is a wire pin, not a convenience bump: NFX-11 §4 fixes it at 0.103.x (the
+    # `BlobTicket` layout in NFX-06 §2) and says a bump of any of the three iroh crates is an NFX-11
+    # edit first, in nfx. 0.104.0 passed this repo's interop jobs (#66, 2026-11-18) against nfxd at
+    # 0.103.1, but that is not the spec moving. Lift this when nfx's NFX-11 §4 and lock move.
+    ignore:
+      - dependency-name: 'iroh-blobs'
+        versions:
+          - '>= 0.104.0'
     cooldown:
       default-days: 7
       semver-major-days: 14
