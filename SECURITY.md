@@ -59,8 +59,11 @@ These are known limits of the released app, not bugs awaiting a report:
 
 - **Relays see you.** The four default relays learn your IP address and what you ask them for
   (ADR 0009), and so do NFX's two default relays, `relay.nutflix.xyz` and `iroh.nutflix.xyz`, which
-  SovTech runs (ADR 0020, 2026-11-08); switch NFX off in Settings to stop contacting them. The app
-  makes no private-browsing claim.
+  SovTech runs (ADR 0020, 2026-11-08); switch NFX off in Settings to stop contacting them. After
+  0.1.3 the scoped relay is asked first for every NFX catalogue read (ADR 0020, 2026-11-19), so it
+  sees which authors your Subscriptions feed follows, the tags and search text you use and the
+  videos you open; the read relays see those only when it fails or falls short. The app makes no
+  private-browsing claim.
 - **WebRTC peers, a STUN server and signaling relays see you** (since 0.1.3; ADR 0023).
   With NFX on, the app trades video with web browsers over WebRTC. The peers it connects to learn
   your IP address; so does the network's STUN server (`web.nutflix.xyz:3478`, asked every 25 s

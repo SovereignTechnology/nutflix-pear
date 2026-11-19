@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   NetworkAdapter,
@@ -238,16 +238,32 @@ describe('feeds through core’s catalogue', () => {
     expect(new Set(r.relays.asked.map((q) => q.relay))).toEqual(new Set([READ_A, SCOPED]));
   });
 
-  it('author and tag feeds read the read relays first, the scoped relays when they have nothing', async () => {
+  it('author and tag feeds read the scoped relay first; the read relays only when it has nothing or a short page (ADR 0020, 2026-11-19)', async () => {
     const r = make({ read: [READ_A], scoped: [SCOPED] });
     const c = new Key();
-    put(r.relays, [SCOPED], manifest(c, 'only-scoped', { tags: ['space'] }));
-    expect(
-      (await r.adapter.feed({ source: 'author', author: c.pubkey as NostrPubkey })).items,
-    ).toHaveLength(1);
-    expect((await r.adapter.feed({ source: 'tags', tags: ['space'] })).items).toHaveLength(1);
-    expect(r.relays.asked[0]?.relay).toBe(READ_A);
-    expect(r.relays.asked.some((q) => q.relay === SCOPED)).toBe(true);
+    put(r.relays, [SCOPED], manifest(c, 'only-scoped', { tags: ['space'], createdAt: T - 60 }));
+    // A full page on the scoped relay: the read relays are not asked.
+    const full = await r.adapter.feed({
+      source: 'author',
+      author: c.pubkey as NostrPubkey,
+      limit: 1,
+    });
+    expect(full.items.map((v) => v.title)).toEqual(['only-scoped']);
+    expect(r.relays.asked.map((q) => q.relay)).toEqual([SCOPED, SCOPED]); // manifests, deletions
+    // Nothing there (a restarted in-memory relay): the read relays' page.
+    const other = new Key();
+    put(r.relays, [READ_A], manifest(other, 'only-read', { tags: ['space'] }));
+    r.relays.asked.length = 0;
+    const fallback = await r.adapter.feed({
+      source: 'author',
+      author: other.pubkey as NostrPubkey,
+    });
+    expect(fallback.items.map((v) => v.title)).toEqual(['only-read']);
+    expect(r.relays.asked[0]?.relay).toBe(SCOPED);
+    expect(r.relays.asked.some((q) => q.relay === READ_A)).toBe(true);
+    // A short page there: merged with the read relays', newest first.
+    const tags = await r.adapter.feed({ source: 'tags', tags: ['space'] });
+    expect(tags.items.map((v) => v.title)).toEqual(['only-scoped', 'only-read']);
   });
 
   it('nfxVideo: the current revision, and the video’s beacons watched from then on', async () => {
@@ -297,9 +313,16 @@ describe('search: NIP-50 only where NIP-11 lists it (ADR 0022)', () => {
     expect(toB.length).toBeGreaterThan(0);
     expect(toB.every((q) => q.filter.search === undefined)).toBe(true);
     expect(toB[0]?.filter).toMatchObject({ kinds: [38504], '#n': [NS] });
-    // The NIP-11 requests: the relays' https addresses, as the spec asks, and nothing more.
+    // This scoped relay lists no NIP-50 (no NIP-11 document): the read relays first, as before.
+    expect(r.relays.asked.some((q) => q.relay === SCOPED)).toBe(false);
+    // The NIP-11 requests: the relays' https addresses, as the spec asks, and nothing more. The
+    // scoped relay's is asked too, to pick the order.
     const urls = r.fetches.map((f) => f.url).sort();
-    expect(urls).toEqual(['https://read-a.example', 'https://read-b.example']);
+    expect(urls).toEqual([
+      'https://read-a.example',
+      'https://read-b.example',
+      'https://scoped.example',
+    ]);
     for (const f of r.fetches) {
       expect(f.init).toMatchObject({
         method: 'GET',
@@ -311,7 +334,28 @@ describe('search: NIP-50 only where NIP-11 lists it (ADR 0022)', () => {
     }
     // Asked once per relay: the answers are cached.
     await r.adapter.search({ text: 'dusk' });
-    expect(r.fetches).toHaveLength(2);
+    expect(r.fetches).toHaveLength(3);
+  });
+
+  it('a scoped relay that lists NIP-50 is searched first; a short page there is merged with the read relays’ (ADR 0020, 2026-11-19)', async () => {
+    const r = make({
+      read: [READ_A],
+      scoped: [SCOPED],
+      nip11: {
+        [SCOPED]: { name: 'nfx-node', supported_nips: [1, 11, 40, 50] },
+        [READ_A]: { name: 'searching', supported_nips: [1, 11, 50] },
+      },
+    });
+    const c = new Key();
+    put(r.relays, [SCOPED], manifest(c, 'scoped-orbits', { title: 'Orbits', createdAt: T - 60 }));
+    put(r.relays, [READ_A], manifest(c, 'read-orbits', { title: 'More orbits' }));
+    const page = await r.adapter.search({ text: 'orbits' });
+    expect(page.items.map((v) => v.id)).toEqual([
+      addrOf(c, 'scoped-orbits'),
+      addrOf(c, 'read-orbits'),
+    ]);
+    const manifests = r.relays.asked.filter((q) => q.filter.kinds?.includes(38504) === true);
+    expect(manifests[0]).toMatchObject({ relay: SCOPED, filter: { search: 'orbits' } });
   });
 
   it('a relay whose NIP-11 is missing, not JSON or too large is never sent `search`', async () => {
@@ -611,6 +655,21 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     session.source.attach(document.createElement('video'));
     await tick();
     expect(r.player.last.options.origins).toEqual([WEB_FALLBACK_ORIGIN]);
+  });
+
+  it('beacons stay on the scoped relay, also for a video only the read relays listed (ADR 0020, 2026-11-19)', async () => {
+    const r = make({ beaconWaitMs: 50 });
+    const subscribe = vi.spyOn(r.relays.pool, 'subscribe');
+    const { addr } = await playable(r); // the manifest is on the read relay only
+    put(r.relays, [SCOPED], beacon(new Key(), addr, [https('https://seed.example/o')]));
+    const session = await r.adapter.playNfx(addr);
+    expect(session.videoId).toBe(addr);
+    const beaconSubs = subscribe.mock.calls.filter(([, filters]) =>
+      filters.some((f) => f.kinds?.includes(20464) === true),
+    );
+    expect(beaconSubs.length).toBeGreaterThan(0);
+    for (const [relays] of beaconSubs) expect(relays).toEqual([SCOPED]);
+    await session.close();
   });
 
   it('beacons are read from the read relays when there is no scoped relay', async () => {

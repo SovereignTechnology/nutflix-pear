@@ -276,7 +276,7 @@ describe('search routed by NIP-50 support', () => {
     ).rejects.toThrow('relay-down');
   });
 
-  it('NfxCatalog routes search the same way on the read relays, then on the scoped relays', async () => {
+  it('a scoped relay without NIP-50: NfxCatalog searches the read relays first, as before, then scans the scoped relay', async () => {
     const r = relays([SEARCHING, STOCK, SCOPED]);
     const creator = new TestSigner();
     const onScoped = await store(r.of(SCOPED), creator, manifest('video-0001', T0 - 5, 'Lagrange'));
@@ -290,12 +290,113 @@ describe('search routed by NIP-50 support', () => {
     );
     const page = await cat.search({ text: 'lagrange' });
     expect(page.items.map((v) => v.eventId)).toEqual([onScoped.id]);
+    // Each relay's NIP-11 answer is asked once per search, the scoped relay's to pick the order.
     expect(supports.mock.calls.map(([u]) => u).sort()).toEqual([SCOPED, SEARCHING, STOCK].sort());
+    const manifests = r.asked.filter((a) => a.filter.kinds?.includes(38504) === true);
+    expect(manifests[0]?.relay).not.toBe(SCOPED);
     expect(
-      r.asked
-        .filter((a) => a.relay !== SEARCHING && a.filter.kinds?.includes(38504) === true)
-        .every((a) => a.filter.search === undefined),
+      manifests.filter((a) => a.relay !== SEARCHING).every((a) => a.filter.search === undefined),
     ).toBe(true);
+  });
+
+  describe('a scoped relay that lists NIP-50 is searched first (ADR 0020, 2026-11-19)', () => {
+    const scopedFirst = (
+      r: ReturnType<typeof relays>,
+      supports: (relay: RelayUrl) => Promise<boolean>,
+    ): NfxCatalog =>
+      new NfxCatalog(
+        () => client(r.pool, [SEARCHING, STOCK]),
+        NS,
+        () => [SCOPED],
+        { searchSupport: supports },
+      );
+
+    it('with `search`; a full page there asks no read relay, nor their NIP-11', async () => {
+      const r = relays([SEARCHING, STOCK, SCOPED]);
+      const creator = new TestSigner();
+      for (let i = 0; i < 20; i++)
+        await store(
+          r.of(SCOPED),
+          creator,
+          manifest(`video-${String(i).padStart(4, '0')}`, T0 - 100 + i, `Lagrange ${String(i)}`),
+        );
+      await store(r.of(SEARCHING), creator, manifest('video-pub1', T0 - 1, 'Lagrange elsewhere'));
+      const supports = vi.fn(nip50([SCOPED, SEARCHING]));
+      const page = await scopedFirst(r, supports).search({ text: 'lagrange' });
+      expect(page.items).toHaveLength(20);
+      expect(page.next).toBeDefined();
+      expect(supports.mock.calls.map(([u]) => u)).toEqual([SCOPED]);
+      expect(r.asked.every((a) => a.relay === SCOPED)).toBe(true);
+      const manifests = r.asked.filter((a) => a.filter.kinds?.includes(38504) === true);
+      expect(manifests.every((a) => a.filter.search === 'lagrange')).toBe(true);
+    });
+
+    it('a short page is merged with the read relays’ search: one per address, the newest revision, the scoped copy on a tie', async () => {
+      const r = relays([SEARCHING, STOCK, SCOPED]);
+      const creator = new TestSigner();
+      await store(r.of(SCOPED), creator, manifest('video-0001', T0 - 30, 'Lagrange, first cut'));
+      const tie = await store(r.of(SCOPED), creator, manifest('video-0002', T0 - 20, 'Lagrange'));
+      const recut = await store(
+        r.of(SEARCHING),
+        creator,
+        manifest('video-0001', T0 - 5, 'Lagrange, recut'),
+      );
+      // The same address at the same second, another event: the scoped one stays.
+      await store(
+        r.of(STOCK),
+        creator,
+        manifest('video-0002', T0 - 20, 'Lagrange', 'Another Lagrange copy.'),
+      );
+      const stockOnly = await store(
+        r.of(STOCK),
+        creator,
+        manifest('video-0003', T0 - 25, 'Lagrange on stock'),
+      );
+      const page = await scopedFirst(r, nip50([SCOPED, SEARCHING])).search({ text: 'lagrange' });
+      expect(page.items.map((v) => v.eventId)).toEqual([recut.id, tie.id, stockOnly.id]);
+      const manifests = r.asked.filter((a) => a.filter.kinds?.includes(38504) === true);
+      expect(manifests[0]?.relay).toBe(SCOPED);
+    });
+
+    it('the scoped relay down: the read relays answer alone', async () => {
+      const r = relays([SEARCHING, STOCK, SCOPED]);
+      const creator = new TestSigner();
+      const hit = await store(r.of(SEARCHING), creator, manifest('video-0001', T0 - 5, 'Lagrange'));
+      const broken: PoolLike = {
+        ...r.pool,
+        query: (rs, f) =>
+          rs.includes(SCOPED) ? Promise.reject(new Error('scoped-down')) : r.pool.query(rs, f),
+      };
+      const cat = new NfxCatalog(
+        () => client(broken, [SEARCHING, STOCK]),
+        NS,
+        () => [SCOPED],
+        { searchSupport: nip50([SCOPED, SEARCHING]) },
+      );
+      const page = await cat.search({ text: 'lagrange' });
+      expect(page.items.map((v) => v.eventId)).toEqual([hit.id]);
+    });
+
+    it('without searchSupport, every relay counts as searching: the scoped relay first', async () => {
+      const r = relays([SEARCHING, STOCK, SCOPED]);
+      const creator = new TestSigner();
+      await store(r.of(SCOPED), creator, manifest('video-0001', T0 - 5, 'Lagrange'));
+      await new NfxCatalog(
+        () => client(r.pool, [SEARCHING, STOCK]),
+        NS,
+        () => [SCOPED],
+      ).search({ text: 'lagrange' });
+      const manifests = r.asked.filter((a) => a.filter.kinds?.includes(38504) === true);
+      expect(manifests[0]).toMatchObject({ relay: SCOPED, filter: { search: 'lagrange' } });
+    });
+
+    it('a blank search asks nothing at all', async () => {
+      const r = relays([SEARCHING, STOCK, SCOPED]);
+      const supports = vi.fn(nip50([SCOPED]));
+      expect(await scopedFirst(r, supports).search({ text: '   ' })).toEqual({ items: [] });
+      expect(supports).not.toHaveBeenCalled();
+      expect(r.asked).toEqual([]);
+    });
   });
 
   it('without searchSupport, NfxCatalog sends `search` everywhere, as before', async () => {
