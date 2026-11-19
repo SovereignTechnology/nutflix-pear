@@ -115,7 +115,7 @@ export interface MeshRtc {
 }
 
 export interface MeshSignalerDeps {
-  /** The signaling relays now (general relays: a scoped relay refuses kind 25050). */
+  /** The signaling relays now: relays that carry kind 25050 (a scoped relay may, NFX-04). */
   readonly relays: () => readonly RelayUrl[];
   /**
    * A live subscription on ONE relay; events arrive unverified, and `onClose` is called when the

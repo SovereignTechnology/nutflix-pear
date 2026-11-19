@@ -582,7 +582,7 @@ const isSettingsPatch = obj(
         trackers: isTrackers,
         webrtc: bool,
         stunServers: isStunServers,
-        // v18: the relays WebRTC is signaled on (absent = the default pair).
+        // v18: the relays WebRTC is signaled on (absent = the default list).
         meshRelays: isMeshRelays,
       },
     ),

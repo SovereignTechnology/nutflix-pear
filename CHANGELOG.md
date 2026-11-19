@@ -7,6 +7,26 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Changed
+
+- **New default relays** (the maintainer's decisions of 2026-11-18), in the app and the web client
+  alike:
+  - **Signaling** goes first to the network's own relay, `wss://relay.nutflix.xyz`, which SovTech
+    runs, then to `relay.primal.net` and `relay.ditto.pub`. NFX-04 §1, amended that day, lets the
+    network's scoped relay carry signaling (kind 25050 `nfx-mesh/1`, ephemeral and never stored).
+    Like the other signaling relays, it learns which videos you seed or watch; it already saw your
+    IP address.
+  - **The read relays** are now `relay.primal.net` and `relay.ditto.pub`: `relay.damus.io` refuses
+    this project's address and `nos.lol` has rate-limited it. Comments, reactions, profiles and the
+    other social events stay off `relay.nutflix.xyz`, which keeps NFX's own events only.
+  - **STUN** is named `relay.nutflix.xyz:3478` (was `web.nutflix.xyz:3478`): the same server and
+    address, under the network's own relay name.
+  - **Saved settings are kept.** Only an install or a browser that has never saved a setting picks
+    up the new lists; any change in Settings saves the relay lists as they were. Settings › Relays
+    and Settings › NFX network are where to change them.
+  - **Release notices** (`scripts/release-publish.mjs`) go to `nos.lol`, `relay.primal.net` and
+    `relay.ditto.pub`; the 0.1.3 notice failed on relay.damus.io.
+
 ### CI
 
 - **`rust-advisories`** ignores RUSTSEC-2026-0543 (chrono is unmaintained; every version, no patched

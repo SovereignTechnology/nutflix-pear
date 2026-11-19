@@ -377,7 +377,6 @@ export function NfxSection({
           hint={
             <>
               wss:// relays, or ws:// to a relay on this computer. At most {UI_MAX_NFX_MESH_RELAYS}.
-              The network&apos;s scoped relays do not carry signaling.
             </>
           }
           fullError={`At most ${String(UI_MAX_NFX_MESH_RELAYS)} signaling relays.`}

@@ -57,3 +57,8 @@ write-restricted, empty, or a bridge relay for another network.)
 - It does not reverse the rest of this ADR: no SovTech relay among these general Nostr relays, no
   empty start. (NFX's own two relays, which SovTech runs, are a separate list: ADR 0020's
   2026-11-08 amendment.)
+
+**Note 2026-11-18 (the maintainer):** the defaults are now `relay.primal.net` and
+`relay.ditto.pub`. `relay.damus.io` refuses this project's address and `nos.lol` has rate-limited
+it, so both left the list. Still no SovTech relay among them: `relay.nutflix.xyz` keeps NFX's
+kinds only. A stored list still replaces the defaults.
