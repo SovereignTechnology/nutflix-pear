@@ -107,6 +107,64 @@ pub fn decode_ticket(s: &str) -> Result<TicketParts, String> {
     })
 }
 
+/// Where a connection's data goes now (`conn-path`, pear #123): its selected path, as iroh
+/// reports it. A fact about the user's own connection, read when asked; nothing is sent.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PathReport {
+    /// `direct` (an IP path), `relay`, `other` (a transport iroh adds later), or `none` (no path
+    /// is selected: the connection is closing, or has not settled on one).
+    pub kind: &'static str,
+    /// The remote `ip:port` of a direct path.
+    pub addr: Option<SocketAddr>,
+    /// The relay's host, for a relayed path.
+    pub relay: Option<String>,
+    /// The path's round-trip estimate, in milliseconds.
+    pub rtt_ms: Option<u64>,
+}
+
+impl PathReport {
+    const NONE: Self = Self {
+        kind: "none",
+        addr: None,
+        relay: None,
+        rtt_ms: None,
+    };
+}
+
+/// The selected path of `conn`. The caller holds `conn` (a clone of the open connection), which
+/// keeps every path of the snapshot readable: iroh reads a path's statistics through it.
+pub fn path_of(conn: &Connection) -> PathReport {
+    let paths = conn.paths();
+    let Some(p) = paths.iter().find(|p| p.is_selected()) else {
+        return PathReport::NONE;
+    };
+    let rtt = u64::try_from(p.rtt().as_millis()).unwrap_or(u64::MAX);
+    describe(p.remote_addr(), Some(rtt))
+}
+
+fn describe(addr: &TransportAddr, rtt_ms: Option<u64>) -> PathReport {
+    match addr {
+        TransportAddr::Ip(a) => PathReport {
+            kind: "direct",
+            addr: Some(*a),
+            relay: None,
+            rtt_ms,
+        },
+        TransportAddr::Relay(url) => PathReport {
+            kind: "relay",
+            addr: None,
+            relay: url.host_str().map(str::to_owned),
+            rtt_ms,
+        },
+        _ => PathReport {
+            kind: "other",
+            addr: None,
+            relay: None,
+            rtt_ms,
+        },
+    }
+}
+
 /// Why a `get` failed.
 pub enum GetError {
     Timeout,
@@ -365,6 +423,70 @@ pub fn rss_hwm_kib() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_is_described_by_its_transport() {
+        let ip: SocketAddr = "192.0.2.7:4433".parse().unwrap();
+        assert_eq!(
+            describe(&TransportAddr::Ip(ip), Some(12)),
+            PathReport {
+                kind: "direct",
+                addr: Some(ip),
+                relay: None,
+                rtt_ms: Some(12),
+            }
+        );
+        let relay: RelayUrl = "https://relay.example.net/".parse().unwrap();
+        let p = describe(&TransportAddr::Relay(relay), None);
+        assert_eq!(p.kind, "relay");
+        assert_eq!(p.addr, None);
+        assert_eq!(p.relay.as_deref(), Some("relay.example.net"));
+    }
+
+    /// Two nodes on one machine, no relay: the dialler's selected path is the other's socket.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_direct_connection_reports_its_remote_address() {
+        let dir = std::env::temp_dir().join(format!("iroh-helper-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = Node::spawn(&dir.join("a"), None, vec![], false, false, vec![])
+            .await
+            .unwrap();
+        let b = Node::spawn(&dir.join("b"), None, vec![], false, false, vec![])
+            .await
+            .unwrap();
+        let port = b
+            .endpoint()
+            .bound_sockets()
+            .into_iter()
+            .find(SocketAddr::is_ipv4)
+            .unwrap()
+            .port();
+        let to = SocketAddr::from(([127, 0, 0, 1], port));
+        let conn = a
+            .dial(a.trusted(b.endpoint().id(), &[], &[to]))
+            .await
+            .unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let report = loop {
+            let r = path_of(&conn);
+            if r.kind != "none" || tokio::time::Instant::now() > deadline {
+                break r;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(report.kind, "direct");
+        let addr = report.addr.unwrap();
+        assert_eq!(addr.port(), port);
+        assert!(
+            addr.ip().to_canonical().is_loopback(),
+            "{addr:?} is not loopback"
+        );
+        assert!(report.rtt_ms.is_some());
+        drop(conn);
+        a.close().await;
+        b.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The worker's NFX store files are imported by reference. Untagging them (a video dropped)
     /// and the collector that follows must forget them, never delete the worker's copy.

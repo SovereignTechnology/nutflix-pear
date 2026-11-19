@@ -65,6 +65,67 @@ const IROH = {
     ] as const,
   },
 };
+/** Pear #123: a free play's stats for nerds, and its addresses, as the worker answers them. */
+const NFX_STATS = {
+  sources: [
+    {
+      kind: 'iroh' as const,
+      id: 'e1'.repeat(32),
+      via: 'beacon',
+      bytesDown: 3_000_000,
+      bytesUp: 0,
+      files: 7,
+      connected: true,
+    },
+    {
+      kind: 'webrtc' as const,
+      id: 'rtc:2.17',
+      via: 'nostr',
+      bytesDown: 0,
+      bytesUp: 0,
+      files: 0,
+      connected: true,
+    },
+    {
+      kind: 'hyperdht' as const,
+      id: 'a'.repeat(64),
+      via: 'beacon',
+      bytesDown: 1_000,
+      bytesUp: 0,
+      files: 1,
+      connected: false,
+    },
+  ],
+  engine: 'nfx worker: iroh, WebRTC, HyperDHT',
+  peers: { connected: 2, total: 3 },
+  verified: 8,
+  refused: 1,
+};
+const NFX_ADDRESSES = [
+  {
+    kind: 'iroh' as const,
+    id: 'e1'.repeat(32),
+    address: '192.0.2.7:4433',
+    path: 'direct' as const,
+    rttMs: 12,
+  },
+  {
+    kind: 'iroh' as const,
+    id: 'e2'.repeat(32),
+    address: '',
+    path: 'relayed' as const,
+    via: 'iroh-relay.example',
+    rttMs: 80.5,
+  },
+  {
+    kind: 'webrtc' as const,
+    id: 'rtc:2.17',
+    address: '[2001:db8::7]:50000',
+    path: 'direct' as const,
+    detail: 'udp',
+  },
+  { kind: 'hyperdht' as const, id: 'a'.repeat(64), address: '', path: 'unknown' as const },
+];
 const NFX_OPENED = {
   link: 'http://127.0.0.1:41234/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/fedcba9876543210fedcba9876543210',
   rendition: '720p',
@@ -126,6 +187,7 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'play.resume': [{ sid: SID }],
   'play.prefetch': [{ sid: SID, seconds: 10 }],
   'play.close': [{ sid: SID }],
+  'play.addresses': [{ sid: SID }],
   'seeder.status': [{}],
   'seeder.configure': [seeding],
   'seeder.melt': [{ mint: MINT, bolt11: 'lnbc500n1pmockinvoice' }],
@@ -171,6 +233,8 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
     { ...NFX_OPEN, held: { seeders: 1, all: 1, named: { $map: [] } } },
   ],
   'nfx.play.close': [{ sid: SID }],
+  'nfx.play.stats': [{ sid: SID }],
+  'nfx.play.addresses': [{ sid: SID }],
   'nfx.rtc.answer': [{ swarm: RTC_SWARM, offer: SDP }],
   'nfx.rtc.offer': [{ swarm: RTC_SWARM }],
   'nfx.rtc.accept': [{ peer: 1, answer: SDP }],
@@ -220,6 +284,15 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
   // Lane P2-owed-viewer: play.close answers the session's unpaid tail (it answered nothing before;
   // the host now keeps a tail authorisation for what is left — ADR 0018 amendment).
   'play.close': [{ unpaid: 0 }, { unpaid: 12 }],
+  'play.addresses': [
+    { addresses: [] },
+    {
+      addresses: [
+        { kind: 'hypercore', id: PUBKEY, address: '198.51.100.2:49737', path: 'direct' },
+        { kind: 'hypercore', id: 'cd'.repeat(32), address: '', path: 'unknown' },
+      ],
+    },
+  ],
   'seeder.status': [status],
   'seeder.configure': [undefined],
   'seeder.melt': [{ paid: true }],
@@ -240,6 +313,8 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
     { ...NFX_OPENED, rendition: '360p', renditions: [{ id: '360p', bandwidth: 1 }] },
   ],
   'nfx.play.close': [undefined],
+  'nfx.play.stats': [{ sources: [] }, NFX_STATS],
+  'nfx.play.addresses': [{ addresses: [] }, { addresses: NFX_ADDRESSES }],
   'nfx.rtc.answer': [{ peer: 2, sdp: SDP }],
   'nfx.rtc.offer': [{ peer: 3, sdp: SDP }],
   'nfx.rtc.accept': [undefined],
@@ -1113,5 +1188,94 @@ describe('#89: the WebRTC side (nfx.configure rtc, nfx.rtc.*)', () => {
     const reset = validateWorkerEvent['nfx.rtc.reset'];
     expect(reset({ op: 'ev', e: 'nfx.rtc.reset' })).toBe(true);
     expect(reset({ op: 'ev', e: 'nfx.rtc.reset', peer: 1 })).toBe(false);
+  });
+});
+
+describe('pear #123: stats for nerds on the worker hop', () => {
+  const stats = validateWorkerResult['nfx.play.stats'];
+  const nfxAddresses = validateWorkerResult['nfx.play.addresses'];
+  const paid = validateWorkerResult['play.addresses'];
+  const [iroh, rtc] = NFX_STATS.sources;
+  const [direct] = NFX_ADDRESSES;
+
+  it('takes a sid only', () => {
+    for (const m of ['nfx.play.stats', 'nfx.play.addresses', 'play.addresses'] as const) {
+      expect(validateWorkerArgs[m]({ sid: SID })).toBe(true);
+      expect(validateWorkerArgs[m]({ sid: 'short' })).toBe(false);
+      expect(validateWorkerArgs[m]({ sid: SID, peer: 1 })).toBe(false);
+    }
+  });
+
+  it('refuses stats a screen should not take: ids, counts, kinds and bounds', () => {
+    const src = (over: object): unknown => ({ ...NFX_STATS, sources: [{ ...iroh, ...over }] });
+    for (const bad of [
+      src({ id: 'E1'.repeat(32) }),
+      src({ id: 'e1'.repeat(33) }),
+      src({ kind: 'origin', id: 'cdn.example' }),
+      src({ kind: 'hypercore' }),
+      src({ kind: 'webrtc', id: 'peer 17' }),
+      src({ kind: 'webrtc', id: 'rtc:2.17\n' }),
+      src({ bytesDown: -1 }),
+      src({ bytesDown: 1.5 }),
+      src({ files: Number.NaN }),
+      src({ bytesUp: Number.POSITIVE_INFINITY }),
+      src({ connected: 'yes' }),
+      src({ via: 'v'.repeat(65) }),
+      src({ via: 'tab\there' }),
+      src({ label: 'l'.repeat(25) }),
+      src({ address: '192.0.2.7:4433' }),
+      { ...NFX_STATS, sources: [iroh, iroh] },
+      {
+        ...NFX_STATS,
+        sources: Array.from({ length: 65 }, (_, i) => ({ ...rtc, id: `rtc:1.${i}` })),
+      },
+      { ...NFX_STATS, peers: { connected: 4, total: 3 } },
+      { ...NFX_STATS, engine: 'nfx\nworker' },
+      { ...NFX_STATS, engine: '' },
+      { ...NFX_STATS, verified: -1 },
+      { ...NFX_STATS, bandwidthEstimate: Number.NaN },
+      { ...NFX_STATS, signaling: { kind: 'carrier-pigeon', endpoints: [] } },
+      { ...NFX_STATS, extra: true },
+      { sources: {} },
+      {},
+    ])
+      expect(stats(viaJson(bad)), JSON.stringify(bad)).toBe(false);
+    // 64 sources is the cap, not past it.
+    const many = Array.from({ length: 64 }, (_, i) => ({ ...rtc, id: `rtc:1.${i}` }));
+    expect(stats({ sources: many })).toBe(true);
+    expect(
+      stats({ ...NFX_STATS, signaling: { kind: 'nostr', endpoints: ['relay.example'], open: 1 } }),
+    ).toBe(true);
+  });
+
+  it('an address is an ip:port the transport reported, or empty; nothing else', () => {
+    const one = (over: object): unknown => ({ addresses: [{ ...direct, ...over }] });
+    for (const bad of [
+      one({ address: 'peer.example:4433' }),
+      one({ address: '[fe80::1%2]:4433' }),
+      one({ address: '[FE80::1]:4433' }),
+      one({ address: '192.0.2.7' }),
+      one({ address: 'udp://192.0.2.7:4433' }),
+      one({ address: '192.0.2.7:4433 ' }),
+      one({ path: 'tor' }),
+      one({ rttMs: -1 }),
+      one({ rttMs: Number.POSITIVE_INFINITY }),
+      one({ via: '' }),
+      one({ detail: 'd'.repeat(25) }),
+      one({ kind: 'hypercore', id: PUBKEY }),
+      one({ kind: 'webrtc', id: 'e1'.repeat(32) }),
+      one({ extra: 1 }),
+      { addresses: Array.from({ length: 65 }, () => direct) },
+      { addresses: {} },
+      [],
+    ])
+      expect(nfxAddresses(viaJson(bad)), JSON.stringify(bad)).toBe(false);
+    // A paid session's are its seeders', by the pubkey `peers` names: never another kind.
+    for (const bad of [
+      { addresses: [direct] },
+      { addresses: [{ ...direct, kind: 'hypercore', id: 'not-a-key' }] },
+      { addresses: [{ kind: 'hypercore', id: PUBKEY, address: 'x', path: 'direct' }] },
+    ])
+      expect(paid(viaJson(bad)), JSON.stringify(bad)).toBe(false);
   });
 });

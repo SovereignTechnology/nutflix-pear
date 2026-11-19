@@ -33,6 +33,7 @@ supersedes it.
 | [0021](0021-speak-iroh-through-a-helper.md)          | Speak iroh as well, through a thin helper process                         | Accepted; 0023 (proposed) would amend "no other socket"   |
 | [0022](0022-a-web-client-for-nfx.md)                 | A web client for NFX videos at web.nutflix.xyz                            | Accepted                                                  |
 | [0023](0023-webrtc-in-the-helper.md)                 | Trade segments with browsers over WebRTC, through the helper              | Proposed                                                  |
+| [0024](0024-stats-for-nerds.md)                      | Stats for nerds: show where a play's bytes come from                      | Accepted                                                  |
 
 ## Numbering
 

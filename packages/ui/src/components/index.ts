@@ -31,6 +31,20 @@ export type {
 } from './ReactionButtons/reaction.js';
 export { PeerMeter } from './PeerMeter/PeerMeter.js';
 export type { PeerMeterProps } from './PeerMeter/PeerMeter.js';
+export { NerdStats, useNerdStats } from './NerdStats/NerdStats.js';
+export type { NerdFeed, NerdState, NerdStatsProps } from './NerdStats/NerdStats.js';
+export {
+  addressText,
+  copyText,
+  formatByteCount,
+  pathText,
+  peerSpendRows,
+  sampleElement,
+  shortSourceId,
+  sourceRows,
+  statRows,
+} from './NerdStats/model.js';
+export type { ElementSample, NerdSourceRow, SampledElement } from './NerdStats/model.js';
 export { EMPTY_STATE_PRESETS, EmptyState, ErrorState } from './EmptyState/EmptyState.js';
 export type {
   EmptyStatePreset,

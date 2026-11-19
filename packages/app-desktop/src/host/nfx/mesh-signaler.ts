@@ -278,6 +278,24 @@ export class NfxMeshSignaler {
     return this.seedKey?.pubkey ?? null;
   }
 
+  /**
+   * Pear #123 (stats for nerds): the signaling relays, as hosts, and how many of them it hears on
+   * now; `null` while it is not running.
+   */
+  signaling(): { readonly endpoints: readonly string[]; readonly open: number } | null {
+    if (this.seedKey === null) return null;
+    const relays = this.d.relays();
+    const endpoints: string[] = [];
+    for (const u of relays) {
+      const host = /^wss?:\/\/(\[[^\]]{1,45}\]|[^/:?#\s]{1,253})/i.exec(u)?.[1];
+      if (host !== undefined) endpoints.push(host);
+    }
+    return {
+      endpoints,
+      open: relays.filter((u) => this.subs.get(u)?.dead === false).length,
+    };
+  }
+
   /** The session key this side uses in `swarm`'s room, if it is in it (tests). */
   keyIn(swarm: string): string | null {
     return this.rooms.get(this.roomKeyOf(swarm))?.key.pubkey ?? null;

@@ -149,6 +149,20 @@ describe.skipIf(HELPER === '' && !IN_CI)('slice 5e-4: NFX play over iroh', () =>
     const whole = await httpGet(opened.link);
     expect(whole.status).toBe(200);
     expect(whole.body.equals(Buffer.from(v.expected)), logs(w)).toBe(true);
+    // Pear #123 (stats for nerds): the iroh seeder delivered every file, and its connection's
+    // selected path is direct (no relay here); the address is asked for, and never logged.
+    const stats = await w.call('nfx.play.stats', { sid: open.sid });
+    expect(stats.engine).toBe('nfx worker: iroh');
+    expect(stats.sources).toEqual([
+      expect.objectContaining({ kind: 'iroh', id: endpoint.node, connected: true }),
+    ]);
+    expect(stats.sources[0]!.files).toBe(stats.verified);
+    const { addresses } = await w.call('nfx.play.addresses', { sid: open.sid });
+    expect(addresses).toEqual([
+      expect.objectContaining({ kind: 'iroh', id: endpoint.node, path: 'direct' }),
+    ]);
+    expect(addresses[0]!.address).toMatch(/^(?:[0-9.]+|\[[0-9a-f:.]+\]):[0-9]+$/);
+    expect(logs(w)).not.toContain(addresses[0]!.address);
     // A range from the middle of the last segment to the end.
     const at = v.segmentAt.at(-1)! + 3;
     const tail = await httpGet(opened.link, { range: `bytes=${String(at)}-` });

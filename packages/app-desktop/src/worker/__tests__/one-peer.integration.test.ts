@@ -243,6 +243,24 @@ describe('F33 / issue #8 — one seeder per block, credit per seeder window (des
       );
       expect(spends.reduce((a, e) => a + e.amount, 0)).toBe(N * price);
 
+      // Pear #123 (stats for nerds): each seeder its `peers` events name, at the remote end of
+      // its live connection, through the real wire and its guards; and nothing logged it.
+      const lastPeers =
+        n.worker.events
+          .filter(
+            (e): e is Extract<WorkerEvent, { e: 'peers' }> =>
+              e.e === 'peers' && e.sid === n.args.sid,
+          )
+          .at(-1)?.peers ?? [];
+      expect(lastPeers.length).toBeGreaterThan(0);
+      const { addresses } = await n.worker.call('play.addresses', { sid: n.args.sid });
+      expect(addresses.map((a) => a.id).sort()).toEqual(lastPeers.map((p) => p.pubkey).sort());
+      for (const a of addresses) {
+        expect(a).toMatchObject({ kind: 'hypercore', path: 'direct' });
+        expect(a.address).toMatch(/^(?:[0-9.]+|\[[0-9a-f:.]+\]):[0-9]+$/);
+        expect(JSON.stringify(n.worker.events)).not.toContain(a.address);
+      }
+
       // Issue #8: each seeder within its own window — the window-1 seeder included.
       for (const [k, window] of [8, 4, 1].entries())
         expect(n.worst[k], `seeder ${String(k)} (window ${String(window)})`).toBeLessThanOrEqual(
@@ -258,6 +276,9 @@ describe('F33 / issue #8 — one seeder per block, credit per seeder window (des
         owed: 0,
       });
       await n.worker.call('play.close', { sid: n.args.sid });
+      await expect(n.worker.call('play.addresses', { sid: n.args.sid })).rejects.toMatchObject({
+        code: 'session-closed',
+      });
       expect(n.worker.invalid).toEqual([]);
     },
   );

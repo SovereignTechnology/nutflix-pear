@@ -1,0 +1,106 @@
+/* "Stats for nerds" (contracts v19, ADR 0024): text over the video, top left. */
+.nf-nerd {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-space-8);
+  padding: var(--nf-space-8) var(--nf-space-12);
+  border-radius: var(--nf-radius-lg);
+  color: var(--nf-color-overlay-fg);
+  background: var(--nf-color-overlay-strong);
+  backdrop-filter: blur(8px);
+  font:
+    12px/1.35 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.nf-nerd__head {
+  display: flex;
+  align-items: center;
+  gap: var(--nf-space-12);
+}
+
+.nf-nerd__title {
+  flex: 1;
+}
+
+.nf-nerd__switch {
+  white-space: nowrap;
+}
+
+.nf-nerd__button {
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--nf-radius-sm);
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nf-nerd__banner {
+  margin: 0;
+  padding: 4px 6px;
+  border-radius: var(--nf-radius-sm);
+  color: #ffd27a;
+  background: rgba(90, 59, 0, 0.9);
+}
+
+.nf-nerd table {
+  border-collapse: collapse;
+}
+
+.nf-nerd th,
+.nf-nerd td {
+  padding: 1px 10px 1px 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.nf-nerd th {
+  font-weight: normal;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.nf-nerd__sources thead th {
+  border-bottom: 1px solid currentColor;
+}
+
+.nf-nerd__closed {
+  opacity: 0.55;
+}
+
+.nf-nerd__id,
+.nf-nerd__addr {
+  word-break: break-all;
+}
+
+.nf-nerd__status {
+  margin: 0;
+  opacity: 0.8;
+}
+
+/* The context menu a right-click on the video opens (NfxWatch, Player). */
+.nf-nerd-menu {
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  position: absolute;
+  z-index: 5;
+  padding: 2px;
+  border-radius: var(--nf-radius-sm);
+  background: var(--nf-color-overlay-strong);
+}
+
+.nf-nerd-menu button {
+  display: block;
+  padding: 6px 12px;
+  border: 0;
+  color: var(--nf-color-overlay-fg);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}

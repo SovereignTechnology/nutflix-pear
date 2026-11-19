@@ -5,11 +5,19 @@
  */
 import { generateKeyPairSync } from 'node:crypto';
 
-import type { IrohRelayUrl, NfxAddress, NostrEvent, RelayUrl } from '@sovit/core';
+import type {
+  IrohRelayUrl,
+  NfxAddress,
+  NostrEvent,
+  PlaySourceAddress,
+  RelayUrl,
+} from '@sovit/core';
 import { mocks, nfx } from '@sovit/core';
 import { hyperdhtEndpoint } from '@sovit/seeder';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { HostOut, ReplyMsg } from '../../ipc/protocol.js';
+import { IPC_V } from '../../ipc/protocol.js';
 import { validateWorkerArgs } from '../../ipc/worker-guards.js';
 import { DEFAULT_NFX_MESH_RELAYS } from '../settings/settings.js';
 import { coreTestKit, type TestSignerLike } from './support/core-helpers.js';
@@ -460,5 +468,101 @@ describe('#89: a play joins its rendition’s signaling room', () => {
     await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-10'));
     await pause();
     expect(mesh()).toEqual([]);
+  });
+});
+
+describe('pear #123: stats for nerds on a free NFX session', () => {
+  type Reply = Extract<HostOut, { kind: 'reply' }>;
+  let nextId = 1;
+  /** One call as main relays it, and its reply. */
+  async function invoke(wc: number, method: string, args: unknown[]): Promise<ReplyMsg> {
+    const id = nextId++;
+    r!.host.handle({ kind: 'call', wc, msg: { v: IPC_V, id, method, args } as never });
+    const out = await r!.until(
+      (o): o is Reply => o.kind === 'reply' && o.wc === wc && o.msg.id === id,
+      `reply ${String(id)}`,
+    );
+    return out.msg;
+  }
+  const ADDRESS: PlaySourceAddress = {
+    kind: 'hyperdht',
+    id: 'f0'.repeat(32),
+    address: '198.51.100.9:49737',
+    path: 'direct',
+  };
+
+  it('asks the worker, for the owner only, and refuses once the session is closed', async () => {
+    r = await rig({
+      nfx: NFX_ON,
+      worker: { handlers: { 'nfx.play.addresses': () => ({ addresses: [ADDRESS] }) } },
+    });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-11');
+    const { peer } = await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-11');
+    const s = await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-11'));
+
+    const stats = await invoke(7, 'session.stats', [s.sid]);
+    expect(stats).toMatchObject({
+      ok: true,
+      result: {
+        engine: 'nfx worker: HyperDHT',
+        sources: [{ kind: 'hyperdht', id: peer, files: 3, connected: true }],
+        verified: 3,
+      },
+    });
+    // Without a helper the host does not signal, so there is no signaling to report.
+    expect((stats as { result: object }).result).not.toHaveProperty('signaling');
+    expect(r.worker().calls('nfx.play.addresses')).toEqual([]);
+    expect(await invoke(7, 'session.addresses', [s.sid])).toMatchObject({
+      ok: true,
+      result: [ADDRESS],
+    });
+    expect(r.worker().calls('nfx.play.addresses')).toEqual([{ sid: s.sid }]);
+    // Nothing on the host's log names it.
+    expect(JSON.stringify(r.log.lines)).not.toContain(ADDRESS.address);
+
+    // Another webContents' sid is unknown to it, and a sid main's guard refuses never arrives.
+    for (const m of ['session.stats', 'session.addresses'])
+      expect(await invoke(8, m, [s.sid])).toMatchObject({
+        ok: false,
+        error: { code: 'session-closed' },
+      });
+    expect(await invoke(7, 'session.stats', ['nope'])).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-argument' },
+    });
+
+    // The in-process view (owner 0) has them too.
+    const own = await r.host.adapter.playNfx(addrOf(creator.pubkey, 'free-video-11'));
+    await expect(own.stats?.()).resolves.toMatchObject({ engine: 'nfx worker: HyperDHT' });
+    await expect(own.addresses?.()).resolves.toEqual([ADDRESS]);
+    await own.close();
+    await expect(own.stats?.()).rejects.toMatchObject({ code: 'session-closed' });
+
+    await r.host.adapter.closeNfxSession(7, s.sid);
+    for (const m of ['session.stats', 'session.addresses'])
+      expect(await invoke(7, m, [s.sid])).toMatchObject({
+        ok: false,
+        error: { code: 'session-closed' },
+      });
+  });
+
+  it('with WebRTC on, the signaling relays and how many it hears on', async () => {
+    r = await rig({ nfx: NFX_ON, irohHelper: '/nonexistent/iroh-helper' });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-12');
+    await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-12');
+    const s = await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-12'));
+    const reply = await invoke(7, 'session.stats', [s.sid]);
+    const signaling = (reply as { result: { signaling?: unknown } }).result.signaling;
+    expect(signaling).toMatchObject({
+      kind: 'nostr',
+      endpoints: DEFAULT_NFX_MESH_RELAYS.map((u) => new URL(u).host),
+    });
+    expect((signaling as { open: number }).open).toBeLessThanOrEqual(
+      DEFAULT_NFX_MESH_RELAYS.length,
+    );
   });
 });

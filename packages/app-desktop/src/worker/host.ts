@@ -26,6 +26,7 @@ import type {
   MintUrl,
   NostrPubkey,
   PeerSpend,
+  PlaySourceAddress,
   PricePolicy,
   Sats,
   Sha256Hex,
@@ -336,6 +337,8 @@ export class WorkerHost {
         return undefined;
       case 'play.close':
         return { unpaid: await this.closeSession(req.a.sid) };
+      case 'play.addresses':
+        return { addresses: this.paidAddresses(req.a.sid) };
       case 'seeder.status':
         return this.seederStatus();
       case 'seeder.configure':
@@ -376,6 +379,10 @@ export class WorkerHost {
       case 'nfx.play.close':
         await this.nfxWatch?.close(req.a.sid);
         return undefined;
+      case 'nfx.play.stats':
+        return this.watching().stats(req.a.sid);
+      case 'nfx.play.addresses':
+        return { addresses: await this.watching().addresses(req.a.sid) };
       case 'nfx.rtc.answer':
         return this.rtcStep(req.a.swarm, (h) => h.rtcAnswer(req.a.swarm, req.a.offer));
       case 'nfx.rtc.offer':
@@ -851,6 +858,41 @@ export class WorkerHost {
     this.lastSidForCore.set(core, s);
     live.log.info('play session opened', { core, prefetchBlocks: gate.prefetchBlocks });
     return { key: core, link };
+  }
+
+  /** Slice 5d: the free NFX play sessions (made by `init`). */
+  private watching(): NfxWatching {
+    const watch = this.nfxWatch;
+    if (watch === null) fail('backend-down', 'worker is not initialised');
+    return watch;
+  }
+
+  /**
+   * Pear #123 (ADR 0024): where each seeder of paid session `sid` that its `peers` events name is
+   * connected now: the remote end of a live Hyperswarm connection whose verified HELLO named that
+   * pubkey. A seeder with no live connection is left out. Other hosts' addresses: read for this
+   * answer only, never logged.
+   */
+  private paidAddresses(sid: string): PlaySourceAddress[] {
+    const s = this.session(sid);
+    const net = this.net;
+    if (net === null) return [];
+    const out: PlaySourceAddress[] = [];
+    for (const pubkey of s.peers.keys()) {
+      if (out.length >= LIMITS.maxPlaySources) break;
+      const remotes = net.payer
+        .noiseKeysOf(pubkey)
+        .map((noise) => net.node.remoteOf(noise))
+        .filter((r): r is string => r !== null);
+      if (remotes.length === 0) continue;
+      const address = remotes.find((r) => r !== '') ?? '';
+      out.push(
+        address === ''
+          ? { kind: 'hypercore', id: pubkey, address: '', path: 'unknown' }
+          : { kind: 'hypercore', id: pubkey, address, path: 'direct' },
+      );
+    }
+    return out;
   }
 
   /**

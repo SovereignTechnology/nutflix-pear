@@ -127,6 +127,8 @@ export const VALID: Samples = {
   ],
   'session.switchRendition': [[SID, '360p']],
   'session.close': [[SID]],
+  'session.stats': [[SID]],
+  'session.addresses': [[SID]],
   'wallet.mints': [[]],
   'wallet.balance': [[MINT]],
   'wallet.balances': [[]],
@@ -331,6 +333,9 @@ export const INVALID: Partial<Record<Method, readonly unknown[][]>> = {
     ['https://blossom.example/' + 'a'.repeat(2100)],
   ],
   'session.pause': [['0123456789ABCDEF0123456789ABCDEF'], ['abc'], [SID + '0']],
+  // Contracts v19: a sid only.
+  'session.stats': [[], ['abc'], [SID, SID]],
+  'session.addresses': [[], [SID + '0'], [SID, true]],
   'session.setPrefetchSeconds': [
     [SID, -1],
     [SID, 601],
