@@ -1007,8 +1007,11 @@ interface Checks {
   members: Mutual<NonMethodKeys<NetworkAdapter>, 'platform' | SubObject>;
   excludedDisjoint: IsNever<Extract<Method, ExcludedMethod>>;
   topicsDisjoint: IsNever<Extract<Method, TopicMethod>>;
-  /** PlaySession's data fields are all on `PlaySessionWire`, with the same types. */
-  playKeys: IsNever<Exclude<NonMethodKeys<PlaySession>, keyof PlaySessionWire>>;
+  /**
+   * PlaySession's data fields are all on `PlaySessionWire`, with the same types. v19: the
+   * optional `addresses` (a possibly-absent member) is not on the wire yet (pear #123 part 2).
+   */
+  playKeys: IsNever<Exclude<NonMethodKeys<PlaySession>, keyof PlaySessionWire | 'addresses'>>;
   playData: Mutual<Pick<PlaySessionWire, PlayData>, Pick<PlaySession, PlayData>>;
   playSource: PlaySessionWire['source'] extends PlaySession['source'] ? true : false;
   /**
@@ -1017,11 +1020,13 @@ interface Checks {
    * app's sessions do not offer it, and a switch closes the session and opens another, as before.
    * v15: so are the optional `problems` and `onChange`: a session here plays a URL whose renditions
    * are known when it opens, and reports no problems on the session.
+   * v19: so are the optional `stats` and `addresses` (stats for nerds), until the desktop
+   * plumbing lands (pear #123 part 2); the panel then shows the player's own numbers only.
    */
   nfxPlayKeys: IsNever<
     Exclude<
       NonMethodKeys<NfxPlaySession>,
-      keyof NfxPlaySessionWire | 'setRendition' | 'problems' | 'onChange'
+      keyof NfxPlaySessionWire | 'setRendition' | 'problems' | 'onChange' | 'stats' | 'addresses'
     >
   >;
   nfxPlayData: Mutual<Pick<NfxPlaySessionWire, NfxPlayData>, Pick<NfxPlaySession, NfxPlayData>>;

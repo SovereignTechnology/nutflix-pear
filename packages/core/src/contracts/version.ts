@@ -126,5 +126,10 @@
  *       Additive: `NfxSettings.meshRelays?` (absent = the shell's default; empty = WebRTC off) and
  *       `MAX_NFX_MESH_RELAYS` (8). A stored v10 to v17 `nfx` stays valid. Every v17 consumer
  *       compiles.
+ *  19 — 2026-11-18 (ADR 0024, pear #123: "stats for nerds" in every player, where the bytes come
+ *       from; the maintainer's decision of 2026-11-18: sources by a short id, peers' addresses
+ *       only behind a switch). Additive: `NfxPlaySession.stats?()` → `NfxPlayStats`,
+ *       `NfxPlaySession.addresses?()` and `PlaySession.addresses?()` → `PlaySourceAddress[]`,
+ *       `PlaySourceStat`, `PlaySourceKind`, `MAX_PLAY_SOURCES` (64). Every v18 consumer compiles.
  */
-export const CONTRACTS_VERSION = 18 as const;
+export const CONTRACTS_VERSION = 19 as const;

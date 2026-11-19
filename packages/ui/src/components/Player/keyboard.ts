@@ -1,7 +1,8 @@
 /**
  * Player keyboard map (build-plan §6.2): space/k play-pause, j/l ±10 s, f fullscreen,
  * m mute, t theater, i mini-player, < > speed, 0-9 seek to N×10 %. Extras in the YouTube
- * idiom: ←/→ ±5 s, ↑/↓ volume ±5 %, c captions, p picture-in-picture, Home/End.
+ * idiom: ←/→ ±5 s, ↑/↓ volume ±5 %, c captions, p picture-in-picture, Home/End; n "stats for
+ * nerds" (contracts v19, ADR 0024).
  *
  * Pure: `keyboardAction` maps a key + the current state to a resolved `PlayerAction`, so
  * the shell can also wire it to a document-level listener.
@@ -29,6 +30,8 @@ export type PlayerAction =
   | { readonly type: 'toggle-fullscreen' }
   | { readonly type: 'toggle-mini' }
   | { readonly type: 'toggle-peers' }
+  /** v19 (ADR 0024): open or close "stats for nerds", where the bytes come from. */
+  | { readonly type: 'toggle-nerd-stats' }
   /** Mini-player "close" (stop playback and dismiss). */
   | { readonly type: 'close' };
 
@@ -108,6 +111,7 @@ export function keyboardAction(ev: KeyLike, state: KeyboardState): PlayerAction 
   if (lower === 'i') return { type: 'toggle-mini' };
   if (lower === 'c') return { type: 'toggle-captions' };
   if (lower === 'p') return { type: 'toggle-pip' };
+  if (lower === 'n') return { type: 'toggle-nerd-stats' };
   if (key === '<' || key === ',')
     return { type: 'set-rate', rate: stepRate(state.playbackRate, -1) };
   if (key === '>' || key === '.')
@@ -150,4 +154,5 @@ export const KEYBOARD_MAP: readonly { readonly keys: string; readonly action: st
   { keys: 'c', action: 'Captions' },
   { keys: 'p', action: 'Picture-in-picture' },
   { keys: '< / >', action: 'Slower / faster' },
+  { keys: 'n', action: 'Stats for nerds: where the video comes from' },
 ];

@@ -55,6 +55,7 @@ import {
   Icon,
   IconButton,
   Markdown,
+  NerdStats,
   Player,
   ReactionButtons,
   SatsBadge,
@@ -71,8 +72,11 @@ import {
   keyboardAction,
   shortPubkey,
   mintHost,
+  peerSpendRows,
   reactionStateOf,
   reactionStep,
+  statRows,
+  useNerdStats,
   type MyReaction,
   type PlayerAction,
   type PlayerState,
@@ -325,6 +329,8 @@ export function Watch({
   const [peers, setPeers] = useState<readonly PeerSpend[]>([]);
   const [peersSeen, setPeersSeen] = useState(false);
   const [showPeers, setShowPeers] = useState(false);
+  /** v19 (ADR 0024): "stats for nerds" over the player. */
+  const [showNerd, setShowNerd] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [playError, setPlayError] = useState<unknown>(undefined);
   const [handedOff, setHandedOff] = useState(false);
@@ -522,6 +528,7 @@ export function Watch({
     setPeers([]);
     setPeersSeen(false);
     setShowPeers(false);
+    setShowNerd(false);
     setUpNext(null);
     positionSecRef.current = 0;
     lastRecordRef.current = 0;
@@ -725,6 +732,7 @@ export function Watch({
     setHandedOff(true);
     setPeers([]);
     setShowPeers(false);
+    setShowNerd(false);
     setUpNext(null);
     setPlayer((prev) => idlePlayerState(dataRef.current?.video, prev.theater));
     take(b.session, b.videoId, handoff);
@@ -739,6 +747,7 @@ export function Watch({
     setConnecting(false);
     setUpNext(null);
     setShowPeers(false);
+    setShowNerd(false);
     setPeers([]);
     setHandedOff(false);
     handedOffRef.current = false;
@@ -1209,6 +1218,9 @@ export function Watch({
         case 'toggle-peers':
           setShowPeers((s) => !s);
           break;
+        case 'toggle-nerd-stats':
+          setShowNerd((s) => !s);
+          break;
         case 'close':
           closePlayback();
           break;
@@ -1492,6 +1504,14 @@ export function Watch({
     leaveTo({ name: 'wallet' });
   }, [leaveTo]);
 
+  // v19 (ADR 0024): the paid seeders (`onPeers`) and the element, while the panel is open; the
+  // seeders' addresses only while the viewer has switched them on.
+  const bindingAddresses = binding?.session.addresses?.bind(binding.session);
+  const nerd = useNerdStats(showNerd && binding !== null, {
+    addresses: bindingAddresses,
+    element: () => videoElRef.current,
+  });
+
   // ---- render --------------------------------------------------------------------------------------
   const pageHead = (text: string): ReactElement => (
     <h1 id={`${id}-title`} className="nf-watch__sr">
@@ -1732,6 +1752,28 @@ export function Watch({
         policy={video.price}
         title={video.title}
         showPeers={showPeers}
+        showNerdStats={showNerd}
+        nerdStats={
+          <NerdStats
+            rows={[
+              ...statRows(null, nerd.sample, { rendition: player.rendition }),
+              [
+                'Paid this session',
+                player.spend === undefined
+                  ? '–'
+                  : `${formatInteger(player.spend.total)} sats (${formatInteger(player.spend.ratePerMin)} sats/min)`,
+              ],
+            ]}
+            sources={peerSpendRows(peers)}
+            canShowAddresses={nerd.canShowAddresses}
+            showAddresses={nerd.showAddresses}
+            addresses={nerd.addresses}
+            onShowAddresses={nerd.setShowAddresses}
+            onClose={() => {
+              setShowNerd(false);
+            }}
+          />
+        }
         onAction={onPlayerAction}
       />
     );

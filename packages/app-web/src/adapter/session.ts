@@ -18,11 +18,15 @@
 import type {
   ElementPlaySource,
   MAX_NFX_PLAY_PROBLEMS,
+  MAX_PLAY_SOURCES,
   MediaElementLike,
   NfxAddress,
   NfxPlayProblem,
   NfxPlaySession,
+  NfxPlayStats,
   NfxRenditionInfo,
+  PlaySourceAddress,
+  PlaySourceStat,
   Unsubscribe,
 } from '@sovit/core';
 
@@ -31,12 +35,118 @@ import type { PlayOrigin } from './endpoints.js';
 import type {
   NfxIceServer,
   NfxLevel,
+  NfxLibPeerAddress,
   NfxLibSession,
+  NfxLibStats,
   NfxOpenOptions,
   NfxOriginSource,
   NfxPlayerEvent,
   NfxPlayerLib,
 } from '../nfx-lib.js';
+
+/** `MAX_PLAY_SOURCES` (contracts v19), as a value: core's constant is imported as a type only. */
+const MAX_SOURCES: typeof MAX_PLAY_SOURCES = 64;
+
+/** A network-chosen string as the contract carries it: printable ASCII, at most `max`. */
+function printable(raw: string, max: number): string {
+  return raw.replace(/[^\x20-\x7e]/g, '?').slice(0, max);
+}
+
+/** A URL's host, or the string cut short when it is not a URL. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return printable(url, 64);
+  }
+}
+
+/**
+ * Contracts v19 (ADR 0024): the library's `stats()` as stats for nerds reads it. The origin is one
+ * source (what its loader took plus the segments the mesh fetched over HTTP); each mesh peer
+ * another. A library pinned before nfx #99 has no per-peer list: its peers are one row of totals.
+ */
+export function playStats(s: NfxLibStats): NfxPlayStats {
+  const mesh = s.mesh;
+  const sources: PlaySourceStat[] = [
+    {
+      kind: 'origin',
+      id: hostOf(s.origin),
+      via: 'beacon',
+      bytesDown: (s.originBytes ?? 0) + (mesh?.bytes.http ?? 0),
+      bytesUp: 0,
+      files: mesh?.segments?.http ?? s.verified,
+      connected: true,
+    },
+  ];
+  if (mesh !== null) {
+    if (mesh.peerList !== undefined) {
+      for (const p of mesh.peerList) {
+        const id = printable(p.id, 64);
+        sources.push({
+          kind: 'webrtc',
+          id,
+          via: p.via.startsWith('nostr:') ? 'nostr' : hostOf(p.via),
+          bytesDown: p.down,
+          bytesUp: p.up,
+          files: p.segments,
+          connected: p.connected,
+          ...(id.startsWith('-NX0100-') ? { label: 'nfxd bridge?' } : {}),
+        });
+      }
+    } else if (mesh.bytes.p2p > 0 || mesh.uploaded > 0) {
+      sources.push({
+        kind: 'webrtc',
+        id: 'all peers',
+        via: mesh.signaling,
+        bytesDown: mesh.bytes.p2p,
+        bytesUp: mesh.uploaded,
+        files: 0,
+        connected: mesh.peers > 0,
+        label: 'totals',
+      });
+    }
+  }
+  const endpoints = (mesh?.signaling === 'trackers' ? mesh.trackers : (mesh?.relays ?? [])).map(
+    hostOf,
+  );
+  const open = mesh?.signal?.open;
+  return {
+    sources: sources.slice(0, MAX_SOURCES),
+    engine: printable(s.engine, 120),
+    ...(mesh?.connected === undefined
+      ? {}
+      : { peers: { connected: mesh.connected, total: mesh.peers } }),
+    ...(mesh === null
+      ? {}
+      : {
+          signaling: {
+            kind: mesh.signaling,
+            endpoints,
+            ...(open === undefined ? {} : { open }),
+          },
+        }),
+    verified: s.verified,
+    refused: s.rejected.length + (mesh?.rejected.length ?? 0),
+    ...(s.bandwidthEstimate === undefined ? {} : { bandwidthEstimate: s.bandwidthEstimate }),
+  };
+}
+
+/** Contracts v19: a peer's selected candidate pair as the contract carries it. */
+export function playAddress(a: NfxLibPeerAddress): PlaySourceAddress {
+  const hidden = a.address === '' || a.address.endsWith('.local');
+  const ip = printable(a.address, 48);
+  const host = ip.includes(':') ? `[${ip}]` : ip;
+  const detail = [a.remoteType, a.protocol].filter((x) => x !== '').join('/');
+  return {
+    kind: 'webrtc',
+    id: printable(a.id, 64),
+    address: hidden ? '' : a.port === null ? host : `${host}:${String(a.port)}`,
+    path: a.path,
+    ...(a.rttMs === null ? {} : { rttMs: a.rttMs }),
+    ...(detail === '' ? {} : { detail: printable(detail, 24) }),
+  };
+}
 
 /** An origin as `open()` takes it: a bare base when it serves every rendition. */
 export function originSource(o: PlayOrigin): string | NfxOriginSource {
@@ -226,6 +336,32 @@ export class WebNfxSession implements NfxPlaySession {
     this.#picked = level.id;
     this.#changed();
     return Promise.resolve();
+  }
+
+  /** Contracts v19 (ADR 0024): where the bytes came from, now. No addresses. */
+  stats(): Promise<NfxPlayStats> {
+    const session = this.#closed ? null : (this.#attached?.session ?? null);
+    if (session === null) return Promise.resolve({ sources: [] });
+    try {
+      return Promise.resolve(playStats(session.stats()));
+    } catch {
+      return Promise.resolve({ sources: [] });
+    }
+  }
+
+  /**
+   * Contracts v19 (ADR 0024): each open peer's address, from the library (nfx #99), asked only
+   * while the viewer has switched addresses on. A library pinned before it has none to give.
+   */
+  async addresses(): Promise<readonly PlaySourceAddress[]> {
+    const session = this.#closed ? null : (this.#attached?.session ?? null);
+    if (session?.addresses === undefined) return [];
+    try {
+      const list = await session.addresses();
+      return list.slice(0, MAX_SOURCES).map(playAddress);
+    } catch {
+      return [];
+    }
   }
 
   /** Idempotent. */
