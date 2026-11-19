@@ -75,12 +75,8 @@ describe('defaults (ADR 0022 items 4 to 6)', () => {
       network: 'nfx:testnet:1',
       scopedRelays: ['wss://relay.nutflix.xyz'],
       // Pear #89: the list the desktop app defaults to as well, so the two meet. No tracker. The
-      // network's own signaling endpoint first (2026-11-18), on a path beside the scoped relay.
-      meshRelays: [
-        'wss://relay.nutflix.xyz/mesh',
-        'wss://relay.primal.net',
-        'wss://relay.ditto.pub',
-      ],
+      // network's own relay first (2026-11-18): the scoped relay itself, as NFX-04 now allows.
+      meshRelays: ['wss://relay.nutflix.xyz', 'wss://relay.primal.net', 'wss://relay.ditto.pub'],
     });
     expect(DEFAULT_WEB_SETTINGS.nfx?.irohRelays).toBeUndefined();
     expect(WEB_ICE_SERVERS).toEqual([{ urls: ['stun:web.nutflix.xyz:3478'] }]);
@@ -108,13 +104,13 @@ describe('isWebSettingsPatch', () => {
       { nfx: { enabled: true, network: 'nfx:testnet:1', scopedRelays: [] } },
     ],
     [
-      'a signaling relay on a path (the network signaling endpoint beside its scoped relay)',
+      'the scoped relay as a signaling relay too (NFX-04 as amended 2026-11-18)',
       {
         nfx: {
           enabled: true,
           network: 'nfx:testnet:1',
           scopedRelays: ['wss://relay.nutflix.xyz'],
-          meshRelays: ['wss://relay.nutflix.xyz/mesh'],
+          meshRelays: ['wss://relay.nutflix.xyz'],
         },
       },
     ],
@@ -281,11 +277,7 @@ describe('parseStoredWebSettings: unreadable means defaults', () => {
       enabled: true,
       network: 'nfx:testnet:1',
       scopedRelays: ['wss://mine.example'],
-      meshRelays: [
-        'wss://relay.nutflix.xyz/mesh',
-        'wss://relay.primal.net',
-        'wss://relay.ditto.pub',
-      ],
+      meshRelays: ['wss://relay.nutflix.xyz', 'wss://relay.primal.net', 'wss://relay.ditto.pub'],
     });
     // A list the viewer saved, an empty one included, is kept as it is: the defaults before
     // 2026-11-18 too, once saved (no migration rewrites a saved list).

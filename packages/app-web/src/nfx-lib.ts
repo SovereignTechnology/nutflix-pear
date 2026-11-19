@@ -50,7 +50,7 @@ export type NfxPlayerEvent =
 
 /**
  * NFX-10 §6 signalling over Nostr (`nfx-mesh/1`): general relays, `wss:` (or `ws:` to a loopback
- * host), 1 to 8. A scoped relay (NFX-04) refuses the kind. Peers meet only on a relay both use.
+ * host), 1 to 8; a scoped relay (NFX-04) may carry it too. Peers meet only on a relay both use.
  * The library also takes WebTorrent trackers (`{ kind: 'trackers', urls }`); this client never
  * passes them (pear #89).
  */

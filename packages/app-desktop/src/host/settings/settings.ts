@@ -46,9 +46,10 @@ export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
 ]);
 /**
  * Contracts v18 (the maintainer, 2026-11-15): WebRTC connections are signaled over Nostr relays
- * (NFX-10 §6), and the scoped relay refuses that kind. The maintainer's 2026-11-18 decision puts
- * the network's own signaling endpoint first: `/mesh` on the scoped relay's host, which SovTech
- * runs. The two public relays after it are the app's default relays, picked by
+ * (NFX-10 §6). The maintainer's 2026-11-18 decision puts the network's own relay first:
+ * `wss://relay.nutflix.xyz`, the scoped relay itself, which SovTech runs. NFX-04, amended that day
+ * as an exception to its freeze, lets a scoped relay admit kind 25050 `nfx-mesh/1`, ephemeral and
+ * never stored. The two public relays after it are the app's default relays, picked by
  * `scripts/mesh-relay-soak.mjs`: on 2026-11-16 nos.lol, relay.primal.net and relay.ditto.pub each
  * accepted and delivered every kind-25050 event for ten minutes, and relay.damus.io refused the
  * connection (HTTP 403). These two are the pair with different operators and no history of
@@ -57,7 +58,7 @@ export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
  * Settings › NFX network lists them, and any of them can be replaced or removed.
  */
 export const DEFAULT_NFX_MESH_RELAYS: readonly RelayUrl[] = Object.freeze([
-  'wss://relay.nutflix.xyz/mesh' as RelayUrl,
+  'wss://relay.nutflix.xyz' as RelayUrl,
   'wss://relay.primal.net' as RelayUrl,
   'wss://relay.ditto.pub' as RelayUrl,
 ]);

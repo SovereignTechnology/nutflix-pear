@@ -144,14 +144,12 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       parseStoredSettings({ v: 1, settings: { nfx: { ...nfx, meshRelays: [] } } })?.settings.nfx,
     ).toEqual({ ...nfx, meshRelays: [] });
     // A saved list stays as it is, the defaults before 2026-11-18 included (no migration rewrites
-    // a saved list), and a signaling endpoint on a path is a relay like any other.
-    for (const meshRelays of [
-      ['wss://relay.primal.net', 'wss://relay.ditto.pub'],
-      ['wss://relay.nutflix.xyz/mesh'],
+    // a saved list), and a scoped relay may be a signaling relay too (NFX-04 as amended then).
+    for (const kept of [
+      { ...nfx, meshRelays: ['wss://relay.primal.net', 'wss://relay.ditto.pub'] },
+      { ...nfx, scopedRelays: ['wss://relay.example'], meshRelays: ['wss://relay.example'] },
     ]) {
-      expect(
-        parseStoredSettings({ v: 1, settings: { nfx: { ...nfx, meshRelays } } })?.settings.nfx,
-      ).toEqual({ ...nfx, meshRelays });
+      expect(parseStoredSettings({ v: 1, settings: { nfx: kept } })?.settings.nfx).toEqual(kept);
     }
     for (const bad of [
       { ...nfx, webrtc: 'yes' },
@@ -193,20 +191,20 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       // Contracts v18: the relays WebRTC is signaled on (NFX-10 §6).
       meshRelays: [...DEFAULT_NFX_MESH_RELAYS],
     });
-    // The maintainer, 2026-11-18: the network's own signaling endpoint first (on a path of the
-    // scoped relay's host, which refuses kind 25050 itself), then two of the app's default relays.
+    // The maintainer, 2026-11-18: the network's own relay first (the scoped relay itself: NFX-04,
+    // amended that day, lets it admit kind 25050 nfx-mesh/1), then two of the app's default relays.
     expect(DEFAULT_NFX_MESH_RELAYS).toEqual([
-      'wss://relay.nutflix.xyz/mesh',
+      'wss://relay.nutflix.xyz',
       'wss://relay.primal.net',
       'wss://relay.ditto.pub',
     ]);
-    const firstRunHosts = [
+    const firstRun: readonly string[] = [
       ...DEFAULT_SETTINGS.relays.map((x) => x.url),
       ...DEFAULT_NFX.scopedRelays,
-    ].map((u) => new URL(u).host);
+    ];
     for (const r of DEFAULT_NFX_MESH_RELAYS) {
-      // Hosts a first run contacts anyway, so signaling adds no new one.
-      expect(firstRunHosts).toContain(new URL(r).host);
+      // Relays a first run contacts anyway, so signaling adds no new one.
+      expect(firstRun).toContain(r);
     }
     // The defaults pass the same checks a user's settings do (wss://, the iroh relay's form).
     expect(parseStoredSettings({ v: 1, settings: { nfx: DEFAULT_NFX } })?.settings.nfx).toEqual(

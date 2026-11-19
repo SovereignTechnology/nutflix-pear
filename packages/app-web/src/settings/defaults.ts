@@ -21,15 +21,16 @@ export const WEB_SCOPED_RELAY = 'wss://relay.nutflix.xyz' as RelayUrl;
 
 /**
  * The signaling relays (NFX-10 §6, pear #89): Nostr relays where this page, the desktop app and
- * nfxd's mesh endpoint find each other; the scoped relay refuses the kind. The same list the
- * desktop app defaults to (its `DEFAULT_NFX_MESH_RELAYS`): two peers meet only on a relay both
- * use. First the network's own signaling endpoint, `/mesh` on the scoped relay's host, which
- * SovTech runs (the maintainer, 2026-11-18); then the two public relays
+ * nfxd's mesh endpoint find each other. The same list the desktop app defaults to (its
+ * `DEFAULT_NFX_MESH_RELAYS`): two peers meet only on a relay both use. First the network's own
+ * relay, the scoped relay `WEB_SCOPED_RELAY` itself, which SovTech runs (the maintainer,
+ * 2026-11-18: NFX-04, amended that day as an exception to its freeze, lets a scoped relay admit
+ * kind 25050 `nfx-mesh/1`, ephemeral and never stored); then the two public relays
  * `scripts/mesh-relay-soak.mjs` picked. They learn the viewer's IP address and which videos'
  * rooms the page is in, never how it connects.
  */
 export const WEB_MESH_RELAYS: readonly RelayUrl[] = Object.freeze([
-  'wss://relay.nutflix.xyz/mesh' as RelayUrl,
+  WEB_SCOPED_RELAY,
   'wss://relay.primal.net' as RelayUrl,
   'wss://relay.ditto.pub' as RelayUrl,
 ]);

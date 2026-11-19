@@ -11,10 +11,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 - **New default relays** (the maintainer's decisions of 2026-11-18), in the app and the web client
   alike:
-  - **Signaling** goes first to the network's own endpoint, `wss://relay.nutflix.xyz/mesh`, which
-    SovTech runs, then to `relay.primal.net` and `relay.ditto.pub`. Like the other signaling
-    relays, it learns your IP address and which videos you seed or watch. The scoped relay itself
-    (`wss://relay.nutflix.xyz`) still carries no signaling.
+  - **Signaling** goes first to the network's own relay, `wss://relay.nutflix.xyz`, which SovTech
+    runs, then to `relay.primal.net` and `relay.ditto.pub`. NFX-04, amended that day, lets the
+    network's scoped relay carry signaling (kind 25050 `nfx-mesh/1`, ephemeral and never stored).
+    Like the other signaling relays, it learns which videos you seed or watch; it already saw your
+    IP address.
   - **The read relays** are now `relay.primal.net` and `relay.ditto.pub`: `relay.damus.io` refuses
     this project's address and `nos.lol` has rate-limited it. Comments, reactions, profiles and the
     other social events stay off `relay.nutflix.xyz`, which keeps NFX's own events only.

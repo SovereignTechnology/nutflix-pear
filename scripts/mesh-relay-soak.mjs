@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Which relays carry NFX mesh signaling (NFX-10 §6, kind 25050 `nfx-mesh/1`)? A scoped relay
-// refuses the kind and a general one may rate-limit or drop ephemeral events, so the app's
-// default signaling relays are picked by holding each candidate for a while and counting.
+// Which relays carry NFX mesh signaling (NFX-10 §6, kind 25050 `nfx-mesh/1`)? A relay may refuse
+// the kind, rate-limit it or drop ephemeral events, so the app's default signaling relays are
+// picked by holding each candidate for a while and counting.
 //
 // Per relay, two throwaway sessions (fresh keys, never anyone's identity) in one random room:
 // each subscribes to the room and sends `connect` every 30 s, as a real session does; the first

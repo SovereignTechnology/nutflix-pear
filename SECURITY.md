@@ -64,8 +64,9 @@ These are known limits of the released app, not bugs awaiting a report:
 - **WebRTC peers, a STUN server and signaling relays see you** (since 0.1.3; ADR 0023).
   With NFX on, the app trades video with web browsers over WebRTC. The peers it connects to learn
   your IP address; so does the network's STUN server (`web.nutflix.xyz:3478`, asked every 25 s
-  while this runs). The signaling relays (by default the network's own `relay.nutflix.xyz/mesh`,
-  which SovTech runs, then `relay.primal.net` and `relay.ditto.pub`; NFX-10 §6) learn your IP address and which videos you seed or watch; connection details are
+  while this runs). The signaling relays (by default the network's own `relay.nutflix.xyz`,
+  which SovTech runs, then `relay.primal.net` and `relay.ditto.pub`; NFX-10 §6) learn your IP
+  address and which videos you seed or watch; connection details are
   encrypted to the peer. Anyone reading those relays sees that some app is in a video's room,
   under a random session key: a new one for each video you watch, and one for what the app seeds
   (which its beacons already announce), never your own key. Anyone who knows a video can join
