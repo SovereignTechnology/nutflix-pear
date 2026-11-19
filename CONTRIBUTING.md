@@ -20,8 +20,9 @@ and the maintainer syncs `main` to it, so you do not need ngit to contribute.
 
 ## Set up
 
-You need Node 22.18 or newer on Linux. `package.json` declares 22.12, but the build scripts run
-TypeScript files directly, which needs 22.18.
+You need Node 22.22.2 or newer on Linux. `package.json` declares it and `.npmrc` makes npm refuse
+older ones: the test environment (jsdom 30) needs 22.22.2, and the build scripts run TypeScript
+files directly, which needs 22.18.
 
 ```sh
 git clone https://github.com/SovereignTechnology/nutflix-pear.git
