@@ -1723,9 +1723,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43b72366b16001af3a51574233df88ca6d62da0215807549a769e7de887da803"
+checksum = "e6b71d9162b4f9b5a75f83b39eed7da050a67c6297836e49ca360aca9cc4d50b"
 dependencies = [
  "curve25519-dalek 5.0.0",
  "data-encoding",
@@ -1783,9 +1783,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7481d0792dde1035a2b06ec06ed3cf6d01fcb1a494e6931b489e32073382048d"
+checksum = "5ea9a1443985f9f678df3a0ad149e43d79172b3e8add4fe3fb4f11bdb1b775c9"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -1846,9 +1846,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e5589e7c1475700686603a970275687f760df853bc6525c7eb1347aa31d7230"
+checksum = "ffa03fd9a865148bd5d2f4a617232bcb77cf23956da50ef4f8204d6772f72c79"
 dependencies = [
  "blake3",
  "bytes",
@@ -2461,9 +2461,9 @@ dependencies = [
 
 [[package]]
 name = "noq"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6249a065adc1edbc1704a95436f38dd60476064dbc3b7c47cf279e02d1590eb5"
+checksum = "0c2cf8bf3b78c2684a8485782c3357344416f264050f8d08a06c45c4642d87a2"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2483,9 +2483,9 @@ dependencies = [
 
 [[package]]
 name = "noq-proto"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c01a35be3ed37558c8db69554419f24eff8a63599b54f711bbe3863ec727c47d"
+checksum = "afb15c81d1f9b529d0c1f5095ee2e799eca9f361aa5f712424e758ce90f825d3"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2512,9 +2512,9 @@ dependencies = [
 
 [[package]]
 name = "noq-udp"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d0160422832eea1cc11c34be04ee6d5a046452b0b46cfb14695d55a1f24c954"
+checksum = "716df6621d528211d75608903c0dd54bee78745444cdcbb791bcfbc55717a29f"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -3361,9 +3361,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.15.1"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
+checksum = "102f35f7de7b06d8c61f1cff6592f5253e0dea431c74867aad5dfd70f44663fb"
 dependencies = [
  "web-time",
  "zeroize",
