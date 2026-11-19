@@ -27,7 +27,10 @@ import { DEFAULT_PAGE, MAX_PAGE, type FeedOptions } from './feeds.js';
 const clampLimit = (n: number | undefined): number =>
   Math.min(MAX_PAGE, Math.max(1, n ?? DEFAULT_PAGE));
 
-/** Where a read goes: the client's read relays by default (NFX-04 §4: public relays first). */
+/**
+ * Where a read goes: `relays`, or the client's read relays when absent. `NfxCatalog` picks the
+ * order (ADR 0020, 2026-11-19: the network's scoped relays first, the read relays as fallback).
+ */
 export interface NfxReadOptions extends FeedOptions {
   readonly relays?: readonly RelayUrl[] | undefined;
 }
