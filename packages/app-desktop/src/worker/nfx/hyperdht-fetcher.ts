@@ -16,7 +16,12 @@
  *   every session) and the next seeder is asked.
  * - `close` ends the session's fetches at once and releases its connections; a transfer another
  *   session shares goes on for that one.
+ * - **Stats for nerds** (pear #123, ADR 0024): per seeder (by its peer key), the files it
+ *   delivered to this session and their bytes, and whether its connection is open. `addresses`
+ *   reads each open connection's remote host and port only when called; nothing it reads is
+ *   logged.
  */
+import type { PlaySourceAddress, PlaySourceStat } from '@sovit/core';
 import { nfx } from '@sovit/core';
 import type {
   FetchFailure,
@@ -28,7 +33,8 @@ import type {
 } from '@sovit/seeder';
 import { dialNfx, toHex } from '@sovit/seeder';
 
-import type { NfxFetcher } from './watch.js';
+import { streamRemote } from '../net/remote-addr.js';
+import type { NfxFetcher, NfxFetcherStats } from './watch.js';
 import { NfxFetchError } from './watch.js';
 
 /** How long one dial may take before the next seeder is tried. */
@@ -59,6 +65,10 @@ export interface NfxPeerLease {
   fetch(video: nfx.VideoAddr, sha: string, size: number, exact: boolean): Promise<NfxFetchOutcome>;
   /** Give the share back (idempotent); the last one destroys the connection. */
   release(): void;
+  /** Pear #123: whether the connection is open now. */
+  open(): boolean;
+  /** Pear #123: where it goes (`''`: unknown), read now. Another host's address: never logged. */
+  remote(): string;
 }
 
 /** Requests of one video in flight on one connection, and those waiting for a slot. */
@@ -72,6 +82,8 @@ interface Entry {
   refs: number;
   /** The dial; `null`: the seeder could not be reached, for `failure`. */
   connection: Promise<NfxConnection | null>;
+  /** Pear #123: the connection once dialled, until it closes. */
+  live: NfxConnection | null;
   failure: NfxFetchFailure;
   /** Transfers in flight by `<video> <sha>`. */
   readonly transfers: Map<string, Promise<NfxFetchOutcome>>;
@@ -113,8 +125,14 @@ export class NfxPeerPool {
     const e = entry;
     e.refs++;
     let released = false;
+    const live = (): NfxConnection | null => (e.live === null || e.live.closed ? null : e.live);
     return {
       fetch: (video, sha, size, exact) => this.fetchOn(e, video, sha, size, exact),
+      open: () => !released && live() !== null,
+      remote: () => {
+        const c = released ? null : live();
+        return c === null ? '' : streamRemote(c.socket);
+      },
       release: () => {
         if (released) return;
         released = true;
@@ -143,6 +161,7 @@ export class NfxPeerPool {
       key,
       refs: 0,
       connection: Promise.resolve(null),
+      live: null,
       failure: 'unreachable',
       transfers: new Map(),
       channels: new Map(),
@@ -168,6 +187,7 @@ export class NfxPeerPool {
         crypto: this.o.crypto,
         timeoutMs: this.o.dialTimeoutMs ?? NFX_DIAL_TIMEOUT_MS,
         onClose: () => {
+          entry.live = null;
           // Gone: the next session to want it dials again.
           if (this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
         },
@@ -186,6 +206,7 @@ export class NfxPeerPool {
         r.connection.destroy('no play session needs it');
         return null;
       }
+      entry.live = r.connection;
       return r.connection;
     } catch (err) {
       this.o.logger.info('nfx: a seeder could not be dialed', { error: err });
@@ -288,7 +309,19 @@ interface Peer {
   /** Out for the rest of the session. */
   dropped: boolean;
   lease: NfxPeerLease | null;
+  /** Pear #123: connected at least once this session, and the files (and bytes) it delivered. */
+  seen: boolean;
+  bytes: number;
+  files: number;
 }
+
+/** Pear #123: failures that come before any connection, or from this side's own close. */
+const UNCONNECTED: ReadonlySet<NfxFetchFailure> = new Set<NfxFetchFailure>([
+  'unreachable',
+  'dial-timeout',
+  'wrong-key',
+  'closed',
+]);
 
 /** Failures that say nothing against the seeder: it lacks this one file, or we asked too much. */
 const KEEP: ReadonlySet<NfxFetchFailure> = new Set<NfxFetchFailure>([
@@ -302,13 +335,22 @@ export class HyperdhtFetcher implements NfxFetcher {
   private readonly o: HyperdhtFetcherOptions;
   private readonly peers: Peer[];
   private closed = false;
+  /** Pear #123: files seeders sent that the hash list contradicts. */
+  private refused = 0;
   private abort: (() => void) | null = null;
   /** Settles when `close` is called: every fetch in flight ends with it. */
   private readonly aborted: Promise<NfxFetchOutcome>;
 
   constructor(o: HyperdhtFetcherOptions) {
     this.o = o;
-    this.peers = o.peers.map((key) => ({ key, dropped: false, lease: null }));
+    this.peers = o.peers.map((key) => ({
+      key,
+      dropped: false,
+      lease: null,
+      seen: false,
+      bytes: 0,
+      files: 0,
+    }));
     this.aborted = new Promise<NfxFetchOutcome>((resolve) => {
       this.abort = () => {
         resolve({ ok: false, reason: 'closed' });
@@ -332,10 +374,16 @@ export class HyperdhtFetcher implements NfxFetcher {
         this.aborted,
       ]);
       if (this.isClosed()) break;
+      // Pear #123: it answered over a connection (whatever it answered).
+      if (r.ok || !UNCONNECTED.has(r.reason)) peer.seen = true;
       // A transfer shared with another session was asked for with that one's bounds.
-      if (r.ok && (exact ? r.bytes.byteLength === size : r.bytes.byteLength <= size))
+      if (r.ok && (exact ? r.bytes.byteLength === size : r.bytes.byteLength <= size)) {
+        peer.bytes += r.bytes.byteLength;
+        peer.files++;
         return r.bytes;
+      }
       const reason = r.ok ? 'mismatch' : r.reason;
+      if (reason === 'mismatch') this.refused++;
       reasons.push(reason);
       this.o.logger.debug('nfx: a seeder did not serve a file', { seeder: index, reason });
       if (r.ok || !KEEP.has(r.reason)) this.drop(peer, reason);
@@ -351,6 +399,46 @@ export class HyperdhtFetcher implements NfxFetcher {
       peer.lease = null;
     }
     return Promise.resolve();
+  }
+
+  /** Pear #123: each seeder connected this session, with what it delivered to it. */
+  stats(): NfxFetcherStats {
+    const sources: PlaySourceStat[] = [];
+    for (const p of this.peers) {
+      const connected = this.isOpen(p);
+      if (connected) p.seen = true;
+      if (!p.seen) continue;
+      sources.push({
+        kind: 'hyperdht',
+        id: toHex(p.key),
+        via: 'beacon',
+        bytesDown: p.bytes,
+        bytesUp: 0,
+        files: p.files,
+        connected,
+      });
+    }
+    return { sources, refused: this.refused };
+  }
+
+  /** Pear #123: each open connection's remote end. Another host's address: never logged. */
+  addresses(): Promise<readonly PlaySourceAddress[]> {
+    const out: PlaySourceAddress[] = [];
+    for (const p of this.peers) {
+      if (!this.isOpen(p)) continue;
+      const address = p.lease?.remote() ?? '';
+      const base = { kind: 'hyperdht' as const, id: toHex(p.key) };
+      out.push(
+        address === ''
+          ? { ...base, address: '', path: 'unknown' }
+          : { ...base, address, path: 'direct' },
+      );
+    }
+    return Promise.resolve(out);
+  }
+
+  private isOpen(p: Peer): boolean {
+    return !this.closed && !p.dropped && p.lease?.open() === true;
   }
 
   /** Read fresh after an `await`. */

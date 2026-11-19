@@ -21,11 +21,15 @@ import type {
   MintQuote,
   MintUrl,
   NfxAddress,
+  NfxPlayStats,
   NostrEvent,
   NostrEventId,
   NostrPubkey,
   PeerSpend,
   PeerWindow,
+  PlaySourceAddress,
+  PlaySourceKind,
+  PlaySourceStat,
   PricePolicy,
   RelayUrl,
   Rendition,
@@ -604,6 +608,89 @@ const isSettingsPatch = obj(
 const isPrefetchSeconds = num(0, LIMITS.maxPrefetchSec);
 const isPositionSec = num(0, 1e7);
 
+// ---- stats for nerds (contracts v19, ADR 0024) ----------------------------------------------
+//
+// Their ids, `via`s and labels come from the network (a peer, a tracker or a beacon chose them):
+// printable ASCII, short, and never anything but text on a screen. An address is only ever an
+// `ip:port` the transport reported, or `''`.
+
+/** Printable ASCII (space to `~`), `min`..`max` characters. */
+function printableText(min: number, max: number): Guard<string> {
+  const re = new RegExp(`^[\\x20-\\x7e]{${String(min)},${String(max)}}$`);
+  return matches(re, max);
+}
+
+export const PLAY_SOURCE_KINDS = [
+  'origin',
+  'webrtc',
+  'iroh',
+  'hyperdht',
+  'hypercore',
+] as const satisfies readonly PlaySourceKind[];
+export const isPlaySourceKind = oneOf<PlaySourceKind>(PLAY_SOURCE_KINDS);
+/** A source's id: an origin's host, or a peer's key or id in full (at most 64). */
+export const isPlaySourceId = printableText(1, 64);
+const isPlaySourceVia = printableText(0, 64);
+/** An address as a transport reports it: `a.b.c.d:port`, `[v6]:port`, or `''` (hidden). */
+export const isPlaySourceAddr = matches(
+  /^(?:|[0-9]{1,3}(?:\.[0-9]{1,3}){3}:[0-9]{1,5}|\[[0-9a-f:.]{2,45}\]:[0-9]{1,5})$/,
+  64,
+);
+const isRttMs = num(0, 600_000);
+
+export const isPlaySourceStat: Guard<PlaySourceStat> = obj(
+  {
+    kind: isPlaySourceKind,
+    id: isPlaySourceId,
+    via: isPlaySourceVia,
+    bytesDown: isCount,
+    bytesUp: isCount,
+    files: isCount,
+    connected: bool,
+  },
+  { label: printableText(1, 24) },
+);
+
+const isPlayPeers = safe(
+  (x: unknown): x is NonNullable<NfxPlayStats['peers']> =>
+    obj({ connected: isCount, total: isCount })(x) && x.connected <= x.total,
+);
+
+/** `NfxPlayStats`: at most `MAX_PLAY_SOURCES` sources, every count a non-negative integer. */
+export const isNfxPlayStats: Guard<NfxPlayStats> = obj<
+  Pick<NfxPlayStats, 'sources'>,
+  Omit<NfxPlayStats, 'sources'>
+>(
+  { sources: arrayOf(isPlaySourceStat, LIMITS.maxPlaySources) },
+  {
+    engine: printableText(1, 120),
+    peers: isPlayPeers,
+    signaling: obj(
+      {
+        kind: oneOf(['nostr', 'trackers'] as const),
+        endpoints: arrayOf(printableText(1, 255), 16),
+      },
+      { open: isCount },
+    ),
+    verified: isCount,
+    refused: isCount,
+    bandwidthEstimate: num(0, 1e12),
+  },
+);
+
+export const isPlaySourceAddress: Guard<PlaySourceAddress> = obj(
+  {
+    kind: isPlaySourceKind,
+    id: isPlaySourceId,
+    address: isPlaySourceAddr,
+    path: oneOf(['direct', 'relayed', 'unknown'] as const),
+  },
+  { via: printableText(1, 64), rttMs: isRttMs, detail: printableText(1, 24) },
+);
+
+/** What `addresses()` resolves: at most `MAX_PLAY_SOURCES`. */
+export const isPlaySourceAddresses = arrayOf(isPlaySourceAddress, LIMITS.maxPlaySources);
+
 /**
  * Argument validators for every method — a missing or mistyped entry is a compile error.
  * Main runs them on every renderer call (after the sender-frame check); the host runs them
@@ -647,6 +734,9 @@ export const validateArgs: { readonly [M in Method]: Guard<MethodTable[M][0]> } 
   'session.setPrefetchSeconds': tuple([isSessionId, isPrefetchSeconds]),
   'session.switchRendition': tuple([isSessionId, isLabel]),
   'session.close': tuple([isSessionId]),
+  // Contracts v19: a sid only; what comes back is the host's (checked on the worker hop).
+  'session.stats': tuple([isSessionId]),
+  'session.addresses': tuple([isSessionId]),
   'wallet.mints': tuple([]),
   'wallet.balance': tuple([isMintUrl]),
   'wallet.inputFeePpk': tuple([isMintUrl]),

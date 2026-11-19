@@ -96,6 +96,13 @@ class FakeRtc implements RtcFetchClient {
     this.hangups.push(peer);
     return Promise.resolve(true);
   }
+
+  /** Pear #123: where each peer's last datagram came from (an Error: the ask fails). */
+  readonly paths = new Map<number, string | null | Error>();
+  rtcPath(peer: number): Promise<string | null> {
+    const p = this.paths.get(peer) ?? null;
+    return p instanceof Error ? Promise.reject(p) : Promise.resolve(p);
+  }
 }
 
 describe('RtcFetcher (#89)', () => {
@@ -106,6 +113,7 @@ describe('RtcFetcher (#89)', () => {
   function fetcher(
     conns: NfxRtcConnection[],
     client: RtcFetchClient | null,
+    over: { readonly generation?: () => number; readonly current?: boolean } = {},
   ): { f: RtcFetcher; learnAll: () => void } {
     const f = new RtcFetcher({
       video: addr(v),
@@ -114,6 +122,8 @@ describe('RtcFetcher (#89)', () => {
       client: () => Promise.resolve(client),
       connections: (s) => conns.filter((c) => c.swarm === s),
       logger: silentLogger,
+      ...(over.current === true ? { current: () => client } : {}),
+      ...(over.generation === undefined ? {} : { generation: over.generation }),
     });
     const learnAll = (): void => {
       f.learn(v.root, v.files.get(v.root)!);
@@ -255,6 +265,90 @@ describe('RtcFetcher (#89)', () => {
     open();
     await expect(all).resolves.toEqual(bodies);
     expect(client.maxInFlight).toBe(1);
+  });
+
+  it('pear #123: counts per peer and generation, and lists the peers connected now', async () => {
+    const client = new FakeRtc(bodies);
+    client.lie.add(9);
+    let generation = 1;
+    const all: [number, number][] = [[0, 2]];
+    const conns = [conn(9, all), conn(1, all), conn(2, all)];
+    const { f, learnAll } = fetcher(conns, client, { generation: () => generation });
+    // Before the playlist the session's swarm is unknown: nobody is listed.
+    expect(f.stats()).toEqual({ sources: [], refused: 0 });
+    learnAll();
+    await f.fetch(v.segmentShas[0]!, bodies[0]!.length, true);
+    await f.fetch(v.segmentShas[1]!, bodies[1]!.length, true);
+    const row = (id: string, bytes: number, files: number, connected: boolean): unknown => ({
+      kind: 'webrtc',
+      id,
+      via: 'nostr',
+      bytesDown: bytes,
+      bytesUp: 0,
+      files,
+      connected,
+    });
+    // 9 lied (refused, hung up); 1 served both; 2 is connected with nothing delivered.
+    expect(f.stats()).toEqual({
+      sources: [
+        row('rtc:1.1', bodies[0]!.length + bodies[1]!.length, 2, true),
+        row('rtc:1.9', 0, 0, true),
+        row('rtc:1.2', 0, 0, true),
+      ],
+      refused: 1,
+    });
+    // The helper restarted: its new connection 1 is another peer, the old one is closed.
+    generation = 2;
+    conns.splice(0, 3, conn(1, all));
+    await f.fetch(v.segmentShas[2]!, bodies[2]!.length, true);
+    expect(f.stats().sources).toEqual([
+      row('rtc:1.1', bodies[0]!.length + bodies[1]!.length, 2, false),
+      row('rtc:2.1', bodies[2]!.length, 1, true),
+    ]);
+    await f.close();
+    expect(f.stats().sources.map((x) => x.connected)).toEqual([false, false]);
+  });
+
+  it('pear #123: addresses are each connected peer’s last datagram source, never starting a helper', async () => {
+    const client = new FakeRtc(bodies);
+    const all: [number, number][] = [[0, 2]];
+    const elsewhere = conn(7, all, addr(v).webStreamSwarmId('1080p'));
+    const conns = [conn(1, all), conn(2, all), conn(3, all), elsewhere];
+    // Without a running helper there is nothing to ask.
+    const off = fetcher(conns, client);
+    off.learnAll();
+    expect(await off.f.addresses()).toEqual([]);
+    let generation = 4;
+    const { f, learnAll } = fetcher(conns, client, {
+      current: true,
+      generation: () => generation,
+    });
+    learnAll();
+    client.paths.set(1, '[2001:DB8::1]:50000');
+    client.paths.set(2, null);
+    client.paths.set(3, new HelperError('no-peer', 'gone'));
+    client.paths.set(7, '198.51.100.7:1');
+    expect(await f.addresses()).toEqual([
+      {
+        kind: 'webrtc',
+        id: 'rtc:4.1',
+        address: '[2001:db8::1]:50000',
+        path: 'direct',
+        detail: 'udp',
+      },
+      { kind: 'webrtc', id: 'rtc:4.2', address: '', path: 'unknown' },
+      { kind: 'webrtc', id: 'rtc:4.3', address: '', path: 'unknown' },
+    ]);
+    // A restart while it reads: the ids no longer name these peers, so nothing is said.
+    client.paths.set(2, '198.51.100.2:2');
+    const real = client.rtcPath.bind(client);
+    client.rtcPath = (peer) => {
+      generation++;
+      return real(peer);
+    };
+    expect(await f.addresses()).toEqual([]);
+    await f.close();
+    expect(await f.addresses()).toEqual([]);
   });
 });
 

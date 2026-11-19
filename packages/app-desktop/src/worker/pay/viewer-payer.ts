@@ -294,6 +294,16 @@ export class ViewerPayer {
     return { ...this.upstream.stats(), ...this.settler.stats(), ...this.counters };
   }
 
+  /**
+   * Pear #123: the Noise keys of the live connections whose verified HELLO named `pubkey` (the
+   * seeder a play's `peers` events name).
+   */
+  noiseKeysOf(pubkey: string): string[] {
+    const out: string[] = [];
+    for (const [noise, pk] of this.pubkeys) if (pk === pubkey) out.push(noise);
+    return out;
+  }
+
   /** A peer's `pay/1` instance (one per connection). Returns a detach function. */
   attachPeer(noiseHex: string, protocol: PayProtocol): () => void {
     const settled = this.settler.attachPeer(noiseHex, protocol);

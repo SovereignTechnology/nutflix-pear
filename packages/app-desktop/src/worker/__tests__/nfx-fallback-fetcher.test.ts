@@ -3,6 +3,7 @@
  * A file goes to the first that serves it, the others learn it, every reason is kept when none
  * does, and `close` reaches every fetcher.
  */
+import type { PlaySourceAddress, PlaySourceStat } from '@sovit/core';
 import { describe, expect, it } from 'vitest';
 
 import { NfxFallbackFetcher } from '../nfx/fallback-fetcher.js';
@@ -60,6 +61,46 @@ describe('slice 5e-4: NfxFallbackFetcher', () => {
     await expect(f.fetch('a', 3, true)).rejects.toMatchObject({
       reasons: ['iroh-off', 'error', 'missing', 'unreachable'],
     });
+  });
+
+  it('pear #123: its stats and addresses are its fetchers’, in their order', async () => {
+    const row = (kind: 'iroh' | 'hyperdht', id: string): PlaySourceStat => ({
+      kind,
+      id,
+      via: 'beacon',
+      bytesDown: 10,
+      bytesUp: 0,
+      files: 1,
+      connected: true,
+    });
+    const at = (id: string): PlaySourceAddress => ({
+      kind: 'iroh',
+      id,
+      address: '192.0.2.1:1',
+      path: 'direct',
+    });
+    const iroh: NfxFetcher = {
+      ...probe(() => BYTES),
+      stats: () => ({ sources: [row('iroh', 'a'.repeat(64))], refused: 1 }),
+      addresses: () => Promise.resolve([at('a'.repeat(64))]),
+    };
+    const broken: NfxFetcher = {
+      ...probe(() => BYTES),
+      stats: () => ({ sources: [], refused: 2 }),
+      addresses: () => Promise.reject(new Error('gone')),
+    };
+    const dht: NfxFetcher = {
+      ...probe(() => BYTES),
+      stats: () => ({ sources: [row('hyperdht', 'b'.repeat(64))], refused: 0 }),
+      addresses: () => Promise.resolve([at('b'.repeat(64))]),
+    };
+    const f = new NfxFallbackFetcher([iroh, probe(() => BYTES), broken, dht]);
+    expect(f.stats()).toEqual({
+      sources: [row('iroh', 'a'.repeat(64)), row('hyperdht', 'b'.repeat(64))],
+      refused: 3,
+    });
+    // One that cannot say does not keep the others from saying.
+    expect(await f.addresses()).toEqual([at('a'.repeat(64)), at('b'.repeat(64))]);
   });
 
   it('learn and close reach every fetcher', async () => {

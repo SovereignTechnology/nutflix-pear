@@ -27,7 +27,12 @@
  * NFX-07 account a paid session will need is keyed by it); without one, an ephemeral pair for
  * this worker run — free mode keeps no account, so there is nothing to persist, and a run's
  * dials cannot be linked to the next run's.
+ *
+ * Pear #123 (ADR 0024): `nfx.play.stats` and `nfx.play.addresses` read a session's fetchers
+ * (each counts the sources only it can name). Addresses are read only when asked, and only for
+ * the answer: nothing here logs one.
  */
+import type { NfxPlayStats, PlaySourceAddress, PlaySourceStat } from '@sovit/core';
 import { nfx } from '@sovit/core';
 import type { Logger, NfxDht, PeerKeyPair, SeederCrypto, SeederFs } from '@sovit/seeder';
 import { fromHex } from '@sovit/seeder';
@@ -35,6 +40,7 @@ import DHT from 'hyperdht';
 
 import { IpcError } from '../../ipc/errors.js';
 import type { ErrorCode } from '../../ipc/protocol.js';
+import { LIMITS } from '../../ipc/protocol.js';
 import type { NfxPlayOpenArgs, WorkerMethodTable } from '../../ipc/worker-protocol.js';
 import type { BootstrapNode } from '../net/peer-node.js';
 import type { WorkerRuntime } from '../runtime.js';
@@ -59,6 +65,13 @@ const BOOTSTRAP_WAIT_MS = 15_000;
 /** The key pair name for `namespace`'s watcher (beside `seederKeyName`, `./seeding.ts`). */
 export const watcherKeyName = (namespace: string): string => `nfx:${namespace}:watcher`;
 
+/** Pear #123: the sources a play reports, open ones first, then the most bytes; at most 64. */
+export function rankSources(list: readonly PlaySourceStat[]): PlaySourceStat[] {
+  return [...list]
+    .sort((a, b) => Number(b.connected) - Number(a.connected) || b.bytesDown - a.bytesDown)
+    .slice(0, LIMITS.maxPlaySources);
+}
+
 /** Slice 5e-4: the watching iroh node (`NfxIrohNode` with no key pair), as sessions use it. */
 export interface NfxWatchingIroh {
   /** Its helper, started on first need; `null` when it cannot run (and why was logged). */
@@ -81,6 +94,10 @@ export interface NfxWatchingRtc {
   start(): Promise<RtcFetchClient | null>;
   /** The open connections in a web swarm. */
   connections(swarm: string): readonly NfxRtcConnection[];
+  /** Pear #123: the running helper, never starting one (addresses). */
+  current?(): RtcFetchClient | null;
+  /** Pear #123: changes at every start, restart and stop of the helper. */
+  readonly generation?: number;
 }
 
 export interface NfxWatchingDeps {
@@ -115,6 +132,8 @@ function fail(code: ErrorCode, detail: string): never {
 export class NfxWatching {
   private readonly d: NfxWatchingDeps;
   private readonly sessions = new Map<string, NfxWatchSession>();
+  /** Pear #123: each session's transports, in the order it asks them. */
+  private readonly transports = new Map<string, readonly string[]>();
   /** Slice 5e-4: the sessions that may fetch over iroh; the node stops when none is left. */
   private readonly irohSessions = new Set<string>();
   private readonly ephemeral = new Map<string, PeerKeyPair>();
@@ -163,9 +182,11 @@ export class NfxWatching {
     // Slice 5e-4: iroh first (NFX-06 §6), then HyperDHT; each only with endpoints of its kind.
     const iroh = this.d.iroh ?? null;
     const fetchers: NfxFetcher[] = [];
+    const names: string[] = [];
     let viaIroh = false;
     if (iroh !== null && a.iroh.length > 0) {
       viaIroh = true;
+      names.push('iroh');
       fetchers.push(
         new IrohFetcher({
           video: video.value,
@@ -182,7 +203,8 @@ export class NfxWatching {
     // #89: then the peers the WebRTC node is connected to in this video's web swarms. Only beside
     // another source: the connections come from the host's signaling, never from this session.
     const rtc = this.d.rtc ?? null;
-    if (rtc?.on === true && (fetchers.length > 0 || peers.length > 0))
+    if (rtc?.on === true && (fetchers.length > 0 || peers.length > 0)) {
+      names.push('WebRTC');
       fetchers.push(
         new RtcFetcher({
           video: video.value,
@@ -191,9 +213,13 @@ export class NfxWatching {
           client: () => rtc.start(),
           connections: (swarm) => rtc.connections(swarm),
           logger: this.d.logger,
+          current: () => rtc.current?.() ?? null,
+          generation: () => rtc.generation ?? 0,
         }),
       );
-    if (peers.length > 0)
+    }
+    if (peers.length > 0) {
+      names.push('HyperDHT');
       fetchers.push(
         new HyperdhtFetcher({
           pool: this.pool,
@@ -202,6 +228,7 @@ export class NfxWatching {
           logger: this.d.logger,
         }),
       );
+    }
     const [only] = fetchers;
     if (only === undefined)
       fail('no-seeders', 'every seeder speaks iroh only, and this worker has no iroh helper');
@@ -232,6 +259,7 @@ export class NfxWatching {
     // Claimed before any await: a second open of the sid is refused, a close finds it (and an
     // iroh node a closing session would stop is held for this one).
     this.sessions.set(a.sid, session);
+    this.transports.set(a.sid, names);
     if (viaIroh) this.irohSessions.add(a.sid);
     try {
       const opened = await session.open();
@@ -248,6 +276,7 @@ export class NfxWatching {
     } catch (err) {
       if (this.sessions.get(a.sid) === session) {
         this.sessions.delete(a.sid);
+        this.transports.delete(a.sid);
         await session.close();
         await this.releaseIroh(a.sid);
       } else {
@@ -262,9 +291,40 @@ export class NfxWatching {
     const session = this.sessions.get(sid);
     if (session === undefined) return;
     this.sessions.delete(sid);
+    this.transports.delete(sid);
     this.server?.unregister(sid);
     await session.close();
     await this.releaseIroh(sid);
+  }
+
+  /**
+   * Pear #123 (ADR 0024): `nfx.play.stats`: where session `sid`'s bytes came from, per source,
+   * open ones first, then the most bytes. Never an address.
+   */
+  stats(sid: string): NfxPlayStats {
+    const session = this.sessions.get(sid);
+    if (session === undefined) fail('session-closed', 'no such NFX play session');
+    const s = session.stats();
+    return {
+      sources: rankSources(s.sources),
+      engine: `nfx worker: ${(this.transports.get(sid) ?? []).join(', ')}`,
+      peers: {
+        connected: s.sources.filter((x) => x.connected).length,
+        total: s.sources.length,
+      },
+      verified: s.verified,
+      refused: s.refused,
+    };
+  }
+
+  /**
+   * Pear #123: `nfx.play.addresses`: where each connected source of `sid` goes now, read for
+   * this answer only (the viewer switched addresses on). Never logged.
+   */
+  async addresses(sid: string): Promise<readonly PlaySourceAddress[]> {
+    const session = this.sessions.get(sid);
+    if (session === undefined) fail('session-closed', 'no such NFX play session');
+    return (await session.addresses()).slice(0, LIMITS.maxPlaySources);
   }
 
   /** Slice 5e-4: `sid` no longer uses iroh; the node stops when no session does. */
