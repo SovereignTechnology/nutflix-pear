@@ -222,6 +222,7 @@ export function useNerdStats<S = NfxPlayStats>(
     if (!open) return undefined;
     let live = true;
     let request = 0;
+    let acceptedRequest = 0;
     const tick = (): void => {
       const f = feedRef.current;
       const el = f.element();
@@ -229,7 +230,10 @@ export function useNerdStats<S = NfxPlayStats>(
       const currentRequest = ++request;
       f.stats?.().then(
         (s) => {
-          if (live && currentRequest === request) setStats(s);
+          if (live && currentRequest > acceptedRequest) {
+            acceptedRequest = currentRequest;
+            setStats(s);
+          }
         },
         () => undefined,
       );

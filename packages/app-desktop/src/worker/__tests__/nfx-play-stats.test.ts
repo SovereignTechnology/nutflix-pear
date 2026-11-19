@@ -91,7 +91,12 @@ class FakePool {
   readonly released: string[] = [];
   readonly open = new Map<string, boolean>();
   readonly remotes = new Map<string, string>();
-  constructor(private readonly answer: (peer: string, sha: string) => NfxFetchOutcome) {}
+  constructor(
+    private readonly answer: (
+      peer: string,
+      sha: string,
+    ) => NfxFetchOutcome | Promise<NfxFetchOutcome>,
+  ) {}
 
   acquire(_namespace: string, key: Uint8Array): NfxPeerLease {
     const peer = toHex(key);
@@ -169,6 +174,31 @@ describe('pear #123: HyperdhtFetcher', () => {
     await f.close();
     expect(f.stats().sources).toHaveLength(1);
   });
+
+  it.each(['success', 'fallback'] as const)(
+    'handles a concurrent drop while another request awaits %s',
+    async (outcome) => {
+      let resolvePending!: (result: NfxFetchOutcome) => void;
+      const pending = new Promise<NfxFetchOutcome>((resolve) => {
+        resolvePending = resolve;
+      });
+      const pool = new FakePool((peer, sha) => {
+        if (peer === toHex(B)) return { ok: true, bytes };
+        return sha === 'pending' ? pending : { ok: false, reason: 'closed' };
+      });
+      const f = fetcher(pool, [A, B]);
+      const waiting = f.fetch('pending', 4, true);
+      expect(await f.fetch('drop', 4, true)).toBe(bytes);
+      expect(pool.released).toEqual([toHex(A)]);
+      resolvePending(outcome === 'success' ? { ok: true, bytes } : { ok: false, reason: 'closed' });
+      expect(await waiting).toBe(bytes);
+      expect(f.stats().sources).toMatchObject([
+        { id: toHex(A), files: outcome === 'success' ? 1 : 0, connected: false },
+        { id: toHex(B), files: outcome === 'success' ? 1 : 2, connected: true },
+      ]);
+      await f.close();
+    },
+  );
 
   it('addresses are the open connections’ remote ends, read when asked', async () => {
     const pool = new FakePool(() => ({ ok: true, bytes }));

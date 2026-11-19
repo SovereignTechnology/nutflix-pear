@@ -366,14 +366,11 @@ export class HyperdhtFetcher implements NfxFetcher {
         reasons.push('dropped');
         continue;
       }
-      peer.lease ??= this.o.pool.acquire(namespace, peer.key);
-      const r = await Promise.race([
-        peer.lease.fetch(this.o.video, sha, size, exact),
-        this.aborted,
-      ]);
+      const lease = (peer.lease ??= this.o.pool.acquire(namespace, peer.key));
+      const r = await Promise.race([lease.fetch(this.o.video, sha, size, exact), this.aborted]);
       if (this.isClosed()) break;
       // Pear #123: it answered over a connection (whatever it answered).
-      if (peer.lease.established()) peer.seen = true;
+      if (lease.established()) peer.seen = true;
       // A transfer shared with another session was asked for with that one's bounds.
       if (r.ok && (exact ? r.bytes.byteLength === size : r.bytes.byteLength <= size)) {
         peer.bytes += r.bytes.byteLength;

@@ -253,6 +253,35 @@ describe('stats for nerds: the panel', () => {
     expect(r.all('.nf-nerd__addr')).toHaveLength(0);
   });
 
+  it('accepts completed stats while a newer poll is still pending', async () => {
+    vi.useFakeTimers();
+    const pending: ((s: NfxPlayStats) => void)[] = [];
+    const stats = vi.fn(() => new Promise<NfxPlayStats>((resolve) => pending.push(resolve)));
+    const feed = { stats, element: () => null };
+    mounted = render(createElement(Harness, { open: true, feed }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(pending).toHaveLength(2);
+    await act(async () => {
+      pending[0]?.({ ...STATS, engine: 'first snapshot' });
+      await Promise.resolve();
+    });
+    expect(mounted.container.textContent).toContain('first snapshot');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+      pending[1]?.({ ...STATS, engine: 'second snapshot' });
+    });
+    expect(mounted.container.textContent).toContain('second snapshot');
+    mounted.rerender(createElement(Harness, { open: false, feed }));
+    mounted.rerender(createElement(Harness, { open: true, feed }));
+    await act(async () => {
+      pending[2]?.({ ...STATS, engine: 'closed snapshot' });
+      await Promise.resolve();
+    });
+    expect(mounted.container.textContent).not.toContain('closed snapshot');
+  });
+
   it('ignores older stats that finish after a newer request', async () => {
     vi.useFakeTimers();
     let resolveOld!: (s: NfxPlayStats) => void;
