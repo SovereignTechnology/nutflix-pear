@@ -52,12 +52,6 @@ updates:
       - dependency-name: 'typescript'
         update-types:
           - 'version-update:semver-major'
-      # jsdom 30 requires Node ^22.22.2 and .npmrc sets engine-strict, so every dev and CI image on an
-      # older 22.x (the repo's floor is 22.12) would refuse `npm ci`. Raising that floor is a decision
-      # for the maintainer, with the images that must follow; lift this when it is made.
-      - dependency-name: 'jsdom'
-        versions:
-          - '>= 30.0.0'
       # nostr-tools pins @scure/bip39 2.0.1 exactly, so a newer copy in core/app-desktop is a second,
       # nested one (packages/*/node_modules/@scure/bip39) that the packaged-app staging
       # (stage.test.ts, prompt-npm.test.ts) does not expect. Lift when nostr-tools' pin moves.

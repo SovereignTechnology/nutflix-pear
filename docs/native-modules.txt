@@ -43,5 +43,5 @@ quickbit-native@2.4.8 | node_modules/quickbit-native | .bare,.node,addon,prebuil
 rabin-native@2.0.0 | node_modules/rabin-native | .bare,.node,addon,prebuilds | scripts=none | runtime | via @sovit/app-desktop>pear-runtime>pear-runtime-updater>hyperdrive>mirror-drive>rabin-stream>rabin-native
 rocksdb-native@3.19.6 | node_modules/rocksdb-native | .bare,.node,addon,prebuilds | scripts=none | runtime | via @sovit/app-desktop>hypercore>hypercore-storage>rocksdb-native
 simdle-native@1.3.9 | node_modules/simdle-native | .bare,.node,addon,prebuilds | scripts=none | runtime | via @sovit/app-desktop>hypercore>quickbit-universal>simdle-universal>simdle-native
-sodium-native@5.2.0 | node_modules/sodium-native | .bare,.node,addon,prebuilds | scripts=none | runtime | via @sovit/app-desktop>sodium-native
+sodium-native@5.2.1 | node_modules/sodium-native | .bare,.node,addon,prebuilds | scripts=none | runtime | via @sovit/app-desktop>sodium-native
 udx-native@1.22.2 | node_modules/udx-native | .bare,.node,addon,prebuilds | scripts=none | runtime | via @sovit/app-desktop>hyperdht>dht-rpc>udx-native
