@@ -453,6 +453,9 @@ function start(): void {
     dir: join(app.getPath('userData'), 'keychain'),
     usable: keychainOk,
     safeStorage: {
+      // Electron 45 deprecates this for `isAsyncEncryptionAvailable()`. Same answer today; moving to the
+      // async form makes `keychainUsable` async, a change to the key-storage gate that is its own review.
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- see above
       isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
       getSelectedStorageBackend: () =>
         process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : 'os',

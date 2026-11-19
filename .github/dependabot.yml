@@ -46,6 +46,12 @@ updates:
       - dependency-name: 'bare-subprocess'
         versions:
           - '> 6.1.0'
+      # jsdom 30 requires Node ^22.22.2 and .npmrc sets engine-strict, so every dev and CI image on an
+      # older 22.x (the repo's floor is 22.12) would refuse `npm ci`. Raising that floor is a decision
+      # for the maintainer, with the images that must follow; lift this when it is made.
+      - dependency-name: 'jsdom'
+        versions:
+          - '>= 30.0.0'
       # 4.13.0 deprecates hasValidDleq (removed in v5), which the money path calls in
       # payment/engine.ts and wallet/spend.ts, and `verifyMintSignatures` verifies NUT-12 only if
       # present unless `{ require: true }`. Moving the audit surface to it is a reviewed change of
