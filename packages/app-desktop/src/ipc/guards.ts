@@ -174,6 +174,7 @@ export function arrayOf<T>(g: Guard<T>, max: number, min = 0): Guard<readonly T[
 }
 
 type GuardMap<T> = { readonly [K in keyof T]-?: Guard<T[K]> };
+// eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- `{}` is the point: no optional keys
 type NoKeys = Record<never, never>;
 
 /**
