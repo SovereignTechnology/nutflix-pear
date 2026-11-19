@@ -52,13 +52,6 @@ updates:
       - dependency-name: 'typescript'
         update-types:
           - 'version-update:semver-major'
-      # 4.13.0 deprecates hasValidDleq (removed in v5), which the money path calls in
-      # payment/engine.ts and wallet/spend.ts, and `verifyMintSignatures` verifies NUT-12 only if
-      # present unless `{ require: true }`. Moving the audit surface to it is a reviewed change of
-      # its own, not a dependency bump; lint (no-deprecated) fails on it until then.
-      - dependency-name: '@cashu/cashu-ts'
-        versions:
-          - '> 4.10.0'
       # nostr-tools pins @scure/bip39 2.0.1 exactly, so a newer copy in core/app-desktop is a second,
       # nested one (packages/*/node_modules/@scure/bip39) that the packaged-app staging
       # (stage.test.ts, prompt-npm.test.ts) does not expect. Lift when nostr-tools' pin moves.
