@@ -47,8 +47,11 @@ fn v4_global(ip: Ipv4Addr) -> bool {
 
 fn v6_global(ip: Ipv6Addr) -> bool {
     let s = ip.segments();
-    // Global unicast is 2000::/3; within it, leave out the documentation prefixes.
-    (s[0] & 0xe000) == 0x2000 && !(s[0] == 0x2001 && s[1] == 0x0db8) && (s[0] & 0xfff0) != 0x3ff0
+    // Global unicast is 2000::/3; within it, leave out the documentation prefixes 2001:db8::/32
+    // (RFC 3849) and 3fff::/20 (RFC 9637), exactly.
+    (s[0] & 0xe000) == 0x2000
+        && !(s[0] == 0x2001 && s[1] == 0x0db8)
+        && !(s[0] == 0x3fff && (s[1] & 0xf000) == 0)
 }
 
 /// Whether the helper may send checks to, or show, `ip`. Global unicast still includes the
@@ -201,9 +204,14 @@ mod tests {
             "ff02::1",
             "2001:db8::1",
             "3fff::1",
+            "3fff:fff::1",
             "::ffff:10.0.0.1",
         ] {
             assert!(!allowed(a.parse().unwrap(), false), "{a}");
+        }
+        // Only 3fff::/20 is documentation (RFC 9637): the rest of 3ff0::/12 is global unicast.
+        for a in ["3fff:1000::1", "3fff:ffff::1", "3ff0::1", "2001:db9::1"] {
+            assert!(allowed(a.parse().unwrap(), false), "{a}");
         }
         assert!(allowed("127.0.0.1".parse().unwrap(), true));
         assert!(allowed("10.0.0.1".parse().unwrap(), true));

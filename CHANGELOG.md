@@ -7,6 +7,27 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- **WebRTC also uses STUN servers that seeders name over Nostr** (the maintainer's plan of
+  2026-11-19, step 5; ADR 0023, note of 2026-11-19). This matches the nfx web library. The
+  beacons of a video you play can name STUN servers (NFX-10 §1). The app now asks those too, after
+  the ones in Settings › NFX network, for as long as the video plays. The rules are the same for
+  every NFX client (the nfx STUN draft):
+  - global unicast addresses only;
+  - ranked by how many seeders' keys name each;
+  - a server named by one key only when nothing better exists, so beside your own server two
+    seeders must name the same one;
+  - at most 4 STUN servers in all, yours first and never dropped.
+
+  Each such server learns your IP address and when you watch (SECURITY.md). An empty STUN list
+  still switches WebRTC off, and with it every STUN server.
+  - **The iroh helper gets an `rtc-stun` request.** It replaces the named servers on the running
+    WebRTC side without a restart, so live connections stay up.
+  - What a named server reports is offered only as an extra candidate, and only if global unicast.
+    It never replaces the configured server's mapping.
+  - A signed STUN announcement (for operators who seed nothing) follows once nfx assigns its kind.
+
 ### CI
 
 - **`rust-advisories`** ignores RUSTSEC-2026-0543 (chrono is unmaintained; every version, no patched

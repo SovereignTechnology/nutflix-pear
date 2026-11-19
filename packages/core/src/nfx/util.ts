@@ -114,7 +114,7 @@ const IPV4 = /^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0
 const IPV6_GROUP = /^(?:0|[1-9a-f][0-9a-f]{0,3})$/;
 
 /** The eight groups of an IPv6 address written with hex groups only, or `undefined`. */
-function ipv6Groups(text: string): number[] | undefined {
+export function ipv6Groups(text: string): number[] | undefined {
   const halves = text.split('::');
   if (halves.length > 2) return undefined;
   const side = (h: string | undefined): string[] | undefined => {

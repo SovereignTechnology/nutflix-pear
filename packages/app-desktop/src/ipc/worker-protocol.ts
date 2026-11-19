@@ -126,6 +126,9 @@ export interface NfxRtcConfigWire {
   readonly stun: readonly string[];
 }
 
+/** NFX-10 §1: the most named STUN servers `nfx.rtc.stun` carries (4 in all, with one of its own). */
+export const MAX_NFX_NAMED_STUN = 3;
+
 /** #89: the most web swarms the WebRTC side serves (the helper's own cap). */
 export const MAX_NFX_RTC_SWARMS = 64;
 
@@ -361,6 +364,14 @@ export interface WorkerMethodTable {
    * `MAX_NFX_RTC_SWARMS`: the rooms the host's signaling may seed in. Empty while WebRTC is off.
    */
   'nfx.rtc.swarms': [args: Record<string, never>, result: { readonly swarms: readonly string[] }];
+  /**
+   * NFX-10 §1 (the maintainer's plan of 2026-11-19, step 5): the STUN servers named over Nostr
+   * that the WebRTC side asks too, after its own (`rtc.stun`), as the host picked them from the
+   * beacons of what it plays (core's `nfx.selectStunServers`). Canonical global unicast
+   * `ip:port`, unique, at most `MAX_NFX_NAMED_STUN`; `[]`: none. Replaces the last list without
+   * restarting the WebRTC side; kept while WebRTC is off.
+   */
+  'nfx.rtc.stun': [args: { readonly named: readonly string[] }, result: undefined];
   /** Probes the binary (`path` = the configured one, when set). */
   'studio.ffmpeg': [
     args: { readonly recheck: boolean; readonly path?: string },
