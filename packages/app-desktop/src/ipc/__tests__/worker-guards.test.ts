@@ -176,6 +176,11 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'nfx.rtc.accept': [{ peer: 1, answer: SDP }],
   'nfx.rtc.hangup': [{ peer: 4_294_967_295 }],
   'nfx.rtc.swarms': [{}],
+  // NFX-10 §1: none, or up to 3 named STUN servers (4 in all, with one of its own).
+  'nfx.rtc.stun': [
+    { named: [] },
+    { named: ['185.147.157.180:3478', '[2a01:4f8::1]:3478', '1.2.3.4:19302'] },
+  ],
   'studio.ffmpeg': [{ recheck: true }, { recheck: false, path: '/opt/ffmpeg/bin/ffmpeg' }],
   'studio.probe': [{ path: '/home/u/Videos/a.mp4' }, { path: 'C:\\Users\\u\\a.mp4' }],
   'studio.upload': [
@@ -245,6 +250,7 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
   'nfx.rtc.accept': [undefined],
   'nfx.rtc.hangup': [undefined],
   'nfx.rtc.swarms': [{ swarms: [] }, { swarms: [RTC_SWARM, `${RTC_SWARM}x`] }],
+  'nfx.rtc.stun': [undefined],
   'studio.ffmpeg': [
     { found: false },
     { found: true, path: '/usr/bin/ffmpeg', version: '8.1.2', os: 'linux' },
@@ -1113,5 +1119,25 @@ describe('#89: the WebRTC side (nfx.configure rtc, nfx.rtc.*)', () => {
     const reset = validateWorkerEvent['nfx.rtc.reset'];
     expect(reset({ op: 'ev', e: 'nfx.rtc.reset' })).toBe(true);
     expect(reset({ op: 'ev', e: 'nfx.rtc.reset', peer: 1 })).toBe(false);
+  });
+
+  it('named STUN servers are ip:port literals, unique, at most 3 (NFX-10 §1)', () => {
+    const named = validateWorkerArgs['nfx.rtc.stun'];
+    for (const bad of [
+      ['stun.example:3478'],
+      ['1.2.3.4'],
+      ['1.2.3.4:0'],
+      ['1.2.3.4:03478'],
+      ['stun:1.2.3.4:3478'],
+      ['[2A01:4F8::1]:3478'],
+      ['[2a01:4f8::1%eth0]:3478'],
+      ['1.2.3.4:3478', '1.2.3.4:3478'],
+      ['1.2.3.4:1', '1.2.3.4:2', '1.2.3.4:3', '1.2.3.4:4'],
+      [3478],
+    ])
+      expect(named({ named: bad }), JSON.stringify(bad)).toBe(false);
+    expect(named({})).toBe(false);
+    expect(named({ named: [], stun: [] })).toBe(false);
+    expect(validateWorkerResult['nfx.rtc.stun']({})).toBe(false);
   });
 });

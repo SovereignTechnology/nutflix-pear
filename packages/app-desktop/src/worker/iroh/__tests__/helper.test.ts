@@ -586,6 +586,73 @@ describe('IrohHelper, WebRTC side (ADR 0023)', () => {
     );
   });
 
+  it('NFX-10 §1: named STUN servers follow rtc-init, are replaced live, and again after a restart', async () => {
+    const answer: Responder = (msg, child) => {
+      if (msg['op'] === 'rtc-stun')
+        child.reply({ id: msg['id'], ok: true, servers: (msg['stun'] as unknown[]).length });
+    };
+    const named = ['1.2.3.4:3478'];
+    const { helper, children } = rtcSetup(answer, { init: { rtc: { ...RTC, named } } });
+    await expect(helper.startRtc()).resolves.toEqual(REACH);
+    expect(children[0]!.requests.map((m) => m['op'])).toEqual(['rtc-init', 'rtc-stun']);
+    expect(children[0]!.requests[1]).toMatchObject({ stun: named });
+    // rtc-init itself carries only the configured servers.
+    expect(children[0]!.requests[0]).not.toHaveProperty('named');
+
+    const next = ['5.6.7.8:3478', '[2a01:4f8::1]:3478'];
+    await expect(helper.rtcStun(next)).resolves.toBe(2);
+    expect(children[0]!.requests[2]).toMatchObject({ op: 'rtc-stun', stun: next });
+    children[0]!.exit(70, null);
+    await vi.waitFor(() => {
+      expect(helper.restarts).toBe(1);
+    });
+    expect(children[1]!.requests.map((m) => m['op'])).toEqual(['rtc-init', 'rtc-stun']);
+    expect(children[1]!.requests[1]).toMatchObject({ stun: next });
+    await helper.close();
+  });
+
+  it('NFX-10 §1: a refused rtc-stun leaves the start standing; a bad list is refused up front', async () => {
+    const refuse: Responder = (msg, child) => {
+      if (msg['op'] === 'rtc-stun')
+        child.reply({ id: msg['id'], ok: false, err: 'bad-request', msg: 'not global' });
+    };
+    const { helper, children } = rtcSetup(refuse, {
+      init: { rtc: { ...RTC, named: ['1.2.3.4:3478'] } },
+    });
+    await expect(helper.startRtc()).resolves.toEqual(REACH);
+    expect(await rejection(helper.rtcStun(['5.6.7.8:3478']))).toBe('bad-request');
+    // With the configured one, 4 in all at most; ip:port literals only; each once.
+    for (const bad of [
+      ['1.1.1.1:1', '1.1.1.1:2', '1.1.1.1:3', '1.1.1.1:4'],
+      ['stun.example:3478'],
+      ['1.2.3.4:0'],
+      ['1.2.3.4:3478', '1.2.3.4:3478'],
+    ])
+      expect(await rejection(helper.rtcStun(bad)), JSON.stringify(bad)).toBe('bad-request');
+    // Only the start's and the first call's reached the helper.
+    expect(children[0]!.requests.filter((m) => m['op'] === 'rtc-stun')).toHaveLength(2);
+    await helper.close();
+    expect(await rejection(setup().helper.rtcStun([]))).toBe('bad-request');
+    const base = {
+      spawn: (): HelperChild => new FakeChild(responder()),
+      file: '/h',
+      stateDir: '/s',
+    };
+    expect(
+      () =>
+        new IrohHelper({
+          ...base,
+          init: {
+            rtc: {
+              stun: ['a:1', 'b:1'],
+              root: '/r',
+              named: ['1.1.1.1:1', '1.1.1.1:2', '1.1.1.1:3'],
+            },
+          },
+        }),
+    ).toThrow(RangeError);
+  });
+
   it('a malformed rtc-init reply kills the helper and fails the start', async () => {
     const children: FakeChild[] = [];
     const helper = new IrohHelper({

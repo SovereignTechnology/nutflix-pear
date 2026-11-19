@@ -218,6 +218,11 @@ enum Cmd {
         peer: u32,
         reply: oneshot::Sender<Result<Value, RtcError>>,
     },
+    /// `rtc-stun`: the STUN servers named over Nostr, replacing the last ones.
+    Named {
+        named: Vec<SocketAddr>,
+        reply: oneshot::Sender<Result<usize, RtcError>>,
+    },
     /// Close every connection and end the task now, whoever else holds the handle.
     Stop {
         reply: oneshot::Sender<Result<(), RtcError>>,
@@ -309,6 +314,9 @@ impl RtcHandle {
             allow_private: cfg.allow_private,
             root: root.clone(),
             servers,
+            own_count: cfg.stun.len(),
+            named: Vec::new(),
+            named_mapped: HashMap::new(),
             stun_txs: HashMap::new(),
             mapped,
             stun_next: now
@@ -341,6 +349,14 @@ impl RtcHandle {
     /// (they then fail `not-ready`). Returns once the connections are closed.
     pub async fn stop(&self) {
         let _ = self.call(|reply| Cmd::Stop { reply }).await;
+    }
+
+    /// `rtc-stun`: the STUN servers named over Nostr (NFX-10 §1), asked beside `rtc-init`'s own,
+    /// replacing the last ones; `[]` drops them. Each must be global unicast with a port, and
+    /// with the own ones there are at most [`MAX_STUN`]; otherwise nothing changes. Connections
+    /// are untouched. Returns how many it asks: those of the socket's family not already its own.
+    pub async fn set_named(&self, named: Vec<SocketAddr>) -> Result<usize, RtcError> {
+        self.call(|reply| Cmd::Named { named, reply }).await
     }
 
     async fn call<T>(
@@ -535,6 +551,13 @@ fn local_addr(
     Ok(SocketAddr::new(ip, port))
 }
 
+/// Whether a mapping a named server reported may be offered: global unicast (as a remote
+/// candidate must be, [`candidates::allowed`]), with a port, of the socket's family. A server a
+/// stranger named must not make peers check a private address.
+fn named_mapping_ok(m: SocketAddr, local: SocketAddr, allow_private: bool) -> bool {
+    m.port() != 0 && m.is_ipv4() == local.is_ipv4() && candidates::allowed(m.ip(), allow_private)
+}
+
 /// One round of Binding requests at start, waiting up to [`STUN_WAIT`] for the first answer.
 async fn first_mapping(socket: &UdpSocket, servers: &[SocketAddr]) -> Option<SocketAddr> {
     let mut txs = HashMap::new();
@@ -669,7 +692,16 @@ struct Engine {
     local: SocketAddr,
     allow_private: bool,
     root: Option<Arc<PathBuf>>,
+    /// `rtc-init`'s STUN servers, resolved: the user's own. Their answers are `mapped`.
     servers: Vec<SocketAddr>,
+    /// How many STUN servers `rtc-init` named, resolved or not: the cap counts them all.
+    own_count: usize,
+    /// `rtc-stun`'s servers, named over Nostr (NFX-10 §1): asked after the own ones.
+    named: Vec<SocketAddr>,
+    /// What each named server last reported, kept only if global unicast. Never `mapped`, so a
+    /// lying named server never replaces the own servers' mapping: at most it adds a
+    /// server-reflexive candidate that fails (ICE tries every pair).
+    named_mapped: HashMap<SocketAddr, SocketAddr>,
     stun_txs: HashMap<stun::TxId, SocketAddr>,
     mapped: Option<SocketAddr>,
     stun_next: Instant,
@@ -864,13 +896,19 @@ impl Engine {
     }
 
     fn receive(&mut self, bytes: &[u8], from: SocketAddr) {
-        if self.servers.contains(&from)
+        if (self.servers.contains(&from) || self.named.contains(&from))
             && let Some(tx) = stun::success_tx(bytes)
             && self.stun_txs.get(&tx) == Some(&from)
         {
             self.stun_txs.remove(&tx);
             if let Some(m) = stun::mapped(bytes, &tx) {
-                self.mapped = Some(m);
+                if self.servers.contains(&from) {
+                    self.mapped = Some(m);
+                } else if named_mapping_ok(m, self.local, self.allow_private) {
+                    self.named_mapped.insert(from, m);
+                } else {
+                    self.named_mapped.remove(&from);
+                }
             }
             return;
         }
@@ -925,18 +963,57 @@ impl Engine {
 
     fn stun_round(&mut self, now: Instant) {
         self.stun_txs.clear();
-        for s in self.servers.clone() {
+        // The own servers as configured; a named one only where a check may go (the egress rule).
+        let targets: Vec<SocketAddr> = self
+            .servers
+            .iter()
+            .chain(self.named.iter().filter(|&&s| self.may_send(s)))
+            .copied()
+            .collect();
+        for s in targets {
             let Some(tx) = stun::tx() else { continue };
             if self.socket.try_send_to(&stun::request(&tx), s).is_ok() {
                 self.stun_txs.insert(tx, s);
             }
         }
         self.stun_next = now
-            + if self.mapped.is_some() {
+            + if self.mapped.is_some() || !self.named_mapped.is_empty() {
                 STUN_EVERY
             } else {
                 STUN_RETRY
             };
+    }
+
+    /// `rtc-stun`: replace the named servers, every one checked before anything changes. New
+    /// ones are asked at once; a dropped one's mapping goes with it.
+    fn set_named(&mut self, list: Vec<SocketAddr>, now: Instant) -> Result<usize, RtcError> {
+        if self.own_count + list.len() > MAX_STUN {
+            return Err(fail("bad-request", "at most 4 STUN servers in all"));
+        }
+        if list
+            .iter()
+            .any(|s| !candidates::may_check(s.ip(), s.port(), self.allow_private, None))
+        {
+            return Err(fail(
+                "bad-request",
+                "a named STUN server must be global unicast",
+            ));
+        }
+        let mut named: Vec<SocketAddr> = Vec::with_capacity(list.len());
+        for s in list {
+            if s.is_ipv4() == self.local.is_ipv4()
+                && !self.servers.contains(&s)
+                && !named.contains(&s)
+            {
+                named.push(s);
+            }
+        }
+        if named.iter().any(|s| !self.named.contains(s)) {
+            self.stun_next = now;
+        }
+        self.named_mapped.retain(|s, _| named.contains(s));
+        self.named = named;
+        Ok(self.named.len())
     }
 
     fn timeout(&mut self) {
@@ -979,13 +1056,28 @@ impl Engine {
         let host = Candidate::host(self.local, "udp")
             .map_err(|e| fail("internal", format!("host candidate: {e}")))?;
         rtc.add_local_candidate(host);
-        if let Some(m) = self.mapped
-            && m != self.local
-            && let Ok(c) = Candidate::server_reflexive(m, self.local, "udp")
-        {
-            rtc.add_local_candidate(c);
+        for m in self.reflexive() {
+            if m != self.local
+                && let Ok(c) = Candidate::server_reflexive(m, self.local, "udp")
+            {
+                rtc.add_local_candidate(c);
+            }
         }
         Ok(rtc)
+    }
+
+    /// The public mappings to offer: the own servers' first, then each distinct one a named
+    /// server reported (already checked to be global unicast), in the named servers' order.
+    fn reflexive(&self) -> Vec<SocketAddr> {
+        let mut out: Vec<SocketAddr> = self.mapped.into_iter().collect();
+        for s in &self.named {
+            if let Some(&m) = self.named_mapped.get(s)
+                && !out.contains(&m)
+            {
+                out.push(m);
+            }
+        }
+        out
     }
 
     fn room(&self, swarm: &str) -> Result<(), RtcError> {
@@ -1275,6 +1367,9 @@ impl Engine {
                     }
                 };
                 let _ = reply.send(result);
+            }
+            Cmd::Named { named, reply } => {
+                let _ = reply.send(self.set_named(named, now));
             }
             // Handled by the task's loop.
             Cmd::Stop { reply } => {

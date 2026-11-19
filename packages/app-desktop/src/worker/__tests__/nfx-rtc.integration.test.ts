@@ -6,9 +6,14 @@
  * checked against the hash list. Then a file outside the store (refused by the helper's `root`)
  * and a hang-up.
  *
+ * NFX-10 §1: STUN servers named over Nostr (`NfxRtcNode.setNamed`, the helper's `rtc-stun`) reach
+ * the running helper without a restart, and what one reports is offered beside, never instead
+ * of, what the configured server reports.
+ *
  * Skipped without `NUTFLIX_IROH_HELPER` on a developer machine; in CI (ci.yml builds the helper)
  * it fails instead. Browsers are the `helper-webrtc` workflow's.
  */
+import { createSocket } from 'node:dgram';
 import { constants } from 'node:fs';
 import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -34,6 +39,34 @@ const IN_CI = (process.env['CI'] ?? '') !== '';
 const MISSING =
   'NUTFLIX_IROH_HELPER names no iroh helper: CI builds one for this (ci.yml, the iroh-helper job)';
 const LOOPBACK: NfxRtcConfig = { stun: [], bind: '127.0.0.1:0', allowPrivate: true };
+
+/**
+ * A STUN server on loopback (RFC 8489 Binding only) that reports `ip:port` (IPv4) as the mapping,
+ * in XOR-MAPPED-ADDRESS, as a public server would report a NAT's.
+ */
+async function fakeStun(
+  ip: string,
+  port: number,
+): Promise<{ readonly addr: string; readonly close: () => void }> {
+  const sock = createSocket('udp4');
+  sock.on('message', (msg, from) => {
+    if (msg.length < 20 || msg.readUInt16BE(0) !== 0x0001) return;
+    const res = Buffer.alloc(32);
+    res.writeUInt16BE(0x0101, 0);
+    res.writeUInt16BE(12, 2);
+    res.writeUInt32BE(0x2112a442, 4);
+    msg.copy(res, 8, 8, 20);
+    res.writeUInt16BE(0x0020, 20);
+    res.writeUInt16BE(8, 22);
+    res.writeUInt8(1, 25);
+    res.writeUInt16BE(port ^ 0x2112, 26);
+    const magic = [0x21, 0x12, 0xa4, 0x42];
+    ip.split('.').forEach((o, i) => res.writeUInt8(Number(o) ^ magic[i]!, 28 + i));
+    sock.send(res, from.port, from.address);
+  });
+  await new Promise<void>((done) => sock.bind(0, '127.0.0.1', done));
+  return { addr: `127.0.0.1:${String(sock.address().port)}`, close: () => sock.close() };
+}
 
 describe.skipIf(HELPER === '' && !IN_CI)('#89: the WebRTC side, worker to worker', () => {
   it('a stored video reaches another node over WebRTC, every segment checked', async () => {
@@ -145,6 +178,73 @@ describe.skipIf(HELPER === '' && !IN_CI)('#89: the WebRTC side, worker to worker
       expect(resets).toBe(1);
     } finally {
       for (const n of nodes) await n.close();
+      await tmp.rm();
+    }
+  });
+
+  it('NFX-10 §1: named STUN servers reach the running helper, beside its own and never instead', async () => {
+    expect(HELPER, MISSING).not.toBe('');
+    const own = await fakeStun('1.2.3.4', 40000);
+    const named = await fakeStun('5.6.7.8', 40001);
+    const tmp = await tempDir('nfx-rtc-stun-');
+    const node = new NfxRtcNode({
+      file: HELPER,
+      spawn: nodeHelperSpawn,
+      isExecutable: (p) =>
+        access(p, constants.X_OK).then(
+          () => true,
+          () => false,
+        ),
+      stateDir: join(tmp.dir, 'state'),
+      rmTree: (p) => rm(p, { recursive: true, force: true }),
+      root: tmp.dir,
+      logger: silentLogger,
+      retryMs: 50,
+    });
+    const swarm = 'nfx/1/web/nfx:testnet:1:named-stun/720p';
+    try {
+      await mkdir(join(tmp.dir, 'state'), { recursive: true });
+      await node.set({ ...LOOPBACK, stun: [own.addr] });
+      const h = await node.start();
+      if (h === null) throw new Error('the WebRTC node did not start');
+      const offered = async (): Promise<string> => {
+        const o = await h.rtcOffer(swarm);
+        await h.rtcHangup(o.peer);
+        return o.sdp;
+      };
+      const before = await offered();
+      expect(before).toContain('1.2.3.4 40000 typ srflx');
+      expect(before).not.toContain('5.6.7.8');
+
+      const generation = node.generation;
+      await node.setNamed([named.addr]);
+      await vi.waitFor(
+        async () => {
+          const sdp = await offered();
+          expect(sdp).toContain('5.6.7.8 40001 typ srflx');
+          // The configured server's mapping stays, and comes first.
+          expect(sdp.indexOf('1.2.3.4 40000 typ srflx')).toBeGreaterThan(-1);
+          expect(sdp.indexOf('1.2.3.4 40000')).toBeLessThan(sdp.indexOf('5.6.7.8 40001'));
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+      // Taken live: the same helper, no restart.
+      expect(node.generation).toBe(generation);
+      expect(node.current()).toBe(h);
+
+      // None again: only the configured mapping.
+      await node.setNamed([]);
+      await vi.waitFor(
+        async () => {
+          expect(await offered()).not.toContain('5.6.7.8');
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(node.generation).toBe(generation);
+    } finally {
+      await node.close();
+      own.close();
+      named.close();
       await tmp.rm();
     }
   });

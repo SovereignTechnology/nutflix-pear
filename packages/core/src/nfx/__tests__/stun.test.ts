@@ -1,0 +1,289 @@
+/**
+ * NFX-10 §1: which STUN servers a client uses. Its own come first, then those that keys name over
+ * Nostr (beacons today). Named servers must be global unicast, are ranked by distinct keys, and a
+ * lone key counts only when nothing better exists; 4 in all. These are the nfx STUN draft's rules
+ * (branch `stun/decentralized`, 1ae4068), documentation blocks refused as that draft will. The
+ * addresses below are never contacted: everything here is a pure function.
+ */
+import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import { describe, expect, it } from 'vitest';
+
+import type { NfxVideo, NostrEvent } from '../../contracts/index.js';
+import { beaconContentText, beaconTags, type Endpoint } from '../beacon.js';
+import { VideoAddr } from '../namespace.js';
+import {
+  MAX_STUN_CLAIMS,
+  beaconStunClaims,
+  isGlobalStunAddr,
+  selectStunServers,
+  stunClaimsOfBeacon,
+  stunServerKey,
+  type StunClaim,
+} from '../stun.js';
+
+const claim = (key: string, addr: string): StunClaim => ({ key, addr });
+// Global unicast addresses in canonical form.
+const A = '185.147.157.180:3478';
+const B = '8.8.8.8:3478';
+const C = '[2a01:4f8::1]:3478';
+const D = '1.1.1.1:3478';
+const E = '9.9.9.9:3478';
+const F = '1.2.3.4:19302';
+/** A server of the user's own, as Settings holds one (a name). */
+const OWN = 'web.nutflix.xyz:3478';
+
+describe('isGlobalStunAddr', () => {
+  it('takes a canonical ip:port at a global unicast address', () => {
+    for (const a of [
+      A,
+      B,
+      C,
+      '1.2.3.4:1',
+      '223.255.255.255:65535',
+      // Just outside the blocks refused below.
+      '100.63.255.255:3478',
+      '100.128.0.0:3478',
+      '172.15.255.255:3478',
+      '172.32.0.0:3478',
+      '192.0.1.255:3478',
+      '198.17.255.255:3478',
+      '198.20.0.0:3478',
+      '[2001:4860::8888]:3478',
+      '[3fef:ffff::1]:3478',
+    ])
+      expect(isGlobalStunAddr(a), a).toBe(true);
+  });
+
+  it('refuses every class that is not global unicast, and anything not canonical', () => {
+    const refused: Record<string, readonly string[]> = {
+      private: ['10.0.0.1:3478', '172.16.0.1:3478', '172.31.255.255:3478', '192.168.1.1:3478'],
+      loopback: ['127.0.0.1:3478', '127.255.0.1:3478', '[::1]:3478'],
+      'link-local': ['169.254.169.254:80', '[fe80::1]:3478', '[febf::1]:3478'],
+      'CGNAT 100.64/10': ['100.64.0.1:3478', '100.127.255.255:3478'],
+      'ULA fc00::/7': ['[fc00::1]:3478', '[fd12:3456::1]:3478'],
+      multicast: ['224.0.0.1:3478', '239.255.255.250:1900', '[ff02::1]:3478'],
+      unspecified: ['0.0.0.0:3478', '[::]:3478'],
+      '"this network"': ['0.1.2.3:3478'],
+      documentation: [
+        '192.0.2.1:3478',
+        '198.51.100.7:3478',
+        '203.0.113.10:3478',
+        '[2001:db8::1]:3478',
+        '[3fff::1]:3478',
+      ],
+      'benchmarking, IETF': ['198.18.0.1:3478', '198.19.255.255:3478', '192.0.0.8:3478'],
+      'reserved, broadcast': ['240.0.0.1:3478', '255.255.255.255:3478', '[4000::1]:3478'],
+      'IPv4 inside IPv6': [
+        '[::ffff:a00:1]:3478',
+        '[::ffff:7f00:1]:3478',
+        '[::ffff:808:808]:3478',
+        '[::ffff:8.8.8.8]:3478',
+        '[::a00:1]:3478',
+      ],
+      'not canonical': [
+        '185.147.157.018:3478',
+        '[2A01:4F8::1]:3478',
+        '[2a01:4f8:0:0:0:0:0:1]:3478',
+        '1.2.3.4:03478',
+        '1.2.3.4:0',
+        '1.2.3.4:65536',
+        '1.2.3.4',
+      ],
+      'a name or a URL': [
+        'stun.example:3478',
+        'localhost:3478',
+        'stun:1.2.3.4:3478',
+        '[2a01:4f8::1%eth0]:3478',
+        '',
+      ],
+    };
+    for (const [why, list] of Object.entries(refused))
+      for (const a of list) expect(isGlobalStunAddr(a), `${why}: ${a}`).toBe(false);
+  });
+});
+
+describe('stunServerKey', () => {
+  it('compares hosts case-blind, IPv6 in RFC 5952 form, ports without leading zeros', () => {
+    expect(stunServerKey('WEB.Nutflix.XYZ:3478')).toBe('web.nutflix.xyz:3478');
+    expect(stunServerKey('[2A01:04F8:0:0::1]:3478')).toBe(C);
+    expect(stunServerKey('1.2.3.4:03478')).toBe('1.2.3.4:3478');
+    for (const a of [A, B, C, D]) expect(stunServerKey(a)).toBe(a);
+  });
+});
+
+describe('selectStunServers (NFX-10 §1)', () => {
+  const pick = (
+    own: readonly string[],
+    claims: readonly StunClaim[],
+    max?: number,
+  ): readonly string[] => {
+    const s = selectStunServers(own, claims, max);
+    return [...s.own, ...s.named];
+  };
+
+  it('nothing of its own and nothing named: none', () => {
+    expect(selectStunServers([], [])).toEqual({ own: [], named: [] });
+  });
+
+  it('its own servers as given, each once, at most 4', () => {
+    expect(pick([OWN, A], [])).toEqual([OWN, A]);
+    expect(pick([OWN, 'WEB.nutflix.xyz:3478', C, '[2A01:4F8::1]:3478'], [])).toEqual([OWN, C]);
+    expect(pick([A, B, C, D, E], [])).toEqual([A, B, C, D]);
+  });
+
+  it('its own first, and never dropped for a named one', () => {
+    const many = ['k1', 'k2', 'k3', 'k4'].flatMap((k) => [claim(k, D), claim(k, E)]);
+    expect(selectStunServers([OWN, A, B], many)).toEqual({ own: [OWN, A, B], named: [D] });
+    expect(selectStunServers([OWN, A, B, C], many)).toEqual({ own: [OWN, A, B, C], named: [] });
+  });
+
+  it('ranks named servers by distinct keys, most first, ties in the order first named', () => {
+    const claims = [
+      claim('k1', A),
+      claim('k1', B),
+      claim('k2', B),
+      claim('k3', B),
+      claim('k2', A),
+      claim('k4', C),
+      claim('k5', C),
+      claim('k6', C),
+      claim('k6', C),
+    ];
+    expect(pick([], claims)).toEqual([B, C, A]);
+  });
+
+  it('counts a key once, however often it names a server', () => {
+    const claims = [claim('k1', A), claim('k1', A), claim('k1', A), claim('k2', B), claim('k3', B)];
+    expect(pick([OWN], claims)).toEqual([OWN, B]);
+  });
+
+  it('takes servers named by one key only when nothing better exists', () => {
+    // Alone: no server of its own, none named by two keys.
+    expect(pick([], [claim('k1', A)])).toEqual([A]);
+    expect(pick([], [claim('k1', A), claim('k1', A), claim('k1', B)])).toEqual([A, B]);
+    // Beside a server of its own: none.
+    expect(pick([OWN], [claim('k1', A)])).toEqual([OWN]);
+    // Beside a server named by two keys: only that one.
+    expect(pick([], [claim('k1', A), claim('k2', B), claim('k3', B)])).toEqual([B]);
+    // A server of its own named by two keys is its own, and still makes lone ones wait.
+    expect(pick([A], [claim('k1', A), claim('k2', A), claim('k3', B)])).toEqual([A]);
+  });
+
+  it('never takes an address that is not global unicast, and does not count it as better', () => {
+    const keys = ['k1', 'k2', 'k3'];
+    const bad = ['10.0.0.1:3478', '127.0.0.1:3478', '[fd00::1]:3478', '203.0.113.1:3478'];
+    const claims = bad.flatMap((a) => keys.map((k) => claim(k, a)));
+    expect(pick([], claims)).toEqual([]);
+    expect(pick([], [...claims, claim('k9', A)])).toEqual([A]);
+    // Nor a name, whatever the claim says.
+    expect(pick([], [claim('k1', 'stun.example:3478'), claim('k2', 'stun.example:3478')])).toEqual(
+      [],
+    );
+  });
+
+  it('dedupes a named server against its own, by normalized host:port', () => {
+    const claims = [claim('k1', C), claim('k2', C), claim('k3', A), claim('k4', A)];
+    expect(selectStunServers(['[2A01:4F8:0::1]:3478'], claims)).toEqual({
+      own: ['[2A01:4F8:0::1]:3478'],
+      named: [A],
+    });
+  });
+
+  it('takes at most 4 in all, and at most `max` when it is lower', () => {
+    const six = [A, B, C, D, E, F].flatMap((a) => [claim(`x${a}`, a), claim(`y${a}`, a)]);
+    expect(pick([OWN], six)).toEqual([OWN, A, B, C]);
+    expect(pick([], six)).toEqual([A, B, C, D]);
+    expect(pick([OWN], six, 2)).toEqual([OWN, A]);
+    expect(pick([OWN], six, 99)).toHaveLength(4);
+    expect(pick([OWN], six, 0)).toEqual([]);
+  });
+
+  it(`reads at most ${String(MAX_STUN_CLAIMS)} claims`, () => {
+    const junk = Array.from({ length: MAX_STUN_CLAIMS }, (_, i) =>
+      claim(`k${String(i)}`, '10.0.0.1:1'),
+    );
+    expect(pick([], [...junk, claim('a', A)])).toEqual([]);
+    expect(pick([], [...junk.slice(1), claim('a', A)])).toEqual([A]);
+    // The claim past the bound is not read: A stays a lone key's, beside a server of its own.
+    expect(pick([OWN], [...junk.slice(1), claim('a', A), claim('b', A)])).toEqual([OWN]);
+    expect(pick([OWN], [...junk.slice(2), claim('a', A), claim('b', A)])).toEqual([OWN, A]);
+  });
+});
+
+describe('beaconStunClaims: the servers live beacons name, by their seeders', () => {
+  const NS = 'nfx:testnet:1';
+  const NOW = 1_800_000_000;
+  const CREATOR = getPublicKey(generateSecretKey());
+  const DTAG = `${NS}:stun-video`;
+  const VIDEO = { id: `38504:${CREATOR}:${DTAG}`, author: CREATOR } as Pick<
+    NfxVideo,
+    'id' | 'author'
+  >;
+  const stun = (...addrs: string[]): Endpoint => ({ t: 'stun', addrs });
+
+  function beacon(
+    endpoints: readonly Endpoint[],
+    o: {
+      readonly sk?: Uint8Array;
+      readonly at?: number;
+      readonly d?: string;
+      readonly free?: boolean;
+    } = {},
+  ): NostrEvent {
+    const at = o.at ?? NOW - 10;
+    const d = o.d ?? DTAG;
+    const addr = VideoAddr.parse(d);
+    const tags = beaconTags(`38504:${CREATOR}:${d}`, at, 120);
+    if (!addr.ok || !tags.ok) throw new Error('bad test beacon');
+    const free = o.free ?? true;
+    const content = beaconContentText({
+      v: 1,
+      video: addr.value,
+      endpoints,
+      skipped: [],
+      chunks: 'all',
+      priceHint: free ? 0n : 1n,
+      acceptsMints: free ? [] : ['https://mint.example'],
+      free,
+    });
+    return finalizeEvent(
+      { kind: 20464, created_at: at, tags: tags.value, content },
+      o.sk ?? generateSecretKey(),
+    ) as unknown as NostrEvent;
+  }
+
+  it('names each server once per beacon, by its signer, the global ones only, at most 4', () => {
+    const sk = generateSecretKey();
+    const ev = beacon([stun('10.0.0.1:3478', A, B), stun(B, C, D, E)], { sk });
+    expect(beaconStunClaims(VIDEO, [ev], NOW)).toEqual(
+      [A, B, C, D].map((a) => claim(getPublicKey(sk), a)),
+    );
+  });
+
+  it("counts each seeder's newest beacon only, for this video, free, live", () => {
+    const one = generateSecretKey();
+    const two = generateSecretKey();
+    const events = [
+      // Seeder one withdrew A in its newer beacon.
+      beacon([stun(A)], { sk: one, at: NOW - 60 }),
+      beacon([stun(B)], { sk: one, at: NOW - 5 }),
+      beacon([stun(B)], { sk: two }),
+      // Another video, a paid beacon, an expired one: none count.
+      beacon([stun(C)], { d: `${NS}:other-video` }),
+      beacon([stun(C)], { free: false }),
+      beacon([stun(C)], { at: NOW - 600 }),
+    ];
+    const claims = beaconStunClaims(VIDEO, events, NOW);
+    expect(claims).toEqual([claim(getPublicKey(one), B), claim(getPublicKey(two), B)]);
+    // Two keys name B: beside a server of the user's own, it is the one added.
+    expect(selectStunServers([OWN], claims)).toEqual({ own: [OWN], named: [B] });
+  });
+
+  it('a beacon without a stun endpoint names none', () => {
+    const https: Endpoint = { t: 'https', url: 'https://origin.example/nfx' };
+    expect(beaconStunClaims(VIDEO, [beacon([https])], NOW)).toEqual([]);
+    expect(
+      stunClaimsOfBeacon({ seeder: 'a'.repeat(64), content: { endpoints: [] } as never }),
+    ).toEqual([]);
+  });
+});

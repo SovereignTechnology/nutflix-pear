@@ -74,6 +74,7 @@ import {
   MAX_NFX_HELD_RENDITIONS,
   MAX_NFX_HELD_SEEDERS,
   MAX_NFX_IROH_ADDRS,
+  MAX_NFX_NAMED_STUN,
   MAX_NFX_PLAY_IROH,
   MAX_NFX_PLAY_PEERS,
   MAX_NFX_RENDITIONS,
@@ -139,6 +140,18 @@ const isNfxConfigure = obj(
     ),
   },
 );
+
+/**
+ * NFX-10 §1: STUN servers named over Nostr, as core's `nfx.selectStunServers` writes them: an
+ * `ip:port` literal (dotted IPv4, or bracketed lower-case IPv6), unique, at most
+ * `MAX_NFX_NAMED_STUN`. The shape only: the worker and the helper each check that every one is
+ * global unicast.
+ */
+const isNfxNamedStun: Guard<readonly string[]> = (x): x is readonly string[] =>
+  arrayOf(
+    matches(/^(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9a-f:]{2,39}\]):[1-9][0-9]{0,4}$/, 47),
+    MAX_NFX_NAMED_STUN,
+  )(x) && new Set(x).size === x.length;
 
 /** #89: an NFX-10 web swarm id, `nfx/1/web/<namespace>:<video-id>/<rendition>`. */
 const isNfxWebSwarm = matches(/^nfx\/1\/web\/[\x21-\x7e]{3,246}$/, 256);
@@ -321,6 +334,7 @@ export const validateWorkerArgs: {
   'nfx.rtc.accept': safe(obj({ peer: isNfxRtcPeer, answer: isNfxSdp })),
   'nfx.rtc.hangup': safe(obj({ peer: isNfxRtcPeer })),
   'nfx.rtc.swarms': safe(obj({}) as Guard<Record<string, never>>),
+  'nfx.rtc.stun': safe(obj({ named: isNfxNamedStun })),
   'studio.ffmpeg': safe(obj({ recheck: bool }, { path: isAbsolutePath })),
   'studio.upload': safe(isStudioUpload),
   'studio.probe': safe(obj({ path: isAbsolutePath })),
@@ -414,6 +428,7 @@ export const validateWorkerResult: {
         arrayOf(isNfxWebSwarm, MAX_NFX_RTC_SWARMS)(x) && new Set(x).size === x.length,
     }),
   ),
+  'nfx.rtc.stun': isVoid,
   'studio.ffmpeg': safe(isFfmpegStatus),
   'studio.upload': safe(isVideoManifest),
   'studio.probe': safe(isSourceSizes),
