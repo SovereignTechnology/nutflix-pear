@@ -25,7 +25,7 @@ tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "io-std",
 # WebRTC with browsers (ADR 0023): the version and backend nfx's bridge builds (nfx main
 # 6465cb5). `rust-crypto` still compiles aws-lc through dimpl's certificate generation; avoiding
 # that would mean forking str0m-rust-crypto, so the helper takes what nfx ships.
-str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
+str0m = { version = "=0.25.0", default-features = false, features = ["rust-crypto"] }
 # STUN transaction ids (already in iroh's tree).
 getrandom = "0.4.3"
 
