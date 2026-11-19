@@ -19,6 +19,8 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   - **The read relays** are now `relay.primal.net` and `relay.ditto.pub`: `relay.damus.io` refuses
     this project's address and `nos.lol` has rate-limited it. Comments, reactions, profiles and the
     other social events stay off `relay.nutflix.xyz`, which keeps NFX's own events only.
+  - **STUN** is named `relay.nutflix.xyz:3478` (was `web.nutflix.xyz:3478`): the same server and
+    address, under the network's own relay name.
   - **Saved settings are kept.** Only an install or a browser that has never saved a setting picks
     up the new lists; any change in Settings saves the relay lists as they were. Settings › Relays
     and Settings › NFX network are where to change them.

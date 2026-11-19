@@ -187,7 +187,7 @@ describe('SettingsStore (atomic JSON in userData)', () => {
       irohRelays: ['https://iroh.nutflix.xyz/'],
       // ADR 0023: WebRTC with browsers on, from the network's own STUN server.
       webrtc: true,
-      stunServers: ['web.nutflix.xyz:3478'],
+      stunServers: ['relay.nutflix.xyz:3478'],
       // Contracts v18: the relays WebRTC is signaled on (NFX-10 §6).
       meshRelays: [...DEFAULT_NFX_MESH_RELAYS],
     });

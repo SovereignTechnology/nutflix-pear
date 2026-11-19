@@ -59,7 +59,7 @@ what you ask them for. NFX (free video) is on, on its test network's public rela
 runs: `wss://relay.nutflix.xyz` and `https://iroh.nutflix.xyz/`, and they see your IP address too.
 With NFX on, the app also trades video with web browsers over WebRTC (since 0.1.3): the
 peers it connects to see your IP address, as does the network's STUN server
-(`web.nutflix.xyz:3478`), and the signaling relays (the network's own `wss://relay.nutflix.xyz`,
+(`relay.nutflix.xyz:3478`), and the signaling relays (the network's own `wss://relay.nutflix.xyz`,
 then `relay.primal.net` and `relay.ditto.pub`) learn which videos you seed or watch.
 You can change the relays and mints in Settings, and switch NFX off or change its relays in
 Settings › NFX network.

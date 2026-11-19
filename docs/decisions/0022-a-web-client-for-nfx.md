@@ -79,6 +79,9 @@ A client that does only that avoids every reason ADR 0019 gave:
    third party. A Nostr relay cannot do this job. It is a WebSocket over TCP, so it never sees the
    browser's UDP mapping, and browsers gather server-reflexive candidates only from the STUN
    servers in `iceServers`. Nostr stays the discovery path.
+   **Note 2026-11-18 (the maintainer):** the STUN server is now named `relay.nutflix.xyz:3478`
+   (`stun:relay.nutflix.xyz:3478`, and the desktop app's `DEFAULT_NFX_STUN_SERVERS`): the same
+   address and responder, under the network's own relay name.
 5. **In v1, an HTTPS origin serves the hash list, playlists and init segments.** Origins come from
    the beacons first, by nfx's player's rules, then `https://web.nutflix.xyz/o` as a fallback.
    Media segments come from peers over WebRTC where they can, and from the origin otherwise;

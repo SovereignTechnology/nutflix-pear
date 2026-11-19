@@ -44,10 +44,10 @@ export const WEB_FALLBACK_ORIGIN = 'https://web.nutflix.xyz/o';
 
 /**
  * SovTech's own STUN server (ADR 0022 item 4): the only ICE server, with no TURN and no third
- * party. nfxd's `--stun` serves it; until that is deployed the mesh still forms between peers
- * that need no server-reflexive candidate.
+ * party. nfxd's `--stun` serves it. Named relay.nutflix.xyz since 2026-11-18 (the maintainer): the
+ * same address and responder as web.nutflix.xyz, under the network's own relay name.
  */
-export const WEB_STUN_URL = 'stun:web.nutflix.xyz:3478';
+export const WEB_STUN_URL = 'stun:relay.nutflix.xyz:3478';
 
 /** The `iceServers` every play passes to nfx's player. */
 export const WEB_ICE_SERVERS: readonly { readonly urls: readonly string[] }[] = Object.freeze([

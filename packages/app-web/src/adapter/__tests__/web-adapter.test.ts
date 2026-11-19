@@ -535,7 +535,7 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
       origins: ['https://seed-1.example/o', 'https://seed-2.example/o', WEB_FALLBACK_ORIGIN],
       // Pear #89: over Nostr; the trackers the beacons name are not asked.
       signaling: { kind: 'nostr', relays: ['wss://signal.example', 'ws://127.0.0.1:7778'] },
-      iceServers: [{ urls: ['stun:web.nutflix.xyz:3478'] }],
+      iceServers: [{ urls: ['stun:relay.nutflix.xyz:3478'] }],
     });
     expect(typeof onEvent).toBe('function');
     expect(signal?.aborted).toBe(false);

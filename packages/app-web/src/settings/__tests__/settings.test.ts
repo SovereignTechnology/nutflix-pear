@@ -79,7 +79,7 @@ describe('defaults (ADR 0022 items 4 to 6)', () => {
       meshRelays: ['wss://relay.nutflix.xyz', 'wss://relay.primal.net', 'wss://relay.ditto.pub'],
     });
     expect(DEFAULT_WEB_SETTINGS.nfx?.irohRelays).toBeUndefined();
-    expect(WEB_ICE_SERVERS).toEqual([{ urls: ['stun:web.nutflix.xyz:3478'] }]);
+    expect(WEB_ICE_SERVERS).toEqual([{ urls: ['stun:relay.nutflix.xyz:3478'] }]);
     expect(DEFAULT_WEB_SETTINGS.loadRemoteImages).toBe(false);
     expect(DEFAULT_WEB_SETTINGS.seeding.enabled).toBe(false);
     expect(DEFAULT_WEB_SETTINGS.defaultMints).toEqual([]);

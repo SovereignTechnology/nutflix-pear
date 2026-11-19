@@ -39,10 +39,12 @@ const FILE_V = 1 as const;
  *
  * ADR 0023 (the maintainer, 2026-11-09): WebRTC with web browsers is on too, with the disclosure
  * Settings gives, and learns its public address from the network's own STUN server, the one the
- * web client uses (web.nutflix.xyz:3478, nfxd `--stun`, ADR 0022 item 4).
+ * web client uses (relay.nutflix.xyz:3478, nfxd `--stun`, ADR 0022 item 4). Named
+ * relay.nutflix.xyz since 2026-11-18 (the maintainer): the same address and STUN responder as
+ * web.nutflix.xyz, under the network's own relay name.
  */
 export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
-  'web.nutflix.xyz:3478' as StunServer,
+  'relay.nutflix.xyz:3478' as StunServer,
 ]);
 /**
  * Contracts v18 (the maintainer, 2026-11-15): WebRTC connections are signaled over Nostr relays
