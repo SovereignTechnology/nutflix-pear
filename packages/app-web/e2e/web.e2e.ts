@@ -1086,6 +1086,9 @@ async function main(): Promise<void> {
     );
     await addressSwitch.uncheck();
     await nerd.locator('.nf-nerd__addr').first().waitFor({ state: 'detached', timeout: 5_000 });
+    // On again and closed that way, so that reopening has a switch to reset.
+    await addressSwitch.check();
+    await nerd.locator('.nf-nerd__addr').first().waitFor({ timeout: 5_000 });
     await nerd.getByRole('button', { name: 'Close stats' }).click();
     await nerd.waitFor({ state: 'detached', timeout: 5_000 });
     await page.locator('video.nf-nfxwatch__video').click({ button: 'right' });
