@@ -75,6 +75,13 @@ describe('player keyboard map (build-plan §6.2)', () => {
     expect(act('p')).toEqual({ type: 'toggle-pip' });
   });
 
+  it('n toggles stats for nerds (contracts v19), and is in the documented map', () => {
+    expect(act('n')).toEqual({ type: 'toggle-nerd-stats' });
+    expect(act('N')).toEqual({ type: 'toggle-nerd-stats' });
+    expect(act('n', {}, { ctrlKey: true })).toBeNull();
+    expect(KEYBOARD_MAP.some((k) => k.keys === 'n')).toBe(true);
+  });
+
   it('leaves modifier chords and unbound keys alone', () => {
     expect(act('k', {}, { ctrlKey: true })).toBeNull();
     expect(act('f', {}, { metaKey: true })).toBeNull();

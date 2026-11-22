@@ -30,7 +30,7 @@
     "hypercore": "11.40.3",
     "hyperswarm": "4.17.2",
     "nostr-tools": "2.26.0",
-    "protomux": "3.13.0",
+    "protomux": "3.13.1",
     "sodium-universal": "5.0.1",
     "ws": "8.22.2"
   },

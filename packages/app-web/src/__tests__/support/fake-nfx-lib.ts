@@ -5,7 +5,9 @@
  */
 import type {
   NfxLevel,
+  NfxLibPeerAddress,
   NfxLibSession,
+  NfxLibStats,
   NfxOpenOptions,
   NfxPlayerEvent,
   NfxPlayerLib,
@@ -21,10 +23,36 @@ export class FakeLibSession implements NfxLibSession {
   levels: NfxLevel[] = [];
   readonly setLevelCalls: number[] = [];
   destroyed = 0;
+  /** What `stats()` returns (a library before nfx #99: totals only). */
+  libStats: NfxLibStats = {
+    engine: 'hls.js test',
+    origin: 'https://origin.example/nfx',
+    verified: 0,
+    rejected: [],
+    mesh: null,
+  };
+  /** Set to give the session `addresses()` (nfx #99); counts its calls. */
+  peerAddresses: NfxLibPeerAddress[] | null = null;
+  addressCalls = 0;
+  addresses?: () => Promise<NfxLibPeerAddress[]>;
   readonly #emit: (e: NfxPlayerEvent) => void;
 
   constructor(emit: (e: NfxPlayerEvent) => void) {
     this.#emit = emit;
+  }
+
+  stats(): NfxLibStats {
+    return this.libStats;
+  }
+
+  /** Give this session nfx #99's `addresses()`. */
+  withAddresses(list: NfxLibPeerAddress[]): this {
+    this.peerAddresses = list;
+    this.addresses = () => {
+      this.addressCalls += 1;
+      return Promise.resolve([...(this.peerAddresses ?? [])]);
+    };
+    return this;
   }
 
   setLevel(index: number): void {

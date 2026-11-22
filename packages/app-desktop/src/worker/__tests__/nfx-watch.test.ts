@@ -163,6 +163,39 @@ describe('NfxWatchSession', () => {
     // The hash list, the 720p playlist, the init and each segment, once each.
     expect(fetcher.asked).toHaveLength(3 + v.segmentShas.length);
     expect(new Set(fetcher.asked).size).toBe(fetcher.asked.length);
+    // Pear #123: each of them counted as verified; a fetcher without stats names no source.
+    expect(s.stats()).toEqual({ sources: [], verified: fetcher.asked.length, refused: 0 });
+    expect(await s.addresses()).toEqual([]);
+  });
+
+  it('pear #123: stats and addresses are its fetcher’s; none once closed', async () => {
+    const v = testNfxVideo();
+    const source = {
+      kind: 'iroh' as const,
+      id: 'a'.repeat(64),
+      via: 'beacon',
+      bytesDown: 9,
+      bytesUp: 0,
+      files: 1,
+      connected: true,
+    };
+    const address = {
+      kind: 'iroh' as const,
+      id: 'a'.repeat(64),
+      address: '192.0.2.1:1',
+      path: 'direct' as const,
+    };
+    const fetcher: NfxFetcher = {
+      ...memoryFetcher(v.files),
+      stats: () => ({ sources: [source], refused: 2 }),
+      addresses: () => Promise.resolve([address]),
+    };
+    const s = session(v, await spoolDir(), fetcher);
+    await s.open();
+    expect(s.stats()).toMatchObject({ sources: [source], refused: 2 });
+    expect(await s.addresses()).toEqual([address]);
+    await s.close();
+    expect(await s.addresses()).toEqual([]);
   });
 
   it('pear #97: plays only a held rendition, the most-held first, and lists only those', async () => {

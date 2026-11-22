@@ -119,6 +119,29 @@ describe('slice 5d: free NFX play without payment providers', () => {
     expect(whole.headers['content-length']).toBe(String(size));
     expect(whole.body.equals(expected)).toBe(true);
 
+    // Pear #123 (stats for nerds): the seeder with the files delivered every one, first; the
+    // one without them is connected, with nothing. Through the real wire and its guards.
+    const stats = await w.call('nfx.play.stats', { sid: s });
+    expect(stats.engine).toBe('nfx worker: HyperDHT');
+    expect(stats.sources.map((x) => [x.id, x.connected])).toEqual([
+      [full.peer, true],
+      [empty.peer, true],
+    ]);
+    expect(stats.sources[0]).toMatchObject({ kind: 'hyperdht', via: 'beacon' });
+    expect(stats.sources[0]!.files).toBe(stats.verified);
+    expect(stats.sources[1]).toMatchObject({ files: 0, bytesDown: 0 });
+    expect(stats.peers).toEqual({ connected: 2, total: 2 });
+    // Their addresses only when asked (in the order they are asked), and nothing logged them.
+    const { addresses } = await w.call('nfx.play.addresses', { sid: s });
+    expect(addresses.map((a) => [a.id, a.path])).toEqual([
+      [empty.peer, 'direct'],
+      [full.peer, 'direct'],
+    ]);
+    for (const a of addresses) {
+      expect(a.address).toMatch(/^(?:[0-9.]+|\[[0-9a-f:.]+\]):[0-9]+$/);
+      expect(JSON.stringify(w.events)).not.toContain(a.address);
+    }
+
     // Across init|sidx, sidx|segment 0, segment 0|1|2, and the whole view as one range.
     const [seg0, seg1, seg2] = v.segmentAt as [number, number, number];
     for (const [a, b] of [
@@ -159,6 +182,12 @@ describe('slice 5d: free NFX play without payment providers', () => {
     await w.call('nfx.play.close', { sid: s });
     expect((await httpGet(opened.link)).status).toBe(404);
     expect(existsSync(spool)).toBe(false);
+    await expect(w.call('nfx.play.stats', { sid: s })).rejects.toMatchObject({
+      code: 'session-closed',
+    });
+    await expect(w.call('nfx.play.addresses', { sid: s })).rejects.toMatchObject({
+      code: 'session-closed',
+    });
     expect(w.invalid).toEqual([]);
   });
 

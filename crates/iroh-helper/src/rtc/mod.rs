@@ -218,6 +218,11 @@ enum Cmd {
         peer: u32,
         reply: oneshot::Sender<Result<Value, RtcError>>,
     },
+    /// Pear #123: where `peer`'s last accepted datagram came from.
+    Path {
+        peer: u32,
+        reply: oneshot::Sender<Result<Option<SocketAddr>, RtcError>>,
+    },
     /// Close every connection and end the task now, whoever else holds the handle.
     Stop {
         reply: oneshot::Sender<Result<(), RtcError>>,
@@ -356,6 +361,12 @@ impl RtcHandle {
     /// What `peer` last announced it holds, as ranges.
     pub async fn have(&self, peer: u32) -> Result<Value, RtcError> {
         self.call(|reply| Cmd::Have { peer, reply }).await
+    }
+
+    /// Pear #123 (ADR 0024): the address `peer`'s last accepted datagram came from (one the
+    /// ingress rule let in), `None` before the first. Read when asked; nothing is sent.
+    pub async fn path(&self, peer: u32) -> Result<Option<SocketAddr>, RtcError> {
+        self.call(|reply| Cmd::Path { peer, reply }).await
     }
 
     #[cfg(test)]
@@ -638,6 +649,8 @@ struct Peer {
     budget: Bucket,
     /// Remote addresses this connection has received from (at most [`MAX_SOURCES`]).
     sources: Vec<SocketAddr>,
+    /// The one its last accepted datagram came from (`rtc-path`).
+    last_source: Option<SocketAddr>,
     wake: Instant,
     born: Instant,
     active: Instant,
@@ -898,6 +911,7 @@ impl Engine {
                     }
                     p.sources.push(from);
                 }
+                p.last_source = Some(from);
                 if p.rtc.handle_input(input).is_err() {
                     p.dead = Some("rtc");
                 }
@@ -1035,6 +1049,7 @@ impl Engine {
                 next_request: 0,
                 budget: Bucket::new(PEER_BURST, now),
                 sources: Vec::new(),
+                last_source: None,
                 wake: now,
                 born: now,
                 active: now,
@@ -1273,6 +1288,13 @@ impl Engine {
                         let (ranges, more) = ranges(&p.have);
                         Ok(json!({"ranges": ranges, "more": more}))
                     }
+                };
+                let _ = reply.send(result);
+            }
+            Cmd::Path { peer, reply } => {
+                let result = match self.peers.get(&peer).filter(|p| p.dead.is_none()) {
+                    None => Err(fail("no-peer", "no such connection")),
+                    Some(p) => Ok(p.last_source),
                 };
                 let _ = reply.send(result);
             }

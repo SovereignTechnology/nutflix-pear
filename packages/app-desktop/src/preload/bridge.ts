@@ -23,6 +23,7 @@ import type {
   Method,
   NfxPlaySessionWire,
   PlaySessionWire,
+  ResultOf,
   ThumbnailBytes,
   UploadId,
   UploadInputWire,
@@ -138,6 +139,10 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
         if (closed) return reject('session-closed', 'this session was closed');
         return session(await t.call('session.switchRendition', [sid, label]));
       },
+      addresses(): Promise<ResultOf<'session.addresses'>> {
+        if (closed) return reject('session-closed', 'this session was closed');
+        return t.call('session.addresses', [sid]);
+      },
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
@@ -153,7 +158,10 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
     };
   }
 
-  /** Contracts v11: a free NFX session — `close` is `session.close`, nothing else is on it. */
+  /**
+   * Contracts v11: a free NFX session — `close` is `session.close`; v19: `stats` and `addresses`
+   * (stats for nerds) are `session.stats` and `session.addresses`. Nothing else is on it.
+   */
   function nfxSession(w: NfxPlaySessionWire): BridgeNfxPlaySession {
     let closed = false;
     return {
@@ -161,6 +169,14 @@ export function createBridge(t: Transport, deps: BridgeDeps): NutflixBridge {
       rendition: w.rendition,
       renditions: w.renditions,
       source: { kind: 'url', url: w.source.url },
+      stats(): Promise<ResultOf<'session.stats'>> {
+        if (closed) return reject('session-closed', 'this session was closed');
+        return t.call('session.stats', [w.sid]);
+      },
+      addresses(): Promise<ResultOf<'session.addresses'>> {
+        if (closed) return reject('session-closed', 'this session was closed');
+        return t.call('session.addresses', [w.sid]);
+      },
       async close(): Promise<void> {
         if (closed) return;
         closed = true;

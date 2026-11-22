@@ -14,6 +14,7 @@
 @import './ChannelRow/ChannelRow.css';
 @import './ReactionButtons/ReactionButtons.css';
 @import './PeerMeter/PeerMeter.css';
+@import './NerdStats/NerdStats.css';
 @import './EmptyState/EmptyState.css';
 @import './Sheet/Sheet.css';
 @import './Toast/Toast.css';

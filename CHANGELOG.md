@@ -23,6 +23,10 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     text you use and the videos you open; your read relays see them only when it falls short.
   - Unchanged: beacons (the scoped relays only), where a free upload's announcement goes (your
     write relays and the scoped relays), and the Network tab, which asks both at once.
+- **The web client is built with nfx's player library at 059364f** (`packages/app-web/nfx-web.lock`,
+  nfx #102). Its stats for nerds panel now lists each WebRTC peer by short ID, with what it sent
+  and received, and shows a peer's address only behind the panel's "Show addresses" switch. The
+  desktop app is unchanged by it.
 
 ### Fixed
 

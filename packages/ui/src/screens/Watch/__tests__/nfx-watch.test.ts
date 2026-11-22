@@ -13,7 +13,7 @@ import type {
   NfxPlaySession,
   NfxRenditionInfo,
 } from '@sovit/core';
-import { click, render, type Rendered } from '../../../components/testing/render.js';
+import { click, fire, render, type Rendered } from '../../../components/testing/render.js';
 import type { Route } from '../../shared/route.js';
 import { NfxWatch } from '../NfxWatch.js';
 
@@ -82,6 +82,54 @@ describe('NfxWatch', () => {
     expect(play).not.toHaveBeenCalled();
     expect(stats).not.toHaveBeenCalled();
     expect(comments).not.toHaveBeenCalled();
+  });
+
+  it('v19: stats for nerds opens from the button, the video menu and n; addresses only on ask', async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true });
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    expect(r.container.querySelector('[data-testid="nerd-stats"]')).toBeNull();
+
+    // The button.
+    click(r.get('.nf-nfxwatch__nerd-toggle'));
+    await flush();
+    const panel = r.get('[data-testid="nerd-stats"]');
+    expect(panel.textContent).toContain('origin.example');
+    expect(panel.textContent).toContain('abababab'); // the fixture peer, by 8 hex
+    expect(panel.textContent).not.toContain('ab'.repeat(32));
+    expect(r.all('.nf-nerd__addr')).toHaveLength(0);
+    expect(panel.textContent).not.toContain('203.0.113');
+
+    // Addresses behind the switch, with the banner.
+    click(r.get('.nf-nerd__switch input'));
+    await flush();
+    expect(r.get('.nf-nerd__banner')).toBeTruthy();
+    expect(r.all('.nf-nerd__addr').map((e) => e.textContent)).toContain('203.0.113.7:50000');
+
+    // n closes it; the video's own menu opens it again, with addresses off.
+    fire(
+      document.body,
+      new KeyboardEvent('keydown', { key: 'n', bubbles: true, cancelable: true }),
+    );
+    await flush();
+    expect(r.container.querySelector('[data-testid="nerd-stats"]')).toBeNull();
+    fire(
+      r.get('.nf-nfxwatch__screen'),
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
+    );
+    click(r.get('.nf-nerd-menu button'));
+    await flush();
+    expect(r.get('[data-testid="nerd-stats"]')).toBeTruthy();
+    expect((r.get('.nf-nerd__switch input') as HTMLInputElement).checked).toBe(false);
+    expect(r.all('.nf-nerd__addr')).toHaveLength(0);
+    // Typing in a field never toggles it.
+    const input = document.createElement('input');
+    document.body.append(input);
+    fire(input, new KeyboardEvent('keydown', { key: 'n', bubbles: true, cancelable: true }));
+    input.remove();
+    expect(r.get('[data-testid="nerd-stats"]')).toBeTruthy();
   });
 
   it("slice 5d-4: a NIP-71 video's NFX copy shows that event's comments, same author only", async () => {

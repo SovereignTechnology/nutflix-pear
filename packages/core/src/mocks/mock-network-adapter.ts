@@ -425,11 +425,63 @@ export class MockNetworkAdapter implements NetworkAdapter {
     ];
     const chosen = renditions.find((r) => r.id === rendition) ?? renditions[0];
     if (chosen === undefined) throw new Error('not-found: no renditions');
+    // v19 (ADR 0024): fixture sources for the stats panel; addresses from TEST-NET-3 (RFC 5737).
+    const peerA = 'ab'.repeat(32);
+    const peerB = 'cd'.repeat(32);
     return {
       videoId: video.id,
       rendition: chosen.id,
       renditions,
       source: { kind: 'url', url: `fixture://nfx/${video.eventId}/${chosen.id}` },
+      stats: () =>
+        Promise.resolve({
+          engine: 'fixture player',
+          sources: [
+            {
+              kind: 'origin',
+              id: 'origin.example',
+              via: 'beacon',
+              bytesDown: 1_500_000,
+              bytesUp: 0,
+              files: 4,
+              connected: true,
+            },
+            {
+              kind: 'webrtc',
+              id: peerA,
+              via: 'nostr',
+              bytesDown: 3_000_000,
+              bytesUp: 250_000,
+              files: 6,
+              connected: true,
+            },
+            {
+              kind: 'iroh',
+              id: peerB,
+              via: 'beacon',
+              bytesDown: 0,
+              bytesUp: 0,
+              files: 0,
+              connected: false,
+            },
+          ],
+          peers: { connected: 1, total: 2 },
+          signaling: { kind: 'nostr', endpoints: ['relay.example'], open: 1 },
+          verified: 10,
+          refused: 0,
+          bandwidthEstimate: 12_000_000,
+        }),
+      addresses: () =>
+        this.delay([
+          {
+            kind: 'webrtc' as const,
+            id: peerA,
+            address: '203.0.113.7:50000',
+            path: 'direct' as const,
+            rttMs: 24,
+            detail: 'srflx/udp',
+          },
+        ]),
       close: () => Promise.resolve(),
     };
   }
@@ -488,6 +540,16 @@ export class MockNetworkAdapter implements NetworkAdapter {
         spendCbs.add(cb);
         return () => spendCbs.delete(cb);
       },
+      // v19 (ADR 0024): each fixture seeder at a TEST-NET-3 address (RFC 5737).
+      addresses: () =>
+        this.delay(
+          peerKeys.map((id, i) => ({
+            kind: 'hypercore' as const,
+            id,
+            address: `203.0.113.${String(10 + i)}:49737`,
+            path: 'direct' as const,
+          })),
+        ),
       setPrefetchSeconds: (sec): void => {
         prefetch = sec;
       },
