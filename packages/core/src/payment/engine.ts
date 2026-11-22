@@ -1162,6 +1162,13 @@ function dleqOk(p: CashuProof, ks: MintKeyset): boolean {
   const d = p.dleq;
   if (d?.r === undefined || !HEX.test(d.s) || !HEX.test(d.e) || !HEX.test(d.r)) return false;
   try {
+    // cashu-ts 4.11 deprecates the sync `hasValidDleq` for the async `verifyMintSignatures` (the
+    // same NUT-12 proof-side check; its `require: true` is this function's default) and v5 removes
+    // it. This stays the sync call on purpose: the engine's inline check is a synchronous decision
+    // step (`deps.dleq`, off-thread, is the async path), so moving to v5 means making that step
+    // async, which is designed work and not a drop-in swap. The tests run the new API on the same
+    // proofs.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- see above
     return hasValidDleq(
       {
         id: p.id,

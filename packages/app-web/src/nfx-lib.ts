@@ -100,6 +100,65 @@ export interface NfxOpenOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * One mesh peer in the library's `stats()` (nfx #99, `MeshPeer`). Its `id` and `via` come from the
+ * network: shown as text only.
+ */
+export interface NfxLibPeer {
+  readonly id: string;
+  readonly via: string;
+  readonly down: number;
+  readonly up: number;
+  readonly segments: number;
+  readonly connected: boolean;
+}
+
+/**
+ * The library's mesh counters (`MeshStats`). The fields nfx #99 added are optional: a library
+ * pinned before it reports totals only.
+ */
+export interface NfxLibMeshStats {
+  readonly signaling: 'nostr' | 'trackers';
+  readonly trackers: readonly string[];
+  readonly relays: readonly string[];
+  readonly bytes: { readonly http: number; readonly p2p: number };
+  readonly uploaded: number;
+  /** Every peer connection since the start. */
+  readonly peers: number;
+  readonly rejected: readonly string[];
+  readonly connected?: number;
+  readonly segments?: { readonly http: number; readonly p2p: number };
+  readonly peerList?: readonly NfxLibPeer[];
+  readonly signal?: { readonly open: number } | null;
+}
+
+/** The library's `Session.stats()`, as stats for nerds reads it (contracts v19, ADR 0024). */
+export interface NfxLibStats {
+  readonly engine: string;
+  /** The origin the session plays from. */
+  readonly origin: string;
+  readonly verified: number;
+  readonly rejected: readonly unknown[];
+  readonly mesh: NfxLibMeshStats | null;
+  /** nfx #99: bytes the player's own loader took from the origin. */
+  readonly originBytes?: number;
+  /** nfx #99: hls.js's estimate, bits per second. */
+  readonly bandwidthEstimate?: number;
+}
+
+/** nfx #99: an open peer connection's selected candidate pair (`PeerAddress`). */
+export interface NfxLibPeerAddress {
+  readonly id: string;
+  /** An IP address, an mDNS `.local` name, or `''` when the browser hides it. */
+  readonly address: string;
+  readonly port: number | null;
+  readonly remoteType: string;
+  readonly localType: string;
+  readonly protocol: string;
+  readonly path: 'direct' | 'relayed' | 'unknown';
+  readonly rttMs: number | null;
+}
+
 /** One video playing in one element (the library's `Session`). */
 export interface NfxLibSession {
   /**
@@ -109,6 +168,13 @@ export interface NfxLibSession {
   readonly levels: readonly NfxLevel[];
   /** Play `index` from now on, or -1 to let hls.js pick; throws `RangeError` for any other. */
   setLevel(index: number): void;
+  /** A snapshot of where the bytes came from (stats for nerds). */
+  stats(): NfxLibStats;
+  /**
+   * nfx #99: each open peer connection's selected candidate pair, read when called. Other viewers'
+   * IP addresses: called only while the viewer has asked to see them. Absent before nfx #99.
+   */
+  addresses?(): Promise<NfxLibPeerAddress[]>;
   /** Stops hls.js, the p2p loader, its signaling sockets and peers, and the media source. Idempotent. */
   destroy(): void;
 }

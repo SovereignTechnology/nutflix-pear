@@ -16,6 +16,7 @@ import type { PlayOpenArgs } from '../../ipc/worker-protocol.js';
 import type { HostPlaySession } from '../sessions.js';
 import { HostPlaySession as PlaySessionClass, SessionRegistry } from '../sessions.js';
 import type { WorkerCall } from '../sessions.js';
+import { handlers } from '../dispatch.js';
 import { silentLogger as hostSilent } from '../log.js';
 import { seedVideos } from './support/catalog.js';
 import type { SeededVideo } from './support/catalog.js';
@@ -382,6 +383,38 @@ describe('worker events', () => {
     r.worker().spend(s.sid, mocks.MINTS.a, 1, 1);
     await eventually(() => r.worker().calls('play.close').length === 1, 'close');
     expect(seen).toHaveLength(1);
+  });
+
+  it('pear #123: a paid session’s addresses come from the worker, only while it is open', async () => {
+    const seeder = {
+      kind: 'hypercore' as const,
+      id: 'c'.repeat(64),
+      address: '203.0.113.4:49737',
+      path: 'direct' as const,
+    };
+    r = await rig({
+      flags: { devMocks: true },
+      worker: { handlers: { 'play.addresses': () => ({ addresses: [seeder] }) } },
+    });
+    await r.ready();
+    const [v] = await seedVideos(kit, r.pool, new kit.TestSigner(), mocks.VIDEOS.slice(0, 1));
+    const s = await r.host.adapter.openSession(4, v!.video.id);
+    expect(r.worker().calls('play.addresses')).toEqual([]);
+    expect(await s.addresses()).toEqual([seeder]);
+    // Through the dispatcher, on the caller's own session; another webContents gets nothing.
+    const h = handlers(r.host.adapter);
+    await expect(h['session.addresses']({ wc: 4 }, [s.sid])).resolves.toEqual([seeder]);
+    expect(
+      await codeOf(Promise.resolve().then(() => h['session.addresses']({ wc: 5 }, [s.sid]))),
+    ).toBe('session-closed');
+    // `session.stats` is a free NFX session's only.
+    expect(await codeOf(Promise.resolve().then(() => h['session.stats']({ wc: 4 }, [s.sid])))).toBe(
+      'session-closed',
+    );
+    expect(r.worker().calls('play.addresses')).toEqual([{ sid: s.sid }, { sid: s.sid }]);
+    await s.closeAsync();
+    expect(await codeOf(s.addresses())).toBe('session-closed');
+    expect(r.worker().calls('play.addresses')).toHaveLength(2);
   });
 
   it('worker death drops every session and revokes every link without asking the worker', async () => {

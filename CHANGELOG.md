@@ -26,6 +26,10 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     and Settings › NFX network are where to change them.
   - **Release notices** (`scripts/release-publish.mjs`) go to `nos.lol`, `relay.primal.net` and
     `relay.ditto.pub`; the 0.1.3 notice failed on relay.damus.io.
+- **The web client is built with nfx's player library at 059364f** (`packages/app-web/nfx-web.lock`,
+  nfx #102). Its stats for nerds panel now lists each WebRTC peer by short ID, with what it sent
+  and received, and shows a peer's address only behind the panel's "Show addresses" switch. The
+  desktop app is unchanged by it.
 
 ### CI
 

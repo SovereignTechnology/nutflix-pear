@@ -22,6 +22,7 @@ import type {
   MAX_NFX_MESH_RELAYS,
   MAX_NFX_STUN_SERVERS,
   MAX_NFX_TRACKERS,
+  MAX_PLAY_SOURCES,
   MAX_UPLOAD_HEIGHT,
   MAX_UPLOAD_SIZES,
   CatalogVideo,
@@ -33,6 +34,7 @@ import type {
   NetworkAdapter,
   NfxAddress,
   NfxNetwork,
+  NfxPlayStats,
   NfxRenditionInfo,
   NfxVideo,
   Notification,
@@ -40,6 +42,7 @@ import type {
   NostrPubkey,
   Page,
   PeerSpend,
+  PlaySourceAddress,
   Playlist,
   PricePolicy,
   Profile,
@@ -144,6 +147,8 @@ export const LIMITS = {
   maxNfxStunServers: 4,
   /** Contracts v18: `NfxSettings.meshRelays` — core's `MAX_NFX_MESH_RELAYS`. */
   maxNfxMeshRelays: 8,
+  /** Contracts v19: the sources one play reports (`NfxPlayStats.sources`) — `MAX_PLAY_SOURCES`. */
+  maxPlaySources: 64,
   /** Contracts v16: `UploadInput.sizes` / `Settings.publishSizes` — core's `MAX_UPLOAD_SIZES`. */
   maxUploadSizes: 7,
   /** Contracts v16: the tallest rendition height — core's `MAX_UPLOAD_HEIGHT`. */
@@ -213,7 +218,8 @@ export type AnalyticsWire = VideoStats & { readonly satsByRendition: WireMap<str
 /**
  * `PlaySession` minus its methods. The preload builds the real `PlaySession` around `sid`:
  * `pause`/`resume`/`setPrefetchSeconds`/`switchRendition`/`close` → `session.*` calls,
- * `onPeers`/`onSpend` → `session.peers`/`session.spend` topics.
+ * `onPeers`/`onSpend` → `session.peers`/`session.spend` topics, and (v19) `addresses` →
+ * `session.addresses`.
  */
 export interface PlaySessionWire {
   readonly sid: SessionId;
@@ -224,8 +230,8 @@ export interface PlaySessionWire {
 }
 
 /**
- * Contracts v11: a free NFX session as it crosses. `close()` is `session.close` by `sid`; nothing
- * else is on it (no money, no peers).
+ * Contracts v11: a free NFX session as it crosses. `close()` is `session.close` by `sid`; v19:
+ * `stats()` and `addresses()` are `session.stats` and `session.addresses` (no money, no peers).
  */
 export interface NfxPlaySessionWire {
   readonly sid: SessionId;
@@ -626,6 +632,17 @@ export interface MethodTable {
   /** Resolves the NEW session (new `sid`); the host closes the old one. */
   'session.switchRendition': [args: [sid: SessionId, label: string], result: PlaySessionWire];
   'session.close': [args: [sid: SessionId], result: undefined];
+  /**
+   * Contracts v19 (ADR 0024, pear #123): a free NFX session's numbers for stats for nerds
+   * (`NfxPlaySession.stats`). Never an address.
+   */
+  'session.stats': [args: [sid: SessionId], result: NfxPlayStats];
+  /**
+   * Contracts v19: where each open source of a session (either kind) is connected now
+   * (`addresses()`). Other hosts' IP addresses: the renderer asks only while its viewer has
+   * switched them on, and no hop logs or keeps them.
+   */
+  'session.addresses': [args: [sid: SessionId], result: readonly PlaySourceAddress[]];
   // money (read side + melt; D3: never send / receive)
   'wallet.mints': [args: [], result: readonly MintUrl[]];
   'wallet.balance': [args: [mint: MintUrl], result: Sats];
@@ -1000,6 +1017,14 @@ type NfxPlaySession = ContractResult<'playNfx'>;
 type NfxPlayData = 'videoId' | 'rendition' | 'renditions';
 type SessionWireMethod =
   Extract<Method, `session.${string}`> extends `session.${infer K}` ? K : never;
+/**
+ * Contracts v19: optional (possibly absent) session members that are on the wire all the same, as
+ * `session.*` methods: stats for nerds. A possibly-absent member is not a method key here.
+ */
+type OptionalSessionMethod = 'stats' | 'addresses';
+/** What an optional session member `K` of `S` resolves to. */
+type OptionalResult<S, K extends keyof S> =
+  NonNullable<S[K]> extends (...args: never[]) => infer R ? Awaited<R> : never;
 
 /** Referenced by `ProtocolAssertions` so every check stays in the build. */
 interface Checks {
@@ -1007,8 +1032,20 @@ interface Checks {
   members: Mutual<NonMethodKeys<NetworkAdapter>, 'platform' | SubObject>;
   excludedDisjoint: IsNever<Extract<Method, ExcludedMethod>>;
   topicsDisjoint: IsNever<Extract<Method, TopicMethod>>;
-  /** PlaySession's data fields are all on `PlaySessionWire`, with the same types. */
-  playKeys: IsNever<Exclude<NonMethodKeys<PlaySession>, keyof PlaySessionWire>>;
+  /**
+   * PlaySession's data fields are all on `PlaySessionWire`, with the same types. v19: its
+   * optional `addresses` is `session.addresses`.
+   */
+  playKeys: IsNever<Exclude<NonMethodKeys<PlaySession>, keyof PlaySessionWire | 'addresses'>>;
+  /** v19: every optional session member left out above is a `session.*` method. */
+  optionalSessionMethods: IsNever<Exclude<OptionalSessionMethod, SessionWireMethod>>;
+  /** v19: and each resolves exactly what the contract's member does, on both kinds of session. */
+  sessionAddresses: Mutual<ResultOf<'session.addresses'>, OptionalResult<PlaySession, 'addresses'>>;
+  nfxSessionAddresses: Mutual<
+    ResultOf<'session.addresses'>,
+    OptionalResult<NfxPlaySession, 'addresses'>
+  >;
+  nfxSessionStats: Mutual<ResultOf<'session.stats'>, OptionalResult<NfxPlaySession, 'stats'>>;
   playData: Mutual<Pick<PlaySessionWire, PlayData>, Pick<PlaySession, PlayData>>;
   playSource: PlaySessionWire['source'] extends PlaySession['source'] ? true : false;
   /**
@@ -1017,11 +1054,13 @@ interface Checks {
    * app's sessions do not offer it, and a switch closes the session and opens another, as before.
    * v15: so are the optional `problems` and `onChange`: a session here plays a URL whose renditions
    * are known when it opens, and reports no problems on the session.
+   * v19: the optional `stats` and `addresses` (stats for nerds) are `session.stats` and
+   * `session.addresses` (`optionalSessionMethods` below).
    */
   nfxPlayKeys: IsNever<
     Exclude<
       NonMethodKeys<NfxPlaySession>,
-      keyof NfxPlaySessionWire | 'setRendition' | 'problems' | 'onChange'
+      keyof NfxPlaySessionWire | 'setRendition' | 'problems' | 'onChange' | OptionalSessionMethod
     >
   >;
   nfxPlayData: Mutual<Pick<NfxPlaySessionWire, NfxPlayData>, Pick<NfxPlaySession, NfxPlayData>>;
@@ -1056,6 +1095,8 @@ interface Checks {
   nfxStunServers: Mutual<(typeof LIMITS)['maxNfxStunServers'], typeof MAX_NFX_STUN_SERVERS>;
   /** Contracts v18: the signaling relay cap is core's too. */
   nfxMeshRelays: Mutual<(typeof LIMITS)['maxNfxMeshRelays'], typeof MAX_NFX_MESH_RELAYS>;
+  /** Contracts v19: the play source cap is core's too. */
+  playSources: Mutual<(typeof LIMITS)['maxPlaySources'], typeof MAX_PLAY_SOURCES>;
   /** Contracts v16: the upload size caps are core's too. */
   uploadSizes: Mutual<(typeof LIMITS)['maxUploadSizes'], typeof MAX_UPLOAD_SIZES>;
   uploadHeight: Mutual<(typeof LIMITS)['maxUploadHeight'], typeof MAX_UPLOAD_HEIGHT>;

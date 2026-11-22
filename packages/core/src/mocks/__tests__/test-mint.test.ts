@@ -10,7 +10,7 @@ import {
   Mint,
   OutputData,
   getPubKeyFromPrivKey,
-  hasValidDleq,
+  verifyMintSignatures,
   type Proof,
 } from '@cashu/cashu-ts';
 
@@ -38,9 +38,13 @@ const toProof = (p: ReturnType<TestMint['issue']>[number]): Proof => ({
 });
 
 describe('TestMint refuses what a real mint refuses', () => {
-  it('issues proofs whose DLEQ verifies against its keyset', () => {
+  it('issues proofs whose DLEQ verifies against its keyset', async () => {
     const tm = new TestMint({ url: URL_ });
-    for (const p of tm.issue(37)) expect(hasValidDleq(toProof(p), tm.keyset())).toBe(true);
+    const proofs = tm.issue(37).map(toProof);
+    expect(proofs.length).toBeGreaterThan(0);
+    const checked = await verifyMintSignatures(proofs, () => tm.keyset(), { require: true });
+    expect(checked.invalid).toEqual([]);
+    expect(checked.valid).toHaveLength(proofs.length);
   });
 
   it('a forged signature (C) → 10003', async () => {

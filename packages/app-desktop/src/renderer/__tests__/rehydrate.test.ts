@@ -15,8 +15,8 @@ import { describe, expect, it } from 'vitest';
 import { mocks } from '@sovit/core';
 import type { NetworkAdapter } from '@sovit/core';
 import { EXCLUDED_METHODS, METHODS, TOPIC_METHODS } from '../../ipc/index.js';
-import { adapterFromBridge, rebuildError } from '../adapter/rehydrate.js';
-import type { NutflixBridge } from '../bridge-types.js';
+import { adapterFromBridge, rebuildError, sessionFromBridge } from '../adapter/rehydrate.js';
+import type { BridgeNfxPlaySession, BridgePlaySession, NutflixBridge } from '../bridge-types.js';
 
 const { VIDEOS, MINTS } = mocks;
 const VIDEO = VIDEOS[0]!;
@@ -282,6 +282,41 @@ describe('renderer adapter over the whole chain', () => {
       c.adapter.studio.upload({ ...meta, file: '/etc/passwd' }, () => undefined),
     );
     expect(raw.code).toBe('file-token-invalid');
+  });
+});
+
+describe('contracts v19: stats for nerds reach the screens', () => {
+  const STATS = { sources: [], engine: 'nfx worker: HyperDHT' };
+  const ADDRESSES = [{ kind: 'hypercore', id: 'c'.repeat(64), address: '', path: 'unknown' }];
+
+  it('a free NFX session forwards stats and addresses, errors rebuilt', async () => {
+    const nfxSession: BridgeNfxPlaySession = {
+      videoId: mocks.NFX_VIDEOS[0]!.id,
+      rendition: '720p',
+      renditions: [],
+      source: { kind: 'url', url: 'nf-media://play/tok' },
+      stats: () => Promise.resolve(STATS),
+      addresses: () => Promise.reject(new Error('session-closed: gone')),
+      close: () => Promise.resolve(),
+    };
+    const b = { playNfx: () => Promise.resolve(nfxSession) } as unknown as NutflixBridge;
+    const s = await adapterFromBridge(b).playNfx(mocks.NFX_VIDEOS[0]!.id);
+    await expect(s.stats?.()).resolves.toEqual(STATS);
+    expect(await codeOf(s.addresses?.() ?? Promise.resolve())).toMatchObject({
+      code: 'session-closed',
+      name: 'IpcError',
+    });
+  });
+
+  it('a paid session forwards addresses', async () => {
+    const paid = {
+      videoId: VIDEO.id,
+      rendition: '720p',
+      source: { kind: 'url', url: 'nf-media://play/tok' },
+      policy: VIDEO.price,
+      addresses: () => Promise.resolve(ADDRESSES),
+    } as unknown as BridgePlaySession;
+    await expect(sessionFromBridge(paid).addresses?.()).resolves.toEqual(ADDRESSES);
   });
 });
 

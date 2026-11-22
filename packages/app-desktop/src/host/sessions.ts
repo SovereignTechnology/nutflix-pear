@@ -14,6 +14,7 @@ import type {
   NostrEventId,
   PeerSpend,
   PlaySession,
+  PlaySourceAddress,
   PricePolicy,
   Sats,
   Unsubscribe,
@@ -139,6 +140,15 @@ export class HostPlaySession implements PlaySession {
 
   close(): Promise<void> {
     return this.closeAsync();
+  }
+
+  /**
+   * Contracts v19 (ADR 0024): where each seeder `onPeers` names is connected now. Other hosts'
+   * addresses: asked for only while the viewer shows them; passed on, never logged or kept.
+   */
+  async addresses(): Promise<readonly PlaySourceAddress[]> {
+    this.assertOpen();
+    return (await this.d.worker('play.addresses', { sid: this.sid })).addresses;
   }
 
   // ---- awaited variants (what the IPC dispatcher calls) ----------------------------------

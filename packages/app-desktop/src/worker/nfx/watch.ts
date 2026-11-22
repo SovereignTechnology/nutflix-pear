@@ -18,6 +18,7 @@
  * `close` refuses every waiting read, closes the fetcher (its fetches and connections) and
  * deletes the spool.
  */
+import type { PlaySourceAddress, PlaySourceStat } from '@sovit/core';
 import { media, nfx } from '@sovit/core';
 import type { Logger, SeederFs } from '@sovit/seeder';
 
@@ -39,6 +40,14 @@ export class NfxFetchError extends Error {
   }
 }
 
+/** Pear #123 (ADR 0024): what one fetcher has fetched so far. Never an address. */
+export interface NfxFetcherStats {
+  /** One row per source it has been connected to or fetched from. */
+  readonly sources: readonly PlaySourceStat[];
+  /** What its sources sent that the hash list contradicts (never used). */
+  readonly refused: number;
+}
+
 /** Where a session's files come from. */
 export interface NfxFetcher {
   /**
@@ -55,6 +64,13 @@ export interface NfxFetcher {
   learn?(sha: string, bytes: Uint8Array): void;
   /** Abandon every fetch in flight (they reject) and close what this fetcher opened. */
   close(): Promise<void>;
+  /** Pear #123 (ADR 0024): its numbers for stats for nerds, per source. */
+  stats?(): NfxFetcherStats;
+  /**
+   * Pear #123: where each source it is connected to goes now, read when called. Other hosts'
+   * addresses: asked for only while the viewer shows them, and never logged.
+   */
+  addresses?(): Promise<readonly PlaySourceAddress[]>;
 }
 
 /**
@@ -160,6 +176,8 @@ export class NfxWatchSession {
   private inFlight = 0;
   /** The segment the player read last. */
   private cursor = 0;
+  /** Pear #123: files fetched, each checked against its sha256 by the transport that brought it. */
+  private verified = 0;
   private closing: Promise<void> | null = null;
 
   constructor(o: NfxWatchSessionOptions) {
@@ -188,6 +206,25 @@ export class NfxWatchSession {
     let n = 0;
     for (const s of this.segments) if (s === 'ready') n++;
     return n;
+  }
+
+  /**
+   * Pear #123 (ADR 0024): the session's numbers now: its fetcher's sources, the files fetched
+   * (each checked against the hash list) and those refused.
+   */
+  stats(): {
+    readonly sources: readonly PlaySourceStat[];
+    readonly verified: number;
+    readonly refused: number;
+  } {
+    const s = this.o.fetcher.stats?.() ?? { sources: [], refused: 0 };
+    return { sources: s.sources, verified: this.verified, refused: s.refused };
+  }
+
+  /** Pear #123: where each connected source goes, read now; nothing once closed. */
+  addresses(): Promise<readonly PlaySourceAddress[]> {
+    if (this.isClosed() || this.o.fetcher.addresses === undefined) return Promise.resolve([]);
+    return this.o.fetcher.addresses();
   }
 
   /** Fetch, verify, plan and spool up to segment 0. Throws `<code>: …` errors. */
@@ -352,9 +389,15 @@ export class NfxWatchSession {
   private fetchOnce(sha: string, size: number, exact: boolean): Promise<Uint8Array> {
     let p = this.fetching.get(sha);
     if (p === undefined) {
-      p = this.o.fetcher.fetch(sha, size, exact).finally(() => {
-        this.fetching.delete(sha);
-      });
+      p = this.o.fetcher
+        .fetch(sha, size, exact)
+        .then((bytes) => {
+          this.verified++;
+          return bytes;
+        })
+        .finally(() => {
+          this.fetching.delete(sha);
+        });
       this.fetching.set(sha, p);
     }
     return p;

@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { NfxIrohEndpointWire } from '../../ipc/worker-protocol.js';
 import { nfxCollections } from '../iroh/collections.js';
-import type { HelperDialTarget, HelperTicket } from '../iroh/helper.js';
+import type { HelperConnPath, HelperDialTarget, HelperTicket } from '../iroh/helper.js';
 import { HelperError, PoisonedError } from '../iroh/helper.js';
 import type { IrohFetchClient } from '../nfx/iroh-fetcher.js';
 import { IrohFetcher } from '../nfx/iroh-fetcher.js';
@@ -54,6 +54,9 @@ class FakeClient implements IrohFetchClient {
   /** Fail the next `n` gets with `busy`, or hold every get until released. */
   busyGets = 0;
   hold: Promise<void> | null = null;
+  /** Pear #123: what `connPath` says per node (an Error: it fails), and who was asked. */
+  readonly paths = new Map<string, HelperConnPath | Error>();
+  readonly pathsAsked: string[] = [];
 
   constructor(readonly nodes: Map<string, FakeNode>) {}
 
@@ -123,6 +126,13 @@ class FakeClient implements IrohFetchClient {
   hangup(conn: number): Promise<boolean> {
     this.calls.hangup.push(conn);
     return Promise.resolve(this.conns.delete(conn));
+  }
+
+  connPath(conn: number): Promise<HelperConnPath> {
+    const { node } = this.conn(conn);
+    this.pathsAsked.push(node);
+    const p = this.paths.get(node) ?? { path: 'none', addr: null, relay: null, rttMs: null };
+    return p instanceof Error ? Promise.reject(p) : Promise.resolve(p);
   }
 
   private conn(conn: number): { node: string; fake: FakeNode } {
@@ -403,5 +413,123 @@ describe('slice 5e-4: IrohFetcher', () => {
     expect(await pending).toEqual(['closed']);
     expect(c.calls.hangup).toEqual([1]);
     expect(await reasonsOf(f.fetch(v.root, nfx.MAX_HASH_LIST_BYTES, false))).toEqual(['closed']);
+  });
+
+  it('pear #123: counts what each source delivered, and whether it is connected now', async () => {
+    const v = testNfxVideo();
+    const liar = honest(v);
+    // Segment 0's size, other bytes: a file the hash list refuses (not one too large to fetch).
+    const [s0] = v.segmentShas;
+    const forged = Uint8Array.from(v.files.get(s0!)!);
+    forged[forged.length - 1] = (forged.at(-1) ?? 0) ^ 0xff;
+    liar.blobs.set(s0!, forged);
+    const c = new FakeClient(
+      new Map([
+        [NODE_A, liar],
+        [NODE_B, honest(v)],
+      ]),
+    );
+    const f = fetcher(v, c, [endpoint(NODE_A), endpoint(NODE_B)]);
+    // Nobody is listed before a connection is made.
+    expect(f.stats()).toEqual({ sources: [], refused: 0 });
+    const steps = plan(v);
+    for (const p of steps) await f.fetch(p.sha, p.size, p.exact);
+    const size = (sha: string): number => v.files.get(sha)!.length;
+    // A served the list, the playlist and the init, then lied about segment 0 and was dropped.
+    const fromA = steps.slice(0, 3);
+    const fromB = steps.slice(3);
+    expect(f.stats()).toEqual({
+      sources: [
+        {
+          kind: 'iroh',
+          id: NODE_A,
+          via: 'beacon',
+          bytesDown: fromA.reduce((n, p) => n + size(p.sha), 0),
+          bytesUp: 0,
+          files: 3,
+          connected: false,
+        },
+        {
+          kind: 'iroh',
+          id: NODE_B,
+          via: 'beacon',
+          bytesDown: fromB.reduce((n, p) => n + size(p.sha), 0),
+          bytesUp: 0,
+          files: fromB.length,
+          connected: true,
+        },
+      ],
+      refused: 1,
+    });
+    // A restarted helper voids the connection until it is dialled again.
+    c.generation++;
+    expect(f.stats().sources.map((x) => x.connected)).toEqual([false, false]);
+    c.generation--;
+    await f.close();
+    expect(f.stats().sources.map((x) => x.connected)).toEqual([false, false]);
+  });
+
+  it('pear #123: addresses are each open connection’s selected path, asked only then', async () => {
+    const v = testNfxVideo();
+    const c = new FakeClient(
+      new Map([
+        [NODE_A, honest(v)],
+        [NODE_B, honest(v)],
+      ]),
+    );
+    const f = fetcher(v, c, [endpoint(NODE_A, ['meta']), endpoint(NODE_B)]);
+    // No helper used yet: nothing to ask, and nothing is started for it.
+    expect(await f.addresses()).toEqual([]);
+    for (const p of plan(v)) await f.fetch(p.sha, p.size, p.exact);
+    expect(c.pathsAsked).toEqual([]);
+    c.paths.set(NODE_A, { path: 'direct', addr: '[2001:DB8::7%3]:4433', relay: null, rttMs: 12 });
+    c.paths.set(NODE_B, {
+      path: 'relay',
+      addr: null,
+      relay: 'iroh-relay.test',
+      rttMs: 9_999_999,
+    });
+    expect(await f.addresses()).toEqual([
+      { kind: 'iroh', id: NODE_A, address: '[2001:db8::7]:4433', path: 'direct', rttMs: 12 },
+      { kind: 'iroh', id: NODE_B, address: '', path: 'relayed', via: 'iroh-relay.test' },
+    ]);
+    // A path the helper cannot name, an address that is not one, a failed ask: unknown.
+    c.paths.set(NODE_A, { path: 'direct', addr: 'not-an-address', relay: null, rttMs: null });
+    c.paths.set(NODE_B, new HelperError('busy', 'too many requests at once'));
+    expect(await f.addresses()).toEqual([
+      { kind: 'iroh', id: NODE_A, address: '', path: 'unknown' },
+      { kind: 'iroh', id: NODE_B, address: '', path: 'unknown' },
+    ]);
+    c.paths.set(NODE_A, { path: 'other', addr: null, relay: null, rttMs: 5 });
+    c.paths.set(NODE_B, { path: 'relay', addr: null, relay: 'bad host\n', rttMs: null });
+    expect(await f.addresses()).toEqual([
+      { kind: 'iroh', id: NODE_A, address: '', path: 'unknown', rttMs: 5 },
+      { kind: 'iroh', id: NODE_B, address: '', path: 'relayed' },
+    ]);
+    await f.close();
+    expect(await f.addresses()).toEqual([]);
+  });
+
+  it('pear #123: a helper restart while addresses are read discards the answer', async () => {
+    const v = testNfxVideo();
+    const c = new FakeClient(new Map([[NODE_A, honest(v)]]));
+    let generation = 1;
+    const f = new IrohFetcher({
+      video: video(v),
+      root: v.root,
+      segs: v.segs,
+      endpoints: [endpoint(NODE_A)],
+      client: () => Promise.resolve(c),
+      generation: () => generation,
+      networkRelays: () => [RELAY],
+      logger: silentLogger,
+    });
+    await f.fetch(v.root, nfx.MAX_HASH_LIST_BYTES, false);
+    const real = c.connPath.bind(c);
+    c.connPath = (conn) => {
+      generation++;
+      return real(conn);
+    };
+    expect(await f.addresses()).toEqual([]);
   });
 });

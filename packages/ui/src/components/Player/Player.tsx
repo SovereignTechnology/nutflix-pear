@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -70,6 +71,13 @@ export interface PlayerProps {
   /** Peer panel overlay data (`PlaySession.onPeers`); shown when `showPeers`. */
   readonly peers?: readonly PeerSpend[] | undefined;
   readonly showPeers?: boolean;
+  /**
+   * v19 (ADR 0024): the "stats for nerds" overlay the screen builds (`NerdStats`), shown when
+   * `showNerdStats`. Opened by `n`, the settings menu, or a right-click on the video, each of
+   * which sends `toggle-nerd-stats`.
+   */
+  readonly nerdStats?: ReactNode;
+  readonly showNerdStats?: boolean;
   readonly onAction: (action: PlayerAction) => void;
   /** Hide controls after this idle time while playing; `0` keeps them visible. Default 3000. */
   readonly autoHideMs?: number;
@@ -102,15 +110,51 @@ export function Player({
   title,
   peers,
   showPeers = false,
+  nerdStats,
+  showNerdStats = false,
   onAction,
   autoHideMs = 3000,
   ref,
   className,
 }: PlayerProps): ReactElement {
-  const [menu, setMenu] = useState<'none' | 'settings'>('none');
+  /** The settings menu, or the context menu a right-click opened at `x`, `y` (v19). */
+  const [menu, setMenu] = useState<
+    'none' | 'settings' | { readonly x: number; readonly y: number }
+  >('none');
   const [idle, setIdle] = useState(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const menuId = useId();
+  const playerRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const statsRef = useRef<HTMLDivElement>(null);
+  const previousMenu = useRef(menu);
+  const previousStats = useRef(false);
+  const attachPlayer = useCallback(
+    (node: HTMLDivElement | null) => {
+      playerRef.current = node;
+      if (typeof ref === 'function') return ref(node);
+      if (ref !== undefined && ref !== null) ref.current = node;
+    },
+    [ref],
+  );
+
+  useLayoutEffect(() => {
+    const node = contextMenuRef.current;
+    const player = playerRef.current;
+    if (typeof menu === 'object' && node !== null && player !== null) {
+      node.style.left = `${Math.max(0, Math.min(menu.x, player.clientWidth - node.offsetWidth))}px`;
+      node.style.top = `${Math.max(0, Math.min(menu.y, player.clientHeight - node.offsetHeight))}px`;
+    }
+    if (menu === 'none' && previousMenu.current !== 'none') player?.focus();
+    previousMenu.current = menu;
+  }, [menu]);
+
+  useLayoutEffect(() => {
+    const visible = showNerdStats && !state.mini && nerdStats !== undefined;
+    if (visible && !previousStats.current) statsRef.current?.focus();
+    if (!visible && previousStats.current) playerRef.current?.focus();
+    previousStats.current = visible;
+  }, [showNerdStats, state.mini, nerdStats]);
   const playing = state.status === 'playing';
 
   const poke = useCallback((): void => {
@@ -172,7 +216,7 @@ export function Player({
 
   return (
     <div
-      ref={ref}
+      ref={attachPlayer}
       className={cx(
         'nf-player',
         `nf-player--${state.status}`,
@@ -190,9 +234,44 @@ export function Player({
       onMouseLeave={() => {
         if (playing && autoHideMs > 0) setIdle(true);
       }}
+      onContextMenu={(e) => {
+        // v19: on the video itself, our menu (stats for nerds) instead of the browser's.
+        if (state.mini || !(e.target instanceof Element)) return;
+        if (e.target.closest('.nf-player__media') === null) return;
+        e.preventDefault();
+        const box = e.currentTarget.getBoundingClientRect();
+        setMenu({ x: Math.max(0, e.clientX - box.left), y: Math.max(0, e.clientY - box.top) });
+      }}
       data-status={state.status}
     >
       <div className="nf-player__media">{media}</div>
+
+      {typeof menu === 'object' ? (
+        <div
+          ref={contextMenuRef}
+          className="nf-nerd-menu"
+          role="menu"
+          style={{ left: `${String(menu.x)}px`, top: `${String(menu.y)}px` }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            autoFocus
+            onClick={() => {
+              setMenu('none');
+              onAction({ type: 'toggle-nerd-stats' });
+            }}
+          >
+            {showNerdStats ? 'Hide stats for nerds' : 'Stats for nerds'}
+          </button>
+        </div>
+      ) : null}
+
+      {showNerdStats && nerdStats !== undefined && !state.mini ? (
+        <div ref={statsRef} tabIndex={-1} className="nf-player__nerd">
+          {nerdStats}
+        </div>
+      ) : null}
 
       {/* Big centre affordance: play when paused/idle/ended, spinner when loading, error card. */}
       {state.status === 'loading' ? (
@@ -510,6 +589,21 @@ export function Player({
                         </button>
                       ))}
                     </div>
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={showNerdStats}
+                      className="nf-player__menu-item"
+                      onClick={() => {
+                        setMenu('none');
+                        onAction({ type: 'toggle-nerd-stats' });
+                      }}
+                    >
+                      <span className="nf-player__menu-check">
+                        {showNerdStats ? <Icon name="check" size={16} /> : null}
+                      </span>
+                      <span className="nf-player__menu-label">Stats for nerds (n)</span>
+                    </button>
                   </div>
                 ) : null}
               </div>

@@ -172,8 +172,9 @@ prints with the current notice on the relays.
 
 ## Run from source
 
-You need Node 22.18 or newer (`package.json` declares 22.12, but the build scripts run TypeScript
-files directly, which needs 22.18) and a Linux machine.
+You need Node 22.22.2 or newer (`package.json` declares it and `.npmrc` makes npm refuse older
+ones: the test environment, jsdom 30, needs 22.22.2, and the build scripts run TypeScript files
+directly, which needs 22.18) and a Linux machine.
 
 ```sh
 git clone https://github.com/SovereignTechnology/nutflix-pear.git

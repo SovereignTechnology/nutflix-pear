@@ -4,7 +4,7 @@ import { mocks } from '@sovit/core';
 import type { Sats } from '@sovit/core';
 import { Player, type PlayerState } from '../Player/Player.js';
 import type { PlayerAction } from '../Player/keyboard.js';
-import { click, keydown, render } from '../testing/render.js';
+import { click, fire, keydown, render } from '../testing/render.js';
 
 function must<T>(v: T | undefined): T {
   if (v === undefined) throw new Error('fixture missing');
@@ -195,5 +195,58 @@ describe('Player chrome', () => {
     click(r.get('button[aria-label="Close peer panel"]'));
     expect(onAction).toHaveBeenCalledWith({ type: 'toggle-peers' });
     r.unmount();
+  });
+
+  it('clamps the context menu and restores focus on Escape', () => {
+    const { r } = mount();
+    const player = r.get('.nf-player');
+    Object.defineProperties(player, { clientWidth: { value: 400 }, clientHeight: { value: 300 } });
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(160);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(40);
+    const open = (clientX: number, clientY: number) => {
+      fire(
+        r.get('[data-testid="media"]'),
+        new MouseEvent('contextmenu', { bubbles: true, clientX, clientY }),
+      );
+    };
+    open(390, 295);
+    expect(r.get('.nf-nerd-menu').style.left).toBe('240px');
+    expect(r.get('.nf-nerd-menu').style.top).toBe('260px');
+    keydown(r.get('.nf-nerd-menu button'), 'Escape');
+    expect(document.activeElement).toBe(player);
+    open(20, 30);
+    expect(r.get('.nf-nerd-menu').style.left).toBe('20px');
+    expect(r.get('.nf-nerd-menu').style.top).toBe('30px');
+    width.mockRestore();
+    height.mockRestore();
+    r.unmount();
+  });
+
+  it('v19: stats for nerds from the settings menu and the video menu; its overlay when shown', () => {
+    const { r, onAction } = mount();
+    click(r.get('button[aria-label="Settings: quality and speed"]'));
+    const item = r
+      .all('[role="menuitemcheckbox"]')
+      .find((b) => b.textContent.includes('Stats for nerds'));
+    if (item === undefined) throw new Error('no menu item');
+    click(item);
+    expect(onAction).toHaveBeenLastCalledWith({ type: 'toggle-nerd-stats' });
+    // A right-click on the video opens our menu, not the browser's.
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    fire(r.get('[data-testid="media"]'), ev);
+    expect(ev.defaultPrevented).toBe(true);
+    click(r.get('.nf-nerd-menu button'));
+    expect(onAction).toHaveBeenCalledTimes(2);
+    expect(r.container.querySelector('.nf-nerd-menu')).toBeNull();
+    expect(r.container.querySelector('.nf-player__nerd')).toBeNull();
+    r.unmount();
+
+    const shown = mount(base, {
+      showNerdStats: true,
+      nerdStats: createElement('div', { 'data-testid': 'nerd' }),
+    });
+    expect(shown.r.get('.nf-player__nerd [data-testid="nerd"]')).toBeTruthy();
+    expect(document.activeElement).toBe(shown.r.get('.nf-player__nerd'));
+    shown.r.unmount();
   });
 });

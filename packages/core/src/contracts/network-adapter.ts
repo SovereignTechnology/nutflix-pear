@@ -152,7 +152,95 @@ export interface PlaySession {
   resume(): void;
   /** Switch rendition at a keyframe; the UI shows the price difference first. */
   switchRendition(label: string): Promise<PlaySession>;
+  /**
+   * v19 (ADR 0024): where each seeder's connection goes now (`PlaySourceAddress`, kind
+   * `hypercore`, `id` = the seeder's pubkey as in `onPeers`). Other hosts' addresses: called only
+   * while the viewer has asked to see them, never logged or stored. Absent: the shell cannot say.
+   */
+  addresses?(): Promise<readonly PlaySourceAddress[]>;
   close(): Promise<void>;
+}
+
+/**
+ * v19 (ADR 0024): the transport a play's bytes came over, for the "stats for nerds" panel.
+ * `origin`: an NFX-05 §6 HTTPS origin; `webrtc`: a mesh peer (NFX-10); `iroh`: an NFX-06 seeder;
+ * `hyperdht`: a seeder over HyperDHT (NFX-12); `hypercore`: a paid seeder (Hyperswarm).
+ */
+export type PlaySourceKind = 'origin' | 'webrtc' | 'iroh' | 'hyperdht' | 'hypercore';
+
+/** v19: at most this many sources are reported on one play (`NfxPlayStats.sources`). */
+export const MAX_PLAY_SOURCES = 64 as const;
+
+/**
+ * v19 (ADR 0024): one source of a play's bytes. Its `id`, `via` and `label` come from the network
+ * (a peer, a tracker or a beacon chose them): a screen shows them as text only.
+ */
+export interface PlaySourceStat {
+  readonly kind: PlaySourceKind;
+  /**
+   * Who, within the session: an origin's host, or the peer's key or id in full (a WebRTC
+   * session key, an iroh endpoint id, a HyperDHT key). A screen shows a short form. At most 64
+   * characters of printable ASCII.
+   */
+  readonly id: string;
+  /** What it was found through: a relay or tracker host, `nostr`, `beacon`; `''` none. */
+  readonly via: string;
+  /** Bytes received from it, and sent to it. */
+  readonly bytesDown: number;
+  readonly bytesUp: number;
+  /** Whole files (segments, playlists) it delivered. */
+  readonly files: number;
+  /** Whether a connection to it is open now (an origin: whether the play uses it). */
+  readonly connected: boolean;
+  /** A hint shown beside it, never trusted (e.g. `nfxd bridge?` for a peer id prefix). */
+  readonly label?: string;
+}
+
+/**
+ * v19 (ADR 0024): a free play's numbers, for the "stats for nerds" panel. Everything but
+ * `sources` is optional: a shell reports what it knows.
+ */
+export interface NfxPlayStats {
+  /** Most bytes first, open ones before closed ones; at most `MAX_PLAY_SOURCES`. */
+  readonly sources: readonly PlaySourceStat[];
+  /** What plays it, e.g. `hls.js 1.7.4 + p2p-media-loader 4.0.0`. */
+  readonly engine?: string;
+  /** Peer connections open now, and made since the play started. */
+  readonly peers?: { readonly connected: number; readonly total: number };
+  /** How peers find each other: the kind, and its relays or trackers (hosts). */
+  readonly signaling?: {
+    readonly kind: 'nostr' | 'trackers';
+    readonly endpoints: readonly string[];
+    /** Relay sockets open now (Nostr). */
+    readonly open?: number;
+  };
+  /** Files checked against the hash list and accepted, and refused. */
+  readonly verified?: number;
+  readonly refused?: number;
+  /** The player's bandwidth estimate, bits per second. */
+  readonly bandwidthEstimate?: number;
+}
+
+/**
+ * v19 (ADR 0024): where an open source's connection goes. **Other hosts' IP addresses**: a shell
+ * returns them only from `addresses()`, which a screen calls only while its viewer has asked to
+ * see them; neither logs nor stores them.
+ */
+export interface PlaySourceAddress {
+  readonly kind: PlaySourceKind;
+  /** `PlaySourceStat.id` (or a paid seeder's pubkey). */
+  readonly id: string;
+  /**
+   * `ip:port` (`[v6]:port`) as the transport reports it; `''` when it hides it (a browser's mDNS
+   * name or redacted candidate). At most 64 characters.
+   */
+  readonly address: string;
+  /** `relayed` through a TURN or iroh relay (`via` names it), `direct`, or `unknown`. */
+  readonly path: 'direct' | 'relayed' | 'unknown';
+  readonly via?: string;
+  readonly rttMs?: number;
+  /** A transport detail, e.g. a WebRTC candidate type (`srflx/udp`). */
+  readonly detail?: string;
 }
 
 /** v11 (ADR 0020 slice 5d): one rendition of an NFX video, as its hash list lists it. */
@@ -211,6 +299,16 @@ export interface NfxPlaySession {
    * when `playNfx` resolves.
    */
   onChange?(cb: () => void): Unsubscribe;
+  /**
+   * v19 (ADR 0024): the play's numbers now (`NfxPlayStats`), for a panel that polls while it is
+   * open. No addresses. Absent: the shell reports none.
+   */
+  stats?(): Promise<NfxPlayStats>;
+  /**
+   * v19 (ADR 0024): where each open source's connection goes (`PlaySourceAddress`). Other hosts'
+   * addresses: called only while the viewer has asked to see them. Absent: the shell cannot say.
+   */
+  addresses?(): Promise<readonly PlaySourceAddress[]>;
   close(): Promise<void>;
 }
 

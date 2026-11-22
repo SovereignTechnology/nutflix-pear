@@ -15,11 +15,21 @@
  * - **A session** is a sid, a media-link token and its owner (a webContents). No money is
  *   involved: no `checkBalance`, no money plane. Closing revokes the link and closes the worker's
  *   session; a gone webContents or a dead worker closes them too.
+ * - **Stats for nerds** (pear #123, ADR 0024): `stats()` and `addresses()` ask the worker, which
+ *   alone knows the transports; the host passes the answers on and keeps nothing.
  */
-import type { NfxAddress, NfxVideo, NostrEvent, NostrFilter } from '@sovit/core';
+import type {
+  NfxAddress,
+  NfxPlayStats,
+  NfxVideo,
+  NostrEvent,
+  NostrFilter,
+  PlaySourceAddress,
+} from '@sovit/core';
 import { nfx } from '@sovit/core';
 
 import type { NfMediaPlayUrl, NfxPlaySessionWire, SessionId } from '../../ipc/protocol.js';
+import { hostError } from '../errors.js';
 import {
   isNfxBlobTicket,
   isNfxIrohEndpointWire,
@@ -152,6 +162,10 @@ export function videoOf(addr: NfxAddress): string | null {
   return target.ok ? target.value.addr.toString() : null;
 }
 
+function sessionClosed(): Error {
+  return hostError('session-closed', 'this playback session is closed');
+}
+
 export class NfxHostSession {
   readonly sid: SessionId;
   readonly owner: number;
@@ -160,6 +174,8 @@ export class NfxHostSession {
   readonly renditions: readonly NfxRenditionWire[];
   private readonly token: string;
   private readonly closeFn: (s: NfxHostSession) => Promise<void>;
+  private readonly statsFn: (s: NfxHostSession) => Promise<NfxPlayStats>;
+  private readonly addressesFn: (s: NfxHostSession) => Promise<readonly PlaySourceAddress[]>;
   private closing: Promise<void> | null = null;
 
   constructor(o: {
@@ -170,6 +186,10 @@ export class NfxHostSession {
     readonly rendition: string;
     readonly renditions: readonly NfxRenditionWire[];
     readonly close: (s: NfxHostSession) => Promise<void>;
+    /** Pear #123: the worker's numbers for this session (`nfx.play.stats`). */
+    readonly stats: (s: NfxHostSession) => Promise<NfxPlayStats>;
+    /** Pear #123: where its sources are connected (`nfx.play.addresses`). */
+    readonly addresses: (s: NfxHostSession) => Promise<readonly PlaySourceAddress[]>;
   }) {
     this.sid = o.sid;
     this.owner = o.owner;
@@ -178,6 +198,23 @@ export class NfxHostSession {
     this.rendition = o.rendition;
     this.renditions = o.renditions;
     this.closeFn = o.close;
+    this.statsFn = o.stats;
+    this.addressesFn = o.addresses;
+  }
+
+  /** Pear #123 (ADR 0024): where the bytes came from, now; `session-closed` once closed. */
+  stats(): Promise<NfxPlayStats> {
+    if (this.closing !== null) return Promise.reject(sessionClosed());
+    return this.statsFn(this);
+  }
+
+  /**
+   * Pear #123: where each connected source goes now. Other hosts' addresses: asked for only while
+   * the viewer shows them; passed on, never logged or kept.
+   */
+  addresses(): Promise<readonly PlaySourceAddress[]> {
+    if (this.closing !== null) return Promise.reject(sessionClosed());
+    return this.addressesFn(this);
   }
 
   get source(): { readonly kind: 'url'; readonly url: NfMediaPlayUrl } {
