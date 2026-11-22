@@ -28,7 +28,9 @@ import {
   isLabel,
   isMintUrl,
   isMsgId,
+  isNfxPlayStats,
   isPeerSpend,
+  isPlaySourceAddresses,
   isPositiveSats,
   isPricePolicy,
   isPubkey,
@@ -320,6 +322,7 @@ export const validateWorkerArgs: {
   'play.resume': safe(isSid),
   'play.prefetch': safe(obj({ sid: isSessionId, seconds: isPrefetch })),
   'play.close': safe(isSid),
+  'play.addresses': safe(isSid),
   'seeder.status': safe(obj({}) as Guard<Record<string, never>>),
   'seeder.configure': safe(isSeeding),
   'seeder.melt': safe(obj({ mint: isMintUrl, bolt11: isInvoice })),
@@ -329,6 +332,8 @@ export const validateWorkerArgs: {
   'nfx.videos': safe(obj({}) as Guard<Record<string, never>>),
   'nfx.play.open': isNfxPlayOpen,
   'nfx.play.close': safe(isSid),
+  'nfx.play.stats': safe(isSid),
+  'nfx.play.addresses': safe(isSid),
   'nfx.rtc.answer': safe(obj({ swarm: isNfxWebSwarm, offer: isNfxSdp })),
   'nfx.rtc.offer': safe(obj({ swarm: isNfxWebSwarm })),
   'nfx.rtc.accept': safe(obj({ peer: isNfxRtcPeer, answer: isNfxSdp })),
@@ -392,6 +397,36 @@ const isNfxPlayOpenResult = safe(
     isNfxPlayOpenShape(x) && x.renditions.some((r) => r.id === x.rendition),
 );
 
+/** Pear #123: a peer's key as the worker reports a source by it (an endpoint id, a seeder key). */
+const HEX64 = /^[0-9a-f]{64}$/;
+/** Pear #123: a WebRTC peer as the worker names it: `rtc:<helper generation>.<connection id>`. */
+const RTC_SOURCE = /^rtc:[0-9]{1,10}\.[0-9]{1,10}$/;
+
+/** A free play's source ids are the transport's own form: never an origin, never a paid seeder. */
+function isNfxSourceId(kind: string, id: string): boolean {
+  if (kind === 'iroh' || kind === 'hyperdht') return HEX64.test(id);
+  return kind === 'webrtc' && RTC_SOURCE.test(id);
+}
+
+/** Pear #123: a free play's stats, each source of a kind the worker fetches from, each id once. */
+const isNfxPlayStatsResult = safe(
+  (x: unknown): x is WorkerMethodTable['nfx.play.stats'][1] =>
+    isNfxPlayStats(x) &&
+    x.sources.every((s) => isNfxSourceId(s.kind, s.id)) &&
+    new Set(x.sources.map((s) => `${s.kind} ${s.id}`)).size === x.sources.length,
+);
+const isNfxAddressesResult = safe(
+  (x: unknown): x is WorkerMethodTable['nfx.play.addresses'][1] =>
+    obj({ addresses: isPlaySourceAddresses })(x) &&
+    x.addresses.every((a) => isNfxSourceId(a.kind, a.id)),
+);
+/** Pear #123: a paid play's seeders, by the pubkey its `peers` events name. */
+const isPaidAddressesResult = safe(
+  (x: unknown): x is WorkerMethodTable['play.addresses'][1] =>
+    obj({ addresses: isPlaySourceAddresses })(x) &&
+    x.addresses.every((a) => a.kind === 'hypercore' && HEX64.test(a.id)),
+);
+
 /** Results of every host → worker request (checked by the host). */
 export const validateWorkerResult: {
   readonly [M in WorkerMethod]: Guard<WorkerMethodTable[M][1]>;
@@ -404,6 +439,7 @@ export const validateWorkerResult: {
   // Lane P2-owed-viewer: a session's unpaid tail (a seeder's credit is at most 1024 blocks per
   // seeder; the host caps the authorisation at the session's remaining budget anyway).
   'play.close': safe(obj({ unpaid: int(0, MAX_TAIL_BLOCKS) })),
+  'play.addresses': isPaidAddressesResult,
   'seeder.status': safe(isSeederStatusWire),
   'seeder.configure': isVoid,
   'seeder.melt': safe(obj({ paid: bool })),
@@ -418,6 +454,8 @@ export const validateWorkerResult: {
   'nfx.videos': safe(obj({ videos: arrayOf(isNfxStoredVideo, MAX_NFX_STORED_VIDEOS) })),
   'nfx.play.open': isNfxPlayOpenResult,
   'nfx.play.close': isVoid,
+  'nfx.play.stats': isNfxPlayStatsResult,
+  'nfx.play.addresses': isNfxAddressesResult,
   'nfx.rtc.answer': safe(obj({ peer: isNfxRtcPeer, sdp: isNfxSdp })),
   'nfx.rtc.offer': safe(obj({ peer: isNfxRtcPeer, sdp: isNfxSdp })),
   'nfx.rtc.accept': isVoid,

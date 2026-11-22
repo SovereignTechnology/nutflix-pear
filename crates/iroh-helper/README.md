@@ -111,6 +111,7 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 | `dial` | `node`, `relays`, `addrs` | `conn` |
 | `get` | `conn`, `hash`, `max` (1 ..= 64 MiB) | `data` frames, then `size` |
 | `hangup` | `conn` | `closed` |
+| `conn-path` | `conn` | `path` (`direct`/`relay`/`other`/`none`), `addr` (`ip:port` or null), `relay` (the relay's host or null), `rtt_ms` (or null) |
 | `stats` | | `rss_hwm_kib`, `store_bytes` |
 
 - `init` waits up to 10 s for the home relay when relays are given. Without `secret` the node has
@@ -126,6 +127,11 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
   larger than `max` never completes and is refused `too-large`. A blob that does not arrive within
   30 s fails `timeout`. The fetched blob is held by a temp tag while it is read, then left to the
   collector: the worker's store keeps the copy that counts.
+- `conn-path` (pear #123, ADR 0024) reads where an open connection's data goes now: its selected
+  path as iroh reports it (`Connection::paths`), a direct `ip:port` or the relay it goes through,
+  and the path's round-trip estimate; `none` while no path is selected. It sends nothing. The
+  worker asks only while the viewer has switched "Show addresses" on in stats for nerds, and the
+  answer is not logged here or there (the trace prints a request's id and op, never a field).
 - Error codes: `bad-request`, `not-ready`, `busy`, `io`, `dial-failed`, `no-conn`, `timeout`,
   `too-large`, `transfer-failed`, `internal`, and for `rtc-*` also `no-peer`, `not-open`, `absent`.
 
@@ -151,6 +157,7 @@ belongs to one swarm, the NFX-10 §2 stream swarm id the worker gives. The `rtc-
 | `rtc-poll` | `wait_ms` (≤ 30000) | `events`, `lost` |
 | `rtc-have` | `peer` | `ranges`, `more`: what the peer last announced |
 | `rtc-hangup` | `peer` | `closed` |
+| `rtc-path` | `peer` | `addr`: where its last accepted datagram came from (`ip:port`, or null before the first) |
 | `rtc-status` | | `local`, `mapped`, `peers` (`[{peer, swarm, dir, open}]`), `swarms`, `held` |
 
 - **`rtc-init`** binds `bind`, or, without a specific IP there, the address the default route to
@@ -187,6 +194,10 @@ belongs to one swarm, the NFX-10 §2 stream swarm id the worker gives. The `rtc-
   Fails `absent` (the peer does not hold it), `too-large` (above `max`), `timeout` (no `Data` in
   5 s, a 5 s stall, or 30 s in all), `transfer-failed`, `not-open`, `no-peer`. The bytes are
   unchecked: the worker checks their sha256.
+- **`rtc-path`** (pear #123) reads the source address of the connection's last datagram that the
+  ingress rule let in (so never an address rule 7 refuses). No TURN, so it is the peer's own
+  address or its NAT's mapping. It sends nothing, and, like `conn-path`, it is asked for only while
+  the viewer shows addresses, and never logged.
 - **Events** (`rtc-poll`, one poll at a time, at most 256 queued; `lost` says older ones were
   dropped): `{"t":"open","peer","swarm","dir":"in"|"out"}`, `{"t":"have","peer","ranges":[[a,b],…],
   "more"}` (what the peer announced, as at most 512 inclusive ranges; at most 30, then 5 a second,

@@ -168,6 +168,8 @@ export const Interactive: Story = {
           case 'toggle-peers':
             setShowPeers((v) => !v);
             return s;
+          case 'toggle-nerd-stats':
+            return s;
           case 'close':
             return { ...s, mini: false, status: 'paused' };
         }

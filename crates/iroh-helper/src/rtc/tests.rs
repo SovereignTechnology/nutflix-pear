@@ -140,6 +140,9 @@ async fn a_browser_shaped_peer_fetches_what_is_served() {
     assert_eq!(have["ranges"], serde_json::json!([[0, 0], [3, 3]]));
     let open = s_events.wait_for("open", is("open", s_peer)).await;
     assert_eq!(open["dir"], "in");
+    // Pear #123: each side's last datagram came from the other's socket.
+    assert_eq!(viewer.path(v_peer).await.unwrap(), Some(seeder.local));
+    assert_eq!(seeder.path(s_peer).await.unwrap(), Some(viewer.local));
 
     let got = viewer.get(v_peer, 0, MAX_SEGMENT).await.unwrap();
     assert_eq!(got.len(), body.len());
@@ -190,6 +193,7 @@ async fn a_browser_shaped_peer_fetches_what_is_served() {
         viewer.get(v_peer, 0, 1024).await.unwrap_err().code,
         "no-peer"
     );
+    assert_eq!(viewer.path(v_peer).await.unwrap_err().code, "no-peer");
 
     viewer.stop().await;
     seeder.stop().await;

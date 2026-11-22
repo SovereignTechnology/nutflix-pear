@@ -26,6 +26,7 @@ import type { Logger, Seeder } from '@sovit/seeder';
 import { fromHex, toHex } from '@sovit/seeder';
 
 import type { ViewerPayer } from '../pay/viewer-payer.js';
+import { streamRemote } from './remote-addr.js';
 
 export interface BootstrapNode {
   readonly host: string;
@@ -147,6 +148,16 @@ export class PeerNode {
       if (j.mode.server === server) continue;
       this.join(fromHex(hex), { server, client: j.mode.client });
     }
+  }
+
+  /**
+   * Pear #123 (ADR 0024): where the live connection with Noise key `noiseHex` goes (`''`: it does
+   * not say), or `null` without one. Read when asked; another host's address, never logged.
+   */
+  remoteOf(noiseHex: string): string | null {
+    for (const conn of this.swarm?.connections ?? [])
+      if (toHex(conn.remotePublicKey) === noiseHex) return streamRemote(conn);
+    return null;
   }
 
   async flush(): Promise<void> {

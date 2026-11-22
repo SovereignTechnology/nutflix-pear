@@ -82,6 +82,8 @@ export function sessionFromBridge(s: BridgePlaySession): PlaySession {
     },
     switchRendition: async (label) =>
       sessionFromBridge(await settle<BridgePlaySession>(s.switchRendition(label))),
+    // Contracts v19 (ADR 0024): asked only while the viewer shows addresses.
+    addresses: () => settle(s.addresses()),
     close: () => settle<undefined>(s.close()),
   };
 }
@@ -155,6 +157,9 @@ export function adapterFromBridge(b: NutflixBridge): NetworkAdapter {
         rendition: s.rendition,
         renditions: s.renditions,
         source: { kind: 'url', url: s.source.url },
+        // Contracts v19 (ADR 0024): stats for nerds from the worker, through the host.
+        stats: () => settle(s.stats()),
+        addresses: () => settle(s.addresses()),
         close: () => settle<undefined>(s.close()),
       };
     },

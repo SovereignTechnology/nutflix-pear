@@ -121,6 +121,8 @@ describe('MethodTable ⇔ NetworkAdapter (contracts v4)', () => {
       | 'session.setPrefetchSeconds'
       | 'session.switchRendition'
       | 'session.close'
+      | 'session.stats'
+      | 'session.addresses'
     >();
     expectTypeOf<ShellMethod>().toExtend<Method>();
   });

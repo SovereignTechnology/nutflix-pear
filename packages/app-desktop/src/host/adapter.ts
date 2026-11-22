@@ -31,6 +31,7 @@ import type {
   NetworkAdapter,
   NfxAddress,
   NfxPlaySession,
+  NfxPlayStats,
   NfxSettings,
   NfxVideo,
   Notification,
@@ -849,8 +850,28 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       rendition: s.rendition,
       renditions: s.renditions,
       source: s.source,
+      // Pear #123 (ADR 0024): stats for nerds, from the worker.
+      stats: () => s.stats(),
+      addresses: () => s.addresses(),
       close: () => s.close(),
     };
+  }
+
+  /** Pear #123: `owner`'s open NFX session `sid` (another owner's reads as unknown). */
+  nfxSessionOf(owner: number, sid: string): NfxHostSession {
+    const s = this.nfxSessions.get(sid);
+    if (s?.owner !== owner) fail('session-closed', 'no such playback session');
+    return s;
+  }
+
+  /**
+   * Pear #123 (ADR 0024): the worker's numbers for an NFX session, and, while the host signals
+   * for WebRTC (nfx-mesh/1), its relays and how many of them it hears on.
+   */
+  private async nfxStatsOf(s: NfxHostSession): Promise<NfxPlayStats> {
+    const stats = await this.o.worker('nfx.play.stats', { sid: s.sid });
+    const signaling = this.mesh.signaling();
+    return signaling === null ? stats : { ...stats, signaling: { kind: 'nostr', ...signaling } };
   }
 
   /**
@@ -905,6 +926,9 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       rendition: res.rendition,
       renditions: res.renditions,
       close: (x) => this.endNfxSession(x, true),
+      stats: (x) => this.nfxStatsOf(x),
+      // Other hosts' addresses (the viewer asked): passed on, never logged or kept.
+      addresses: async (x) => (await this.o.worker('nfx.play.addresses', { sid: x.sid })).addresses,
     });
     this.nfxSessions.set(sid, s);
     // NFX-10 §1: the STUN servers its beacons name, beside the settings' own, while it plays.

@@ -1211,7 +1211,28 @@
   gap: var(--nf-space-8);
 }
 
+/* Contracts v19 (ADR 0024): the video's box, for the stats overlay and its menu. */
+.nf-nfxwatch__screen {
+  position: relative;
+}
+
+.nf-nfxwatch__nerd {
+  position: absolute;
+  top: var(--nf-space-12);
+  left: var(--nf-space-12);
+  z-index: 3;
+  width: min(640px, calc(100% - var(--nf-space-24)));
+  max-height: calc(100% - 64px);
+  overflow: auto;
+}
+
+.nf-nfxwatch__tools {
+  display: flex;
+  gap: var(--nf-space-8);
+}
+
 .nf-nfxwatch__video {
+  display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
   border-radius: var(--nf-radius-lg);

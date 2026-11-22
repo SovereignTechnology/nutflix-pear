@@ -16,6 +16,10 @@
  * Contracts v15: a session with `onChange` is re-read when it changes, so renditions an `element`
  * source learns once attached reach the quality picker, and its `problems` are shown: files the
  * player refused, origins whose hash list did not verify, and a play that stopped (with a retry).
+ *
+ * Contracts v19 (ADR 0024): "stats for nerds" over the video — where the bytes come from, from
+ * the session's `stats()` and the element — opened by a right-click on the video, the Stats
+ * button or `n`. Peers' addresses only behind its switch (`addresses()`, asked only while on).
  */
 import {
   useCallback,
@@ -43,6 +47,7 @@ import {
   EmptyState,
   ErrorState,
   Markdown,
+  NerdStats,
   ProfileAvatar,
   Skeleton,
   SkeletonLines,
@@ -50,7 +55,11 @@ import {
   cx,
   formatDuration,
   formatRelativeTime,
+  isTextEntryTarget,
   shortPubkey,
+  sourceRows,
+  statRows,
+  useNerdStats,
   type ToastItem,
 } from '../../components/index.js';
 import type { ScreenProps } from '../shared/route.js';
@@ -167,14 +176,48 @@ function NfxPlayer({
   const source = session.source;
   const renditions = session.renditions;
   const detach = useRef<(() => void) | null>(null);
+  const element = useRef<HTMLVideoElement | null>(null);
   const videoRef: RefCallback<HTMLVideoElement> = useCallback(
     (el: HTMLVideoElement | null) => {
+      element.current = el;
       detach.current?.();
       detach.current = null;
       if (el !== null && source.kind === 'element') detach.current = source.attach(el);
     },
     [source],
   );
+
+  // v19 (ADR 0024): stats for nerds.
+  const [nerdOpen, setNerdOpen] = useState(false);
+  const [menuAt, setMenuAt] = useState<{ readonly x: number; readonly y: number } | null>(null);
+  const nerd = useNerdStats(nerdOpen, {
+    stats: session.stats?.bind(session),
+    addresses: session.addresses?.bind(session),
+    element: () => element.current,
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (isTextEntryTarget(e.target)) return;
+      if (e.key === 'Escape') {
+        setMenuAt(null);
+        return;
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        setNerdOpen((o) => !o);
+      }
+    };
+    const onClick = (): void => {
+      setMenuAt(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('click', onClick);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('click', onClick);
+    };
+  }, []);
   useEffect(
     () => () => {
       detach.current?.();
@@ -205,15 +248,75 @@ function NfxPlayer({
 
   return (
     <div className="nf-nfxwatch__player">
-      <video
-        ref={videoRef}
-        className="nf-nfxwatch__video"
-        src={playSourceUrl(source)}
-        controls
-        autoPlay
-        playsInline
-        aria-label={title}
-      />
+      <div
+        className="nf-nfxwatch__screen"
+        onContextMenu={(e) => {
+          // Our menu (stats for nerds) on the video, instead of the browser's.
+          e.preventDefault();
+          const box = e.currentTarget.getBoundingClientRect();
+          setMenuAt({ x: Math.max(0, e.clientX - box.left), y: Math.max(0, e.clientY - box.top) });
+        }}
+      >
+        <video
+          ref={videoRef}
+          className="nf-nfxwatch__video"
+          src={playSourceUrl(source)}
+          controls
+          autoPlay
+          playsInline
+          aria-label={title}
+        />
+        {menuAt !== null ? (
+          <div
+            className="nf-nerd-menu"
+            role="menu"
+            style={{ left: `${String(menuAt.x)}px`, top: `${String(menuAt.y)}px` }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuAt(null);
+                setNerdOpen((o) => !o);
+              }}
+            >
+              {nerdOpen ? 'Hide stats for nerds' : 'Stats for nerds'}
+            </button>
+          </div>
+        ) : null}
+        {nerdOpen ? (
+          <div className="nf-nfxwatch__nerd">
+            <NerdStats
+              rows={statRows(nerd.stats, nerd.sample, {
+                rendition: renditions.find((r) => r.id === rendition)?.resolution ?? rendition,
+              })}
+              sources={sourceRows(nerd.stats?.sources ?? [])}
+              canShowAddresses={nerd.canShowAddresses}
+              showAddresses={nerd.showAddresses}
+              addresses={nerd.addresses}
+              onShowAddresses={nerd.setShowAddresses}
+              onClose={() => {
+                setNerdOpen(false);
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+      <div className="nf-nfxwatch__tools">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="nf-nfxwatch__nerd-toggle"
+          aria-pressed={nerdOpen}
+          title="Stats for nerds (n, or right-click the video)"
+          onClick={() => {
+            setNerdOpen((o) => !o);
+          }}
+        >
+          Stats for nerds
+        </Button>
+      </div>
       {renditions.length > 1 ? (
         <label className="nf-nfxwatch__quality">
           Quality{' '}

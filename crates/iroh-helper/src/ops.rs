@@ -92,6 +92,10 @@ enum Op {
     Hangup {
         conn: u32,
     },
+    /// Pear #123 (ADR 0024): where an open connection's data goes now (its selected path).
+    ConnPath {
+        conn: u32,
+    },
     Stats,
     /// Start the WebRTC side (ADR 0023): bind its socket and learn the public mapping.
     RtcInit {
@@ -145,6 +149,10 @@ enum Op {
         peer: u32,
     },
     RtcHave {
+        peer: u32,
+    },
+    /// Pear #123: the address a connection's last datagram came from.
+    RtcPath {
         peer: u32,
     },
     RtcStatus,
@@ -445,6 +453,10 @@ impl Shared {
                 let h = self.rtc().await?.have(peer).await.map_err(rtc_err)?;
                 Ok(fields(h))
             }
+            Op::RtcPath { peer } => {
+                let addr = self.rtc().await?.path(peer).await.map_err(rtc_err)?;
+                Ok(fields(json!({"addr": addr.map(|a| a.to_string())})))
+            }
             Op::RtcStatus => {
                 let s = self.rtc().await?.status().await.map_err(rtc_err)?;
                 Ok(fields(s))
@@ -616,6 +628,24 @@ impl Shared {
                 let closed = self.conns.lock().await.open.remove(&conn).is_some();
                 Ok(fields(json!({"closed": closed})))
             }
+            Op::ConnPath { conn } => {
+                // Read through a clone held for the call: a hangup meanwhile cannot drop it.
+                let connection = self
+                    .conns
+                    .lock()
+                    .await
+                    .open
+                    .get(&conn)
+                    .cloned()
+                    .ok_or_else(|| err("no-conn", "no such connection"))?;
+                let p = node::path_of(&connection);
+                Ok(fields(json!({
+                    "path": p.kind,
+                    "addr": p.addr.map(|a| a.to_string()),
+                    "relay": p.relay,
+                    "rtt_ms": p.rtt_ms,
+                })))
+            }
             Op::Stats => {
                 let node = self.node()?;
                 Ok(fields(json!({
@@ -636,6 +666,7 @@ impl Shared {
             | Op::RtcPoll { .. }
             | Op::RtcHangup { .. }
             | Op::RtcHave { .. }
+            | Op::RtcPath { .. }
             | Op::RtcStatus) => self.rtc_op(id, op, out).await,
         }
     }
@@ -841,5 +872,25 @@ mod tests {
         assert!(matches!(op, Op::RtcStun { stun } if stun == ["1.2.3.4:3478"]));
         // `stun` is not optional: an empty list says "none", a missing one is a mistake.
         assert!(serde_json::from_value::<Op>(json!({"id": 5, "op": "rtc-stun"})).is_err());
+        parse(json!({"id": 4, "op": "rtc-path", "peer": 1}));
+    }
+
+    #[test]
+    fn path_requests_name_their_connection() {
+        assert!(matches!(
+            parse(json!({"id": 6, "op": "conn-path", "conn": 3})),
+            Op::ConnPath { conn: 3 }
+        ));
+        assert!(matches!(
+            parse(json!({"id": 6, "op": "rtc-path", "peer": 2})),
+            Op::RtcPath { peer: 2 }
+        ));
+        for v in [
+            json!({"id": 6, "op": "conn-path"}),
+            json!({"id": 6, "op": "rtc-path"}),
+            json!({"id": 6, "op": "conn-path", "conn": "3"}),
+        ] {
+            assert!(serde_json::from_value::<Op>(v).is_err());
+        }
     }
 }

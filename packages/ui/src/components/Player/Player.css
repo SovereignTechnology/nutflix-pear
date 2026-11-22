@@ -159,6 +159,16 @@
 
 /* Peer panel overlay */
 
+.nf-player__nerd {
+  position: absolute;
+  top: var(--nf-space-12);
+  left: var(--nf-space-12);
+  z-index: 3;
+  width: min(640px, calc(100% - var(--nf-space-24)));
+  max-height: calc(100% - 88px);
+  overflow: auto;
+}
+
 .nf-player__peers {
   position: absolute;
   top: var(--nf-space-12);

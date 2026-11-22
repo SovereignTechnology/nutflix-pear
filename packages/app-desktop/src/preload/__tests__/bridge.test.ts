@@ -6,7 +6,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mocks } from '@sovit/core';
-import type { ArgsOf, Method, PlaySessionWire, Topic } from '../../ipc/protocol.js';
+import type {
+  ArgsOf,
+  Method,
+  NfxPlaySessionWire,
+  PlaySessionWire,
+  Topic,
+} from '../../ipc/protocol.js';
 import { EXCLUDED_METHODS, METHODS, SHELL_TOPIC_METHODS, TOPIC_METHODS } from '../../ipc/index.js';
 import { fromWireError, wireError } from '../../ipc/errors.js';
 import { createBridge } from '../bridge.js';
@@ -323,6 +329,48 @@ describe('PlaySession around sid', () => {
       'session.close': fromWireError(wireError('backend-down', 'x')),
     });
     expect((await codeOf((await down.b.play(VIDEO.id)).close())).code).toBe('backend-down');
+  });
+});
+
+describe('contracts v19: stats for nerds through the bridge', () => {
+  const nfxWire: NfxPlaySessionWire = {
+    sid: SID as NfxPlaySessionWire['sid'],
+    videoId: `38504:${'a'.repeat(64)}:nfx:testnet:1:clip` as NfxPlaySessionWire['videoId'],
+    rendition: '720p',
+    renditions: [{ id: '720p', bandwidth: 2_500_000 }],
+    source: { kind: 'url', url: 'nf-media://play/tok0123456789abcdef' },
+  };
+  const STATS = { sources: [], engine: 'nfx worker: iroh' };
+  const ADDRESSES = [{ kind: 'iroh', id: 'a'.repeat(64), address: '', path: 'unknown' }];
+
+  it('a free NFX session asks session.stats and session.addresses by its sid, until closed', async () => {
+    const { b, calls } = bridge({
+      playNfx: nfxWire,
+      'session.stats': STATS,
+      'session.addresses': ADDRESSES,
+    });
+    const s = await b.playNfx(nfxWire.videoId);
+    await expect(s.stats()).resolves.toEqual(STATS);
+    await expect(s.addresses()).resolves.toEqual(ADDRESSES);
+    expect(calls.slice(1)).toEqual([
+      { method: 'session.stats', args: [SID] },
+      { method: 'session.addresses', args: [SID] },
+    ]);
+    await s.close();
+    expect((await codeOf(s.stats())).code).toBe('session-closed');
+    expect((await codeOf(s.addresses())).code).toBe('session-closed');
+    expect(
+      calls.filter((c) => c.method.startsWith('session.') && c.method !== 'session.close'),
+    ).toHaveLength(2);
+  });
+
+  it('a paid session asks session.addresses by its sid, until closed', async () => {
+    const { b, calls } = bridge({ play: wire(), 'session.addresses': [] });
+    const s = await b.play(VIDEO.id);
+    await expect(s.addresses()).resolves.toEqual([]);
+    expect(calls.at(-1)).toEqual({ method: 'session.addresses', args: [SID] });
+    await s.close();
+    expect((await codeOf(s.addresses())).code).toBe('session-closed');
   });
 });
 

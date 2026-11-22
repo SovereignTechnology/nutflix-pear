@@ -42,15 +42,22 @@ export interface BridgePlaySession {
   pause(): void;
   resume(): void;
   switchRendition(label: string): Promise<BridgePlaySession>;
+  /** Contracts v19: `session.addresses` (asked only while the viewer shows addresses). */
+  addresses(): Promise<ResultOf<'session.addresses'>>;
   close(): Promise<void>;
 }
 
-/** Contracts v11: a free NFX session; `close()` is `session.close` by sid. */
+/**
+ * Contracts v11: a free NFX session; `close()` is `session.close` by sid. v19: `stats()` and
+ * `addresses()` are `session.stats` and `session.addresses`.
+ */
 export interface BridgeNfxPlaySession {
   readonly videoId: NfxAddress;
   readonly rendition: string;
   readonly renditions: readonly NfxRenditionInfo[];
   readonly source: { readonly kind: 'url'; readonly url: NfMediaPlayUrl };
+  stats(): Promise<ResultOf<'session.stats'>>;
+  addresses(): Promise<ResultOf<'session.addresses'>>;
   close(): Promise<void>;
 }
 

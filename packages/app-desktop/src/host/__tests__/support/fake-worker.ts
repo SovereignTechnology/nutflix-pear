@@ -238,6 +238,33 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
       case 'nfx.play.close':
         this.nfxSessions.delete((a as { sid: string }).sid);
         return Promise.resolve(undefined);
+      // Pear #123: one HyperDHT seeder of the session served everything, unless a test sets a
+      // handler; the fake knows no address.
+      case 'nfx.play.stats': {
+        const args = this.nfxSessions.get((a as { sid: string }).sid);
+        if (args === undefined) return Promise.reject(new Error('session-closed: no session'));
+        return Promise.resolve({
+          sources: args.peers.slice(0, 1).map((p) => ({
+            kind: 'hyperdht' as const,
+            id: p.peer,
+            via: 'beacon',
+            bytesDown: 1000,
+            bytesUp: 0,
+            files: 3,
+            connected: true,
+          })),
+          engine: 'nfx worker: HyperDHT',
+          peers: {
+            connected: Math.min(1, args.peers.length),
+            total: Math.min(1, args.peers.length),
+          },
+          verified: 3,
+          refused: 0,
+        });
+      }
+      case 'nfx.play.addresses':
+      case 'play.addresses':
+        return Promise.resolve({ addresses: [] });
       // #89: the fake has no WebRTC side; it answers like a real one with WebRTC off.
       case 'nfx.rtc.answer':
       case 'nfx.rtc.offer':

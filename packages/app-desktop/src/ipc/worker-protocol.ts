@@ -23,10 +23,12 @@ import type {
   LockedProofSet,
   MintKeyset,
   MintUrl,
+  NfxPlayStats,
   NostrEventId,
   NostrPubkey,
   PayMessage,
   PeerSpend,
+  PlaySourceAddress,
   PricePolicy,
   RenditionSpec,
   Sats,
@@ -303,6 +305,15 @@ export interface WorkerMethodTable {
    * answers 0.
    */
   'play.close': [args: { readonly sid: SessionId }, result: { readonly unpaid: number }];
+  /**
+   * Pear #123 (ADR 0024): where each seeder of the session that `peers` names is connected now
+   * (kind `hypercore`, `id` its pubkey): the remote host and port of its Hyperswarm connection.
+   * The host asks only while the viewer shows addresses; neither side logs them.
+   */
+  'play.addresses': [
+    args: { readonly sid: SessionId },
+    result: { readonly addresses: readonly PlaySourceAddress[] },
+  ];
   'seeder.status': [args: Record<string, never>, result: SeederStatusWire];
   /** Pushed by the host whenever Settings.seeding changes. */
   'seeder.configure': [args: Settings['seeding'], result: undefined];
@@ -346,6 +357,21 @@ export interface WorkerMethodTable {
   ];
   /** Slice 5d: closes the session (its link 404s, its fetches stop, its spool goes). Idempotent. */
   'nfx.play.close': [args: { readonly sid: SessionId }, result: undefined];
+  /**
+   * Pear #123 (ADR 0024): the session's numbers for stats for nerds: per source (iroh endpoint,
+   * WebRTC peer, HyperDHT seeder) the bytes and files it delivered and whether it is connected,
+   * the most first. Never an address.
+   */
+  'nfx.play.stats': [args: { readonly sid: SessionId }, result: NfxPlayStats];
+  /**
+   * Pear #123: where each connected source of the session goes now, read when asked (iroh's
+   * selected path, the last WebRTC datagram's source, a HyperDHT stream's remote address). The
+   * host asks only while the viewer shows addresses; neither side logs them.
+   */
+  'nfx.play.addresses': [
+    args: { readonly sid: SessionId },
+    result: { readonly addresses: readonly PlaySourceAddress[] },
+  ];
   /**
    * #89 (ADR 0023): the host's signaling hands the worker's WebRTC side a remote offer for an
    * NFX-10 web swarm (`nfx/1/web/<video>/<rendition>`) of this network; the answer goes back the

@@ -29,15 +29,21 @@
  * - **Reasons are short constants**, never peer data, so a failed open says why without quoting
  *   anyone.
  * - `close` hangs up every connection and makes every fetch in flight reject at once.
+ * - **Stats for nerds** (pear #123, ADR 0024): per source (by its endpoint id), the files it
+ *   delivered and their bytes, and whether its connection is open. `addresses` asks the helper
+ *   for each open connection's selected path (`connPath`) only when called, through the helper
+ *   that is already running: it never starts one, and nothing it learns is logged.
  */
+import type { PlaySourceAddress, PlaySourceStat } from '@sovit/core';
 import { nfx } from '@sovit/core';
 import type { Logger } from '@sovit/seeder';
 
 import type { NfxIrohEndpointWire } from '../../ipc/worker-protocol.js';
 import { META_COLLECTION, metaMembers, renditionMembers } from '../iroh/collections.js';
-import type { HelperDialTarget, HelperTicket } from '../iroh/helper.js';
+import type { HelperConnPath, HelperDialTarget, HelperTicket } from '../iroh/helper.js';
 import { HelperError, MAX_GET_BYTES, PoisonedError, dialTarget } from '../iroh/helper.js';
-import type { NfxFetcher } from './watch.js';
+import { socketAddr } from '../net/remote-addr.js';
+import type { NfxFetcher, NfxFetcherStats } from './watch.js';
 import { NfxFetchError } from './watch.js';
 
 /** What the fetcher needs of the helper (`IrohHelper`), so tests can stand in for it. */
@@ -55,6 +61,8 @@ export interface IrohFetchClient {
     expect: { readonly sha256: string; readonly maxBytes: number },
   ): Promise<Uint8Array>;
   hangup(conn: number): Promise<boolean>;
+  /** Pear #123: where `conn` goes now (its selected path); absent: the client cannot say. */
+  connPath?(conn: number): Promise<HelperConnPath>;
 }
 
 /** Why a file did not come from a source (or from iroh at all). */
@@ -113,12 +121,43 @@ interface Seq {
   readonly members: readonly string[];
 }
 
+interface Conn {
+  readonly generation: number;
+  readonly id: Promise<number>;
+  /** The helper's id for it, once dialled. */
+  open: number | null;
+}
+
 interface Source {
   readonly node: string;
   readonly tickets: ReadonlyMap<string, string>;
   dropped: boolean;
-  conn: { readonly generation: number; readonly id: Promise<number> } | null;
+  conn: Conn | null;
   readonly seqs: Map<string, Promise<Seq>>;
+  /** Pear #123: connected at least once this session, and the files (and bytes) it delivered. */
+  seen: boolean;
+  bytes: number;
+  files: number;
+}
+
+/** The longest round trip stats for nerds shows; past it, none is shown. */
+const MAX_RTT_MS = 600_000;
+
+/** What `connPath` says of one source, as stats for nerds shows it. */
+function irohAddress(node: string, p: HelperConnPath | null): PlaySourceAddress {
+  const base = { kind: 'iroh' as const, id: node, address: '', path: 'unknown' as const };
+  if (p === null) return base;
+  const rtt = p.rttMs !== null && p.rttMs <= MAX_RTT_MS ? { rttMs: p.rttMs } : {};
+  if (p.path === 'direct') {
+    const address = socketAddr(p.addr);
+    return address === '' ? { ...base, ...rtt } : { ...base, address, path: 'direct', ...rtt };
+  }
+  if (p.path === 'relay') {
+    // The relay names no peer address: the peer is behind it. Its host is one of the network's.
+    const via = p.relay !== null && /^[\x21-\x7e]{1,64}$/.test(p.relay) ? { via: p.relay } : {};
+    return { ...base, path: 'relayed', ...via, ...rtt };
+  }
+  return { ...base, ...rtt };
 }
 
 /** A source's fault (or not, with `drop: false`) that the helper did not name. */
@@ -186,6 +225,8 @@ export class IrohFetcher implements NfxFetcher {
   /** Connections this fetcher opened, by the helper generation that holds them. */
   private readonly opened: { readonly generation: number; readonly conn: number }[] = [];
   private lastClient: IrohFetchClient | null = null;
+  /** Pear #123: what sources sent that the hash list contradicts. */
+  private refused = 0;
   private gets = 0;
   private readonly waiting: (() => void)[] = [];
   private closed = false;
@@ -200,6 +241,9 @@ export class IrohFetcher implements NfxFetcher {
       dropped: false,
       conn: null,
       seqs: new Map(),
+      seen: false,
+      bytes: 0,
+      files: 0,
     }));
     this.busyDelaysMs = o.busyDelaysMs ?? IROH_BUSY_DELAYS_MS;
     this.maxGets = o.maxGets ?? IROH_SESSION_GETS;
@@ -229,11 +273,15 @@ export class IrohFetcher implements NfxFetcher {
         if (client === null) throw new NfxFetchError([this.isClosed() ? 'closed' : 'iroh-off']);
         try {
           const bytes = await this.fromSource(client, s, place, sha, size, exact);
+          s.seen = true;
+          s.bytes += bytes.byteLength;
+          s.files++;
           this.learn(sha, bytes);
           return bytes;
         } catch (err) {
           if (this.isClosed()) throw new NfxFetchError(['closed']);
           const v = verdict(err);
+          if (v.reason === 'poisoned') this.refused++;
           if (v.drop) {
             s.dropped = true;
             this.o.logger.info('nfx: an iroh source was dropped for this session', {
@@ -285,6 +333,48 @@ export class IrohFetcher implements NfxFetcher {
     }
   }
 
+  /** Pear #123: each source connected this session, with what it delivered. */
+  stats(): NfxFetcherStats {
+    const generation = this.o.generation();
+    const sources: PlaySourceStat[] = this.sources
+      .filter((s) => s.seen)
+      .map((s) => ({
+        kind: 'iroh',
+        id: s.node,
+        via: 'beacon',
+        bytesDown: s.bytes,
+        bytesUp: 0,
+        files: s.files,
+        connected: this.openConn(s, generation) !== null,
+      }));
+    return { sources, refused: this.refused };
+  }
+
+  /**
+   * Pear #123: the selected path of each open connection, asked of the running helper one at a
+   * time (it never starts one). Another host's address: handed back, never logged.
+   */
+  async addresses(): Promise<readonly PlaySourceAddress[]> {
+    const client = this.lastClient;
+    if (client === null || this.closed) return [];
+    const generation = this.o.generation();
+    const out: PlaySourceAddress[] = [];
+    for (const s of this.sources) {
+      const conn = this.openConn(s, generation);
+      if (conn === null) continue;
+      let p: HelperConnPath | null = null;
+      try {
+        p = (await client.connPath?.(conn)) ?? null;
+      } catch {
+        // Busy, restarting or gone: its path is unknown now.
+      }
+      // A helper restarted meanwhile: the answer may be another connection's.
+      if (this.o.generation() !== generation) return [];
+      out.push(irohAddress(s.node, p));
+    }
+    return out;
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -305,6 +395,13 @@ export class IrohFetcher implements NfxFetcher {
   /** Read through a call: `closed` changes across the awaits of a fetch. */
   private isClosed(): boolean {
     return this.closed;
+  }
+
+  /** `s`'s connection on the current helper while it is open, else `null`. */
+  private openConn(s: Source, generation: number): number | null {
+    const c = s.conn;
+    if (this.closed || s.dropped || c?.generation !== generation) return null;
+    return c.open;
   }
 
   /** The watching helper now, or `null` when iroh is off or the fetcher closed. */
@@ -409,11 +506,13 @@ export class IrohFetcher implements NfxFetcher {
     if (current !== null && current.generation === generation) return this.abortable(current.id);
     // Not abandoned on close: a connection that comes up late is still hung up.
     const id = this.call(() => client.dial(target), false);
-    const entry = { generation, id };
+    const entry: Conn = { generation, id, open: null };
     s.conn = entry;
     id.then(
       (conn) => {
         this.opened.push({ generation, conn });
+        entry.open = conn;
+        s.seen = true;
         // Dialled after the session closed: nobody will use it.
         if (this.closed) void client.hangup(conn).catch(() => false);
       },

@@ -69,6 +69,10 @@ export function handlers(a: DesktopNetworkAdapter): HandlerTable {
       // Contracts v11: an NFX session closes the same way (one sid space).
       await a.closeNfxSession(c.wc, sid);
     },
+    // Contracts v19 (ADR 0024): stats for nerds, on the caller's own sessions only.
+    'session.stats': (c, [sid]) => a.nfxSessionOf(c.wc, sid).stats(),
+    'session.addresses': (c, [sid]) =>
+      a.sessions.get(c.wc, sid)?.addresses() ?? a.nfxSessionOf(c.wc, sid).addresses(),
     'wallet.mints': () => a.wallet.mints(),
     'wallet.balance': (_c, [mint]) => a.wallet.balance(mint),
     'wallet.inputFeePpk': (_c, [mint]) => a.wallet.inputFeePpk(mint),

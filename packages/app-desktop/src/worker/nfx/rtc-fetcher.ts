@@ -19,14 +19,21 @@
  *   to it. The helper's own trouble (restarting, gone) ends the attempt, so the next transport is
  *   asked at once. One fetch per peer at a time (the helper's rule): others wait their turn.
  * - **Reasons are short constants**, never peer data.
+ * - **Stats for nerds** (pear #123, ADR 0024): per peer, the segments it delivered and their
+ *   bytes, and whether it is connected in the session's swarm now; a peer is named
+ *   `rtc:<generation>.<connection id>`, as a connection id means nothing across a helper restart.
+ *   `addresses` asks the running helper (never starting one) where each connected peer's last
+ *   datagram came from, only when called; nothing it learns is logged.
  */
+import type { PlaySourceAddress, PlaySourceStat } from '@sovit/core';
 import { nfx } from '@sovit/core';
 import type { Logger } from '@sovit/seeder';
 
 import { HelperError, MAX_GET_BYTES, PoisonedError } from '../iroh/helper.js';
+import { socketAddr } from '../net/remote-addr.js';
 import type { NfxRtcConnection } from './rtc-node.js';
 import { holds } from './rtc-node.js';
-import type { NfxFetcher } from './watch.js';
+import type { NfxFetcher, NfxFetcherStats } from './watch.js';
 import { NfxFetchError } from './watch.js';
 
 /** What the fetcher needs of the helper (`IrohHelper`), so tests can stand in for it. */
@@ -37,6 +44,8 @@ export interface RtcFetchClient {
     expect: { readonly sha256: string; readonly maxBytes: number },
   ): Promise<Uint8Array>;
   rtcHangup(peer: number): Promise<boolean>;
+  /** Pear #123: where `peer`'s last datagram came from (`null`: none yet); absent: unknown. */
+  rtcPath?(peer: number): Promise<string | null>;
 }
 
 export type RtcFetchReason =
@@ -63,7 +72,25 @@ export interface RtcFetcherOptions {
   /** The node's open connections in `swarm`, as it knows them now. */
   readonly connections: (swarm: string) => readonly NfxRtcConnection[];
   readonly logger: Logger;
+  /** Pear #123: the running helper, if any (never started for stats); absent: none. */
+  readonly current?: () => RtcFetchClient | null;
+  /** Pear #123: the node's generation (every helper start, restart and stop); absent: 0. */
+  readonly generation?: () => number;
 }
+
+/** Peers whose deliveries one session remembers (the helper holds 32 connections at once). */
+const MAX_TALLIES = 256;
+
+interface Tally {
+  readonly peer: number;
+  readonly generation: number;
+  bytes: number;
+  files: number;
+}
+
+/** Pear #123: a peer as stats for nerds names it. */
+const rtcId = (generation: number, peer: number): string =>
+  `rtc:${String(generation)}.${String(peer)}`;
 
 /** Places one segment is asked for at (identical segments repeat, e.g. black frames). */
 const MAX_PLACES = 8;
@@ -117,6 +144,10 @@ export class RtcFetcher implements NfxFetcher {
   private readonly dropped = new Set<number>();
   /** The fetch each peer is serving (the helper allows one per peer). */
   private readonly turns = new Map<number, Promise<unknown>>();
+  /** Pear #123: the web swarms of this session's renditions, and what each peer delivered. */
+  private readonly swarms = new Set<string>();
+  private readonly tallies = new Map<string, Tally>();
+  private refused = 0;
   private closed = false;
 
   constructor(o: RtcFetcherOptions) {
@@ -145,16 +176,19 @@ export class RtcFetcher implements NfxFetcher {
     const reasons: RtcFetchReason[] = [];
     for (const c of asks) {
       if (this.isClosed()) throw new NfxFetchError(['closed']);
+      this.tally(c.peer, 0, 0);
       try {
         const bytes = await this.turn(c.peer, () =>
           client.rtcGetFile(c.peer, c.index, { sha256: sha, maxBytes: size }),
         );
         // Its sha256 is the listed one, so its size is too; a short `exact` read is a lie.
         if (exact && bytes.length !== size) throw new PoisonedError('a segment of another size');
+        this.tally(c.peer, bytes.length);
         return bytes;
       } catch (err) {
         if (this.isClosed()) throw new NfxFetchError(['closed']);
         const v = verdict(err);
+        if (v.reason === 'poisoned') this.refused++;
         reasons.push(v.reason);
         if (v.drop) {
           this.dropped.add(c.peer);
@@ -191,6 +225,7 @@ export class RtcFetcher implements NfxFetcher {
       if (!members.ok) continue;
       this.learned.add(sha);
       const swarm = this.o.video.webStreamSwarmId(r.id);
+      this.swarms.add(swarm);
       members.value.segments.forEach((f, index) => {
         const at = this.places.get(f.sha256) ?? [];
         if (at.length < MAX_PLACES) at.push({ swarm, index });
@@ -207,6 +242,89 @@ export class RtcFetcher implements NfxFetcher {
   /** Read through a call: `close` may run while a fetch awaits, which narrowing cannot see. */
   private isClosed(): boolean {
     return this.closed;
+  }
+
+  /**
+   * Pear #123: each peer that delivered a segment, and each peer connected in the session's
+   * swarm now (none yet delivered: 0 bytes).
+   */
+  stats(): NfxFetcherStats {
+    const generation = this.generation();
+    const open = this.isClosed() ? new Set<number>() : this.connected();
+    const rows = new Map<string, PlaySourceStat>();
+    const row = (id: string, bytes: number, files: number, connected: boolean): PlaySourceStat => ({
+      kind: 'webrtc',
+      id,
+      via: 'nostr',
+      bytesDown: bytes,
+      bytesUp: 0,
+      files,
+      connected,
+    });
+    for (const peer of open) this.tally(peer, 0, 0);
+    for (const t of this.tallies.values()) {
+      const id = rtcId(t.generation, t.peer);
+      rows.set(id, row(id, t.bytes, t.files, t.generation === generation && open.has(t.peer)));
+    }
+    for (const peer of open) {
+      const id = rtcId(generation, peer);
+      if (!rows.has(id)) rows.set(id, row(id, 0, 0, true));
+    }
+    return { sources: [...rows.values()], refused: this.refused };
+  }
+
+  /**
+   * Pear #123: where each peer connected in the session's swarm sent its last datagram from,
+   * asked of the running helper one at a time. Another host's address: handed back, never
+   * logged. No TURN in the helper, so an address it knows is the peer's own (or its NAT's).
+   */
+  async addresses(): Promise<readonly PlaySourceAddress[]> {
+    const client = this.o.current?.() ?? null;
+    if (client === null || this.isClosed()) return [];
+    const generation = this.generation();
+    const out: PlaySourceAddress[] = [];
+    for (const peer of this.connected()) {
+      let addr: string | null = null;
+      try {
+        addr = (await client.rtcPath?.(peer)) ?? null;
+      } catch {
+        // Gone, busy or restarting: unknown now.
+      }
+      // The helper restarted meanwhile: its ids now name other connections.
+      if (this.generation() !== generation) return [];
+      const address = socketAddr(addr);
+      const base = { kind: 'webrtc' as const, id: rtcId(generation, peer) };
+      out.push(
+        address === ''
+          ? { ...base, address: '', path: 'unknown' }
+          : { ...base, address, path: 'direct', detail: 'udp' },
+      );
+    }
+    return out;
+  }
+
+  /** The peers connected in this session's swarms now. */
+  private connected(): Set<number> {
+    const open = new Set<number>();
+    for (const swarm of this.swarms) for (const c of this.o.connections(swarm)) open.add(c.peer);
+    return open;
+  }
+
+  private generation(): number {
+    return this.o.generation?.() ?? 0;
+  }
+
+  private tally(peer: number, bytes: number, files = 1): void {
+    const generation = this.generation();
+    const key = rtcId(generation, peer);
+    let t = this.tallies.get(key);
+    if (t === undefined) {
+      if (this.tallies.size >= MAX_TALLIES) return;
+      t = { peer, generation, bytes: 0, files: 0 };
+      this.tallies.set(key, t);
+    }
+    t.bytes += bytes;
+    t.files += files;
   }
 
   close(): Promise<void> {

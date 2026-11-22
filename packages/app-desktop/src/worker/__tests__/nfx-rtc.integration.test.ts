@@ -146,11 +146,37 @@ describe.skipIf(HELPER === '' && !IN_CI)('#89: the WebRTC side, worker to worker
         client: () => viewer.start(),
         connections: (s) => viewer.connections(s),
         logger: silentLogger,
+        current: () => viewer.current(),
+        generation: () => viewer.generation,
       });
       fetcher.learn(v.root, v.files.get(v.root)!);
       for (const [sha, bytes] of v.files) fetcher.learn(sha, bytes);
       for (const [i, body] of bodies.entries())
         await expect(fetcher.fetch(v.segmentShas[i]!, body.length, true)).resolves.toEqual(body);
+
+      // Pear #123 (stats for nerds): the server delivered every segment, and the helper names
+      // where its last datagram came from (`rtc-path`): the server's loopback socket.
+      const id = `rtc:${String(viewer.generation)}.${String(offer.peer)}`;
+      expect(fetcher.stats().sources).toEqual([
+        {
+          kind: 'webrtc',
+          id,
+          via: 'nostr',
+          bytesDown: bodies.reduce((n, b) => n + b.length, 0),
+          bytesUp: 0,
+          files: bodies.length,
+          connected: true,
+        },
+      ]);
+      expect(await fetcher.addresses()).toEqual([
+        {
+          kind: 'webrtc',
+          id,
+          address: expect.stringMatching(/^127\.0\.0\.1:[0-9]+$/) as string,
+          path: 'direct',
+          detail: 'udp',
+        },
+      ]);
 
       // A file outside the store is refused by the helper itself (`root`).
       const outside = join(tmp.dir, 'outside');

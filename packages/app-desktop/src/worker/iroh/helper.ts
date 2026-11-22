@@ -169,6 +169,18 @@ export interface HelperStats {
   readonly storeBytes: number;
 }
 
+/**
+ * Pear #123 (ADR 0024): where a connection's data goes now (`conn-path`): its selected path,
+ * `direct` to `addr`, through the relay at host `relay`, `other`, or `none` selected. Untrusted
+ * like every reply, and another host's address: never logged.
+ */
+export interface HelperConnPath {
+  readonly path: 'direct' | 'relay' | 'other' | 'none';
+  readonly addr: string | null;
+  readonly relay: string | null;
+  readonly rttMs: number | null;
+}
+
 export class HelperError extends Error {
   override readonly name = 'HelperError' as const;
   /**
@@ -294,6 +306,26 @@ function uint(v: unknown, what: string): number {
   if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0)
     throw new TypeError(`${what} is not a non-negative integer`);
   return v;
+}
+
+/** A string or `null` (absent reads as `null`). */
+function optStr(v: unknown, what: string, max: number): string | null {
+  return v === null || v === undefined ? null : str(v, what, max);
+}
+
+const CONN_PATHS = ['direct', 'relay', 'other', 'none'] as const;
+
+function connPathOf(m: Readonly<Record<string, unknown>>): HelperConnPath {
+  const path = CONN_PATHS.find((p) => p === m['path']);
+  if (path === undefined) throw new TypeError('path is not one the helper names');
+  const rtt = m['rtt_ms'];
+  return {
+    path,
+    addr: optStr(m['addr'], 'addr', 64),
+    relay: optStr(m['relay'], 'relay', 255),
+    // A round trip is a measurement, not a count: an odd one is left out, never a violation.
+    rttMs: typeof rtt === 'number' && Number.isFinite(rtt) && rtt >= 0 ? rtt : null,
+  };
 }
 
 function strs(v: unknown, what: string): string[] {
@@ -631,6 +663,15 @@ export class IrohHelper {
     return (await this.request({ op: 'hangup', conn }))['closed'] === true;
   }
 
+  /**
+   * Pear #123 (ADR 0024): where connection `conn` goes now (its selected path). Read only while
+   * the viewer shows addresses; the answer is another host's address, never logged.
+   */
+  async connPath(conn: number): Promise<HelperConnPath> {
+    const m = await this.request({ op: 'conn-path', conn });
+    return this.believe(() => connPathOf(m));
+  }
+
   async stats(): Promise<HelperStats> {
     const m = await this.request({ op: 'stats' });
     const rss = m['rss_hwm_kib'];
@@ -724,6 +765,15 @@ export class IrohHelper {
 
   async rtcHangup(peer: number): Promise<boolean> {
     return (await this.request({ op: 'rtc-hangup', peer }))['closed'] === true;
+  }
+
+  /**
+   * Pear #123: where `peer`'s last accepted datagram came from (`null` before the first). As
+   * `connPath`: read only while the viewer shows addresses, never logged.
+   */
+  async rtcPath(peer: number): Promise<string | null> {
+    const m = await this.request({ op: 'rtc-path', peer });
+    return this.believe(() => optStr(m['addr'], 'addr', 64));
   }
 
   /** The live connections (to resync after `lost`). */
