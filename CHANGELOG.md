@@ -7,6 +7,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Changed
+
+- **The web client is built with nfx's player library at 059364f** (`packages/app-web/nfx-web.lock`,
+  nfx #102). Its stats for nerds panel now lists each WebRTC peer by short ID, with what it sent
+  and received, and shows a peer's address only behind the panel's "Show addresses" switch. The
+  desktop app is unchanged by it.
+
 ### CI
 
 - **`rust-advisories`** ignores RUSTSEC-2026-0543 (chrono is unmaintained; every version, no patched
