@@ -36,6 +36,8 @@
  *  4. The origin then refuses every segment, and playback goes on 15 s more, past the end of the
  *     last segment the origin served: those bytes came over WebRTC, from nfxd A's mesh endpoint,
  *     which the page met over strfry (it sent kind-25050 events there, and spoke to no tracker).
+ *     Stats for nerds (ADR 0024) then names that peer: a connected WebRTC row with bytes, whose
+ *     address (loopback, direct) appears only behind the switch, which is off again on reopening.
  *  5. Held renditions (pear #97, nfx #83): the fifth video plays past 5 s with nothing refused, as
  *     360p alone (no quality picker), and the page never asks nfxd C's origin for a 720p file
  *     (playlist, init or segment), so it never gets a 404.
@@ -1042,6 +1044,59 @@ async function main(): Promise<void> {
       throw new Error(
         `problems after the origin went: ${await text(page, '.nf-nfxwatch__problems')}`,
       );
+
+    // Stats for nerds: the peer those bytes came from, its address only behind the switch.
+    const nerd = page.getByTestId('nerd-stats');
+    const addressSwitch = nerd.getByRole('checkbox', { name: 'Show addresses' });
+    await page.locator('.nf-nfxwatch__nerd-toggle').click();
+    await nerd.waitFor({ timeout: 10_000 });
+    await page.waitForFunction(
+      () =>
+        [
+          ...document.querySelectorAll(
+            '[data-testid="nerd-stats"] tr[data-kind="webrtc"]:not(.nf-nerd__closed)',
+          ),
+        ].some((row) => {
+          const cells = row.querySelectorAll('td');
+          return (
+            cells[1]?.textContent !== 'all peers' &&
+            Number.parseFloat(cells[3]?.textContent ?? '') > 0
+          );
+        }),
+      undefined,
+      { timeout: 15_000, polling: 250 },
+    );
+    if (
+      (await addressSwitch.isChecked()) ||
+      (await nerd.locator('.nf-nerd__addr').count()) > 0 ||
+      (await nerd.locator('.nf-nerd__banner').count()) > 0
+    )
+      throw new Error('stats for nerds showed addresses before the switch');
+    await addressSwitch.check();
+    await nerd.locator('.nf-nerd__banner').waitFor({ timeout: 5_000 });
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll('[data-testid="nerd-stats"] tr[data-kind="webrtc"]')].some(
+          (row) =>
+            /^127\.0\.0\.1:\d+$/.test(row.querySelector('.nf-nerd__addr')?.textContent ?? '') &&
+            (row.querySelectorAll('td')[7]?.textContent ?? '').startsWith('direct'),
+        ),
+      undefined,
+      { timeout: 10_000, polling: 250 },
+    );
+    await addressSwitch.uncheck();
+    await nerd.locator('.nf-nerd__addr').first().waitFor({ state: 'detached', timeout: 5_000 });
+    await nerd.getByRole('button', { name: 'Close stats' }).click();
+    await nerd.waitFor({ state: 'detached', timeout: 5_000 });
+    await page.locator('video.nf-nfxwatch__video').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Stats for nerds' }).click();
+    await nerd.waitFor({ timeout: 5_000 });
+    if ((await addressSwitch.isChecked()) || (await nerd.locator('.nf-nerd__addr').count()) > 0)
+      throw new Error('stats for nerds kept the address switch on across reopening');
+    await page.keyboard.press('n');
+    await nerd.waitFor({ state: 'detached', timeout: 5_000 });
+    // Whether it held, never the address itself.
+    results['nerd'] = { peerRow: true, addressBehindSwitch: true, path: 'direct' };
 
     // 5. Held renditions: nfxd C holds the held video in 360p only, and its beacon says so.
     await go(page, `#/watch/${addr(held)}`);
