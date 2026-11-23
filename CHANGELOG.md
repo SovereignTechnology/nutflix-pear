@@ -16,6 +16,20 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Changed
 
+- **Free videos (NFX) are found through the network's own relay first** (ADR 0020, the
+  maintainer's decision of 2026-11-19), in the app and the web client. The Subscriptions, tags and
+  author feeds, search and opening a video ask the network's scoped relay (`relay.nutflix.xyz` by
+  default) first, and your read relays only as the fallback: when the scoped relay fails or times
+  out, has nothing, or returns a short page, which is then merged with theirs (one entry per
+  video, its newest revision, the scoped relay's copy on a tie). An outage, or a scoped relay that
+  restarted and is still empty or refilling, never blanks or shrinks the catalogue. This departs
+  on purpose from NFX-04 §4, which says public relays first.
+  - Search asks the scoped relay first only when it answers NIP-50 text search
+    (`relay.nutflix.xyz` does); otherwise your read relays first, as before.
+  - The scoped relay now sees which authors your Subscriptions feed follows, the tags and search
+    text you use and the videos you open; your read relays see them only when it falls short.
+  - Unchanged: beacons (the scoped relays only), where a free upload's announcement goes (your
+    write relays and the scoped relays), and the Network tab, which asks both at once.
 - **New default relays** (the maintainer's decisions of 2026-11-18), in the app and the web client
   alike:
   - **Signaling** goes first to the network's own relay, `wss://relay.nutflix.xyz`, which SovTech
@@ -37,6 +51,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   nfx #102). Its stats for nerds panel now lists each WebRTC peer by short ID, with what it sent
   and received, and shows a peer's address only behind the panel's "Show addresses" switch. The
   desktop app is unchanged by it.
+
+### Fixed
+
+- **The Network tab no longer drops videos** when the scoped relay's page and your read relays'
+  page are each short of a full page but longer together: the rest now comes on the next page.
 
 ### CI
 
