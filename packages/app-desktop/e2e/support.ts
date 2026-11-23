@@ -392,7 +392,11 @@ export async function checkNerdStats(page: Page, o: NerdStatsCheck): Promise<voi
   const addressSwitch = panel.getByRole('checkbox', { name: 'Show addresses' });
   const rows = panel.locator(`tr[data-kind="${o.kind}"]:not(.nf-nerd__closed)`);
   const open = async (): Promise<void> => {
-    await page.locator(o.video).click({ button: 'right', position: { x: 24, y: 24 } });
+    // Clear of what sits along the player's edges (its price, peers and controls).
+    const video = page.locator(o.video);
+    const box = await video.boundingBox();
+    if (box === null) throw new Error('stats for nerds: the video has no box');
+    await video.click({ button: 'right', position: { x: box.width / 4, y: box.height / 2 } });
     await page.getByRole('menuitem', { name: 'Stats for nerds', exact: true }).click();
     await panel.waitFor({ timeout: 10_000 });
   };
