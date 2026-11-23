@@ -360,3 +360,43 @@ and had to find and type both relays.
   what it lists and plays, the iroh relay its node id and traffic volume (never content: end to
   end encrypted). Seeding stays off by default, so a fresh install announces nothing.
 
+## Amendment 2026-11-19: catalog reads go to the network's own relay first
+
+Decided by the maintainer, 2026-11-19: a deliberate deviation from NFX-04 §4's SHOULD ("Catalog
+reads SHOULD go to public relays first, scoped relays as fallback"). NFX-04 is frozen and nfx keeps
+§4 as written, so the deviation is recorded here. It replaces slice 4b's "public relays first,
+scoped relays as the fallback" (above) for the app and the web client, which share `NfxCatalog` in
+core.
+- **The scoped relays first.** The Subscriptions, tags and author feeds, search and
+  `nfxVideo(addr)` read the network's scoped relays (`wss://relay.nutflix.xyz` by default) before
+  anything else: the network's own relay first, so third-party relays are only a fallback.
+- **The read relays stay as the fallback,** so an outage, or an empty in-memory relay after a
+  restart, never blanks or shrinks the catalog. `relay.nutflix.xyz` keeps manifests in memory:
+  after a restart it answers but is empty, or partly refilled, until seeders re-send them (up to
+  6 hours; seen 2026-11-16 and 2026-11-17). The read relays are asked when the scoped read throws
+  or times out, when it finds nothing, and when it returns a short page (fewer items than the
+  query's limit). A short page is merged with theirs: one video per address (kind:pubkey:d), the
+  newest revision winning and the scoped copy winning a tie, newest first, at most the limit. If
+  the read relays fail too, a short scoped page still stands. Without scoped relays the read
+  relays are read alone, as before.
+- **Search** reads the scoped relays first only when every one of them lists NIP-50 in its NIP-11
+  document; `relay.nutflix.xyz` (nfx-node) does. A scoped relay that does not is only scanned
+  (ADR 0022): a page downloads up to 100 manifests and matches them locally, few matches are
+  normal however healthy the relay is, and the page's cursor marks how far it read. Putting it
+  first would add a heavy scan in front of nearly every search, so search keeps §4's order there.
+- **Twins (slice 5d-4).** The lookup of a NIP-71 video's NFX copy outside the page reads the scoped
+  relays only, which every feed page reads first, so a copy found there is one a feed lists. A copy
+  only the read relays hold is not found, and its NIP-71 video stays (a duplicate, never a gap).
+- **Unchanged:** beacons (the scoped relays only, never public: NFX-03 §7), manifest publishing
+  (the write relays and the scoped relays, keeping §4's mirroring), and the Network feed, which
+  asks both relay sets at once (the 2026-11-07 note). Its merge already let the scoped copy win a
+  tie; it now also keeps a cursor when two short pages together run past the limit, where it
+  dropped the overflow before.
+- **The cost.** SovTech's scoped relay now sees every catalog read: which authors a Subscriptions
+  feed follows, the tags and search text, the videos opened. The read relays see them only when it
+  falls short. A scoped relay that is partial but still fills a page is taken at its word for that
+  page: videos only the read relays hold, newer than where its pages run short, show in the Network
+  feed but not in that feed until it refills. A tie between two different revisions of the same
+  second goes to the scoped copy, not to NFX-02 §4's lowest id, which still decides within one
+  relay set.
+
