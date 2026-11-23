@@ -22,12 +22,12 @@ describe('nfxWorkerArgs (#89)', () => {
   });
 
   it('with a helper: on by default at the network’s STUN; off by switch, NFX, no STUN or no signaling relay', () => {
-    expect(nfxWorkerArgs(DEFAULT_SETTINGS, true).rtc).toEqual({ stun: ['web.nutflix.xyz:3478'] });
+    expect(nfxWorkerArgs(DEFAULT_SETTINGS, true).rtc).toEqual({ stun: ['relay.nutflix.xyz:3478'] });
     // A stored v16 value: absent WebRTC is on, absent STUN and relays are the defaults.
     expect(nfxWorkerArgs(with_(NFX), true)).toEqual({
       enabled: true,
       irohRelays: [],
-      rtc: { stun: ['web.nutflix.xyz:3478'] },
+      rtc: { stun: ['relay.nutflix.xyz:3478'] },
     });
     const stunServers = ['stun.test:3478', '[2001:db8::1]:19302'] as StunServer[];
     expect(nfxWorkerArgs(with_({ ...NFX, stunServers }), true).rtc).toEqual({
@@ -48,8 +48,8 @@ describe('nfxWorkerArgs (#89)', () => {
     expect(nfxWorkerArgs(with_({ ...NFX, irohRelays }), true).irohRelays).toEqual(irohRelays);
   });
 
-  it('signals on the default pair unless the user lists relays', () => {
-    expect(DEFAULT_NFX_MESH_RELAYS).toHaveLength(2);
+  it('signals on the default list unless the user lists relays', () => {
+    expect(DEFAULT_NFX_MESH_RELAYS).toHaveLength(3);
     expect(nfxMeshRelays(with_(NFX))).toEqual(DEFAULT_NFX_MESH_RELAYS);
     expect(nfxMeshRelays(DEFAULT_SETTINGS)).toEqual(DEFAULT_NFX_MESH_RELAYS);
     const meshRelays = ['wss://signal.test' as RelayUrl];
