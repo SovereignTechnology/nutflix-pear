@@ -57,7 +57,7 @@ the locked directories.
 
 These are known limits of the released app, not bugs awaiting a report:
 
-- **Relays see you.** The four default relays learn your IP address and what you ask them for
+- **Relays see you.** The two default relays learn your IP address and what you ask them for
   (ADR 0009), and so do NFX's two default relays, `relay.nutflix.xyz` and `iroh.nutflix.xyz`, which
   SovTech runs (ADR 0020, 2026-11-08); switch NFX off in Settings to stop contacting them. After
   0.1.3 the scoped relay is asked first for every NFX catalogue read (ADR 0020, 2026-11-19), so it
@@ -66,9 +66,10 @@ These are known limits of the released app, not bugs awaiting a report:
   private-browsing claim.
 - **WebRTC peers, a STUN server and signaling relays see you** (since 0.1.3; ADR 0023).
   With NFX on, the app trades video with web browsers over WebRTC. The peers it connects to learn
-  your IP address; so does the network's STUN server (`web.nutflix.xyz:3478`, asked every 25 s
-  while this runs). The signaling relays (by default `relay.primal.net` and `relay.ditto.pub`,
-  NFX-10 §6) learn your IP address and which videos you seed or watch; connection details are
+  your IP address; so does the network's STUN server (`relay.nutflix.xyz:3478`, asked every 25 s
+  while this runs). The signaling relays (by default the network's own `relay.nutflix.xyz`,
+  which SovTech runs, then `relay.primal.net` and `relay.ditto.pub`; NFX-10 §6) learn your IP
+  address and which videos you seed or watch; connection details are
   encrypted to the peer. Anyone reading those relays sees that some app is in a video's room,
   under a random session key: a new one for each video you watch, and one for what the app seeds
   (which its beacons already announce), never your own key. Anyone who knows a video can join

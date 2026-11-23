@@ -113,7 +113,7 @@ const isWebNfx = obj<NfxSettings>(
     network: (x): x is string => x === WEB_NFX_NETWORK,
     scopedRelays: unique(arrayOf(isScopedRelayUrl, MAX_SCOPED_RELAYS)),
   },
-  // Contracts v18: the signaling relays (absent: the default pair; empty: no mesh).
+  // Contracts v18: the signaling relays (absent: the default list; empty: no mesh).
   { meshRelays: unique(arrayOf(isScopedRelayUrl, WEB_MAX_MESH_RELAYS)) },
 );
 
