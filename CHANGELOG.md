@@ -7,6 +7,13 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- **Stats for nerds in the video player** (#123, ADR 0024). Right-click the video, use its menu or
+  press `n` to see where the video is coming from, source by source. Peers show by short ID.
+  Their addresses appear only behind a "Show addresses" switch, which is off every time the panel
+  opens and is never saved.
+
 ### Changed
 
 - **Free videos (NFX) are found through the network's own relay first** (ADR 0020, the

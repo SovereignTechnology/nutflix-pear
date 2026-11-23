@@ -372,6 +372,79 @@ export async function launch(
 }
 
 /** The recursive own-key tree of an object as dotted names (for the preload allowlist). */
+/** What `checkNerdStats` looks for: the source's row and where its address must point. */
+export interface NerdStatsCheck {
+  /** The `<video>` to right-click. */
+  readonly video: string;
+  readonly kind: 'iroh' | 'hypercore';
+  /** Whether a row's Address and Path cells are the route this run must show. */
+  readonly route: (address: string, path: string) => boolean;
+}
+
+/**
+ * Stats for nerds (ADR 0024), driven as a viewer drives it: right-click opens it on a connected
+ * `kind` row that has received data, with no address; the switch shows the route under a banner;
+ * closed with the switch on, it reopens with the switch off; `n` closes it. Errors never quote an
+ * address.
+ */
+export async function checkNerdStats(page: Page, o: NerdStatsCheck): Promise<void> {
+  const panel = page.getByTestId('nerd-stats');
+  const addressSwitch = panel.getByRole('checkbox', { name: 'Show addresses' });
+  const rows = panel.locator(`tr[data-kind="${o.kind}"]:not(.nf-nerd__closed)`);
+  const open = async (): Promise<void> => {
+    // Clear of what sits along the player's edges (its price, peers and controls).
+    const video = page.locator(o.video);
+    const box = await video.boundingBox();
+    if (box === null) throw new Error('stats for nerds: the video has no box');
+    await video.click({ button: 'right', position: { x: box.width / 4, y: box.height / 2 } });
+    await page.getByRole('menuitem', { name: 'Stats for nerds', exact: true }).click();
+    await panel.waitFor({ timeout: 10_000 });
+  };
+  const cells = (): Promise<string[][]> =>
+    rows.evaluateAll((trs) =>
+      trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent)),
+    );
+  const until = async (what: string, test: (row: string[]) => boolean): Promise<void> => {
+    const end = Date.now() + 30_000;
+    while (!(await cells()).some(test)) {
+      if (Date.now() > end) throw new Error(`stats for nerds: no ${o.kind} row with ${what}`);
+      await page.waitForTimeout(250);
+    }
+  };
+  const hasRoute = (row: string[]): boolean => o.route(row[6] ?? '', row[7] ?? '');
+  const assertNoAddress = async (when: string): Promise<void> => {
+    if (
+      (await addressSwitch.isChecked()) ||
+      (await panel.locator('.nf-nerd__addr').count()) > 0 ||
+      (await panel.locator('.nf-nerd__banner').count()) > 0
+    )
+      throw new Error(`stats for nerds: addresses showing ${when}`);
+  };
+
+  await open();
+  await until('data received', (row) => Number.parseFloat(row[3] ?? '') > 0);
+  await assertNoAddress('when it opened');
+
+  await addressSwitch.check();
+  await panel.locator('.nf-nerd__banner').waitFor({ timeout: 5_000 });
+  await until('the expected route', hasRoute);
+
+  await addressSwitch.uncheck();
+  await panel.locator('.nf-nerd__addr').first().waitFor({ state: 'detached', timeout: 5_000 });
+  await assertNoAddress('after the switch went off');
+
+  // On again and closed that way, so that reopening has a switch to reset.
+  await addressSwitch.check();
+  await until('the expected route again', hasRoute);
+  await panel.getByRole('button', { name: 'Close stats' }).click();
+  await panel.waitFor({ state: 'detached', timeout: 5_000 });
+
+  await open();
+  await assertNoAddress('after reopening');
+  await page.keyboard.press('n');
+  await panel.waitFor({ state: 'detached', timeout: 5_000 });
+}
+
 export const KEY_TREE_SOURCE = `(() => {
   const walk = (o, p) => Object.keys(o).flatMap((k) => {
     const n = p === '' ? k : p + '.' + k;

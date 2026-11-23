@@ -24,7 +24,8 @@
  *
  * Asserts: Play — free → the `<video>` plays past 3 s with no error and a picture, main's media
  * proxy answered with bytes and holds one link; switching quality opens the other rendition, which
- * plays too, still one link. On failure the window is screenshotted and every process's log kept
+ * plays too, still one link. Stats for nerds names nfxd's iroh node, with its route only behind
+ * the switch (`checkNerdStats`). On failure the window is screenshotted and every process's log kept
  * in `NUTFLIX_EXIT_LOGS` (the workflow uploads it).
  */
 import assert from 'node:assert/strict';
@@ -49,7 +50,7 @@ import { after, before, describe, it } from 'node:test';
 import createTestnet from 'hyperdht/testnet.js';
 import type { ElectronApplication, Page } from 'playwright-core';
 
-import { PKG, electronBinary, launch, sandboxReady } from './support.ts';
+import { PKG, checkNerdStats, electronBinary, launch, sandboxReady } from './support.ts';
 
 const EXIT = process.env['NUTFLIX_EXIT_RUN'] === '1';
 const NS = 'nfx:testnet:1';
@@ -498,6 +499,21 @@ void describe(
         assert.ok(s.h > 0, 'a picture');
         assert.ok((await mediaAnswered(app)) > 0, 'main proxied bytes');
         assert.equal(await mediaLinks(app), 1);
+      });
+    });
+
+    void it('stats for nerds names the iroh seeder, its route only behind the switch', async () => {
+      const { page } = the();
+      await evidence('nerd-stats', async () => {
+        await checkNerdStats(page, {
+          video: 'video.nf-nfxwatch__video',
+          kind: 'iroh',
+          // Direct with its address, or through the local relay, which names no peer address.
+          route: (address, path) =>
+            (path.startsWith('direct') &&
+              /^(\d{1,3}\.){3}\d{1,3}:\d+$|^\[.+\]:\d+$/.test(address)) ||
+            (address === 'hidden' && path.startsWith('relayed')),
+        });
       });
     });
 

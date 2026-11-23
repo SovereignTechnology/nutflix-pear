@@ -306,6 +306,14 @@ export class PlaybackCoordinator {
       setPrefetchSeconds: (sec) => {
         inner.setPrefetchSeconds(sec);
       },
+      // v19 (ADR 0024): present only where the adapter can say, so that stats for nerds offers
+      // its address switch only then. A closed session has no connections to name.
+      ...(inner.addresses === undefined
+        ? {}
+        : {
+            addresses: () =>
+              entry.closed ? Promise.resolve([]) : (inner.addresses?.() ?? Promise.resolve([])),
+          }),
       pause: () => {
         if (entry.closed) return;
         this.pauseEntry(entry);
