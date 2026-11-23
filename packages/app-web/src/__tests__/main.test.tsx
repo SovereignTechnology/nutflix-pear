@@ -147,7 +147,7 @@ describe('the web shell (ADR 0022)', () => {
     expect(container.querySelector('[id$="-appearance-remote-images"]')).toBeNull();
     expect(container.querySelector('[id$="-nfx-enabled"]')).toBeNull();
     expect(container.querySelector('[id$="-nfx-iroh-add"]')).toBeNull();
-    // Pear #89: signaling relays, the pair the desktop app uses; no tracker anywhere.
+    // Pear #89: signaling relays, the ones the desktop app uses; no tracker anywhere.
     expect(container.querySelector('[id$="-nfx-mesh-add"]')).not.toBeNull();
     expect(container.textContent).toContain('wss://relay.ditto.pub');
     expect(container.textContent).not.toContain('tracker');

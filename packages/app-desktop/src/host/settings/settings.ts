@@ -25,7 +25,7 @@ export const DESKTOP_FILE = 'desktop.json';
 const FILE_V = 1 as const;
 
 /**
- * First-run settings. Decisions (docs/archive/lanes/L6-B.md; ADR 0009): four public relays so a
+ * First-run settings. Decisions (docs/archive/lanes/L6-B.md; ADR 0009): two public relays so a
  * first run shows something; no default mint (the user chooses who holds their money);
  * seeding OFF until the user opts in (it spends disk and upload bandwidth); NFX on, on the test
  * network's public relays (ADR 0020, 2026-11-08: `DEFAULT_NFX`); a 30 s prefetch ("buffer =
@@ -39,23 +39,29 @@ const FILE_V = 1 as const;
  *
  * ADR 0023 (the maintainer, 2026-11-09): WebRTC with web browsers is on too, with the disclosure
  * Settings gives, and learns its public address from the network's own STUN server, the one the
- * web client uses (web.nutflix.xyz:3478, nfxd `--stun`, ADR 0022 item 4).
+ * web client uses (relay.nutflix.xyz:3478, nfxd `--stun`, ADR 0022 item 4). Named
+ * relay.nutflix.xyz since 2026-11-18 (the maintainer): the same address and STUN responder as
+ * web.nutflix.xyz, under the network's own relay name.
  */
 export const DEFAULT_NFX_STUN_SERVERS: readonly StunServer[] = Object.freeze([
-  'web.nutflix.xyz:3478' as StunServer,
+  'relay.nutflix.xyz:3478' as StunServer,
 ]);
 /**
- * Contracts v18 (the maintainer, 2026-11-15): WebRTC connections are signaled over ordinary Nostr
- * relays (NFX-10 §6), and the scoped relay refuses that kind, so two of the app's default public
- * relays carry it. They are picked by `scripts/mesh-relay-soak.mjs`: on 2026-11-16 nos.lol,
- * relay.primal.net and relay.ditto.pub each accepted and delivered every kind-25050 event for ten
- * minutes, and relay.damus.io refused the connection (HTTP 403). These two are the pair with
- * different operators and no history of rate-limiting this project's own traffic. The web
- * client signals on the same pair, so a browser and this app meet there. They learn the user's
- * IP address and which videos' rooms it is in; Settings › NFX network lists them, and either can
- * be replaced or removed.
+ * Contracts v18 (the maintainer, 2026-11-15): WebRTC connections are signaled over Nostr relays
+ * (NFX-10 §6). The maintainer's 2026-11-18 decision puts the network's own relay first:
+ * `wss://relay.nutflix.xyz`, the scoped relay itself, which SovTech runs. NFX-04 §1, amended that
+ * day as an exception to its freeze, lets a scoped relay accept kind 25050 `nfx-mesh/1` as an
+ * ephemeral (never stored); one that does lists 25050 in its NIP-11 `nfx.kinds` (§3). The two
+ * public relays after it are the app's default relays, picked by
+ * `scripts/mesh-relay-soak.mjs`: on 2026-11-16 nos.lol, relay.primal.net and relay.ditto.pub each
+ * accepted and delivered every kind-25050 event for ten minutes, and relay.damus.io refused the
+ * connection (HTTP 403). These two are the pair with different operators and no history of
+ * rate-limiting this project's own traffic. The web client signals on the same list, so a browser
+ * and this app meet there. They learn the user's IP address and which videos' rooms it is in;
+ * Settings › NFX network lists them, and any of them can be replaced or removed.
  */
 export const DEFAULT_NFX_MESH_RELAYS: readonly RelayUrl[] = Object.freeze([
+  'wss://relay.nutflix.xyz' as RelayUrl,
   'wss://relay.primal.net' as RelayUrl,
   'wss://relay.ditto.pub' as RelayUrl,
 ]);
@@ -70,9 +76,9 @@ export const DEFAULT_NFX: NfxSettings = Object.freeze({
 });
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
+  // The maintainer, 2026-11-18: relay.damus.io refuses this project's address and nos.lol has
+  // rate-limited it, so neither is a default any more.
   relays: Object.freeze([
-    Object.freeze({ url: 'wss://relay.damus.io' as RelayUrl, read: true, write: true }),
-    Object.freeze({ url: 'wss://nos.lol' as RelayUrl, read: true, write: true }),
     Object.freeze({ url: 'wss://relay.primal.net' as RelayUrl, read: true, write: true }),
     // ADR 0009's 2026-11-07 amendment: the one free, open relay that answers NIP-50 text search,
     // which this app's Search relies on. Without it Search finds nothing on a first run.
@@ -135,7 +141,7 @@ export function parseStoredSettings(raw: unknown): StoredSettings | null {
   const kept = isSettingsPatch(nfxPatch)
     ? nfxPatch
     : (withoutWebrtc(nfx) ?? { nfx: { ...DEFAULT_NFX, enabled: false } });
-  // Contracts v18: a stored `nfx` from before the signaling relays gets the default pair, so
+  // Contracts v18: a stored `nfx` from before the signaling relays gets the default list, so
   // Settings lists the relays actually used (absent means that default) and the user can edit it.
   const filled: Partial<Settings> =
     kept.nfx === undefined || kept.nfx.meshRelays !== undefined
