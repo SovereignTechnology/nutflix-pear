@@ -247,6 +247,23 @@ describe('PlaybackCoordinator', () => {
     expect(t.live()).toBe(0);
   });
 
+  it('passes addresses through only where the adapter has them, and none once closed', async () => {
+    const t = setup();
+    const s = await t.a.play(V1);
+    expect((await s.addresses?.())?.length).toBeGreaterThan(0);
+    await s.close();
+    await expect(s.addresses?.()).resolves.toEqual([]);
+
+    const inner = await t.base.play(V2);
+    const bare: PlaySession = { ...inner };
+    delete bare.addresses;
+    vi.spyOn(t.base, 'play').mockResolvedValueOnce(bare);
+    const none = await t.a.play(V2);
+    expect('addresses' in none).toBe(false);
+    await none.close();
+    expect(t.live()).toBe(0);
+  });
+
   it('a closed session ignores pause/resume and close is idempotent', async () => {
     const t = setup();
     const s1 = await t.a.play(V1);
