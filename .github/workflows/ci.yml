@@ -58,8 +58,36 @@ jobs:
             const p = require("./package-lock.json").packages;
             const bad = Object.entries(p).filter(([k, v]) => k.startsWith("node_modules/") && !v.link && v.resolved && !/^https:\/\/registry\.npmjs\.org\//.test(v.resolved));
             if (bad.length) { console.error("non-registry resolutions:", bad.map(([k]) => k)); process.exit(1); }'
+      # npm checks every registry signature and attestation on every run, against keys from
+      # Sigstore's TUF root. An attestation document never changes for a version, and the registry's
+      # CDN caches it for a year. Runs on GitHub's AWS us-west-2 runners keep getting one of them
+      # (caniuse-lite 1.0.30001818 from 11-16, enhanced-resolve 5.27.0 after it) in a form npm
+      # rejects as EMISSINGSIGNATUREKEY: from 2026-11-16 to 11-24, 36 of the 37 runs there failed this
+      # step and none of the 81 elsewhere did. So npm keeps its HTTP cache from the last passing
+      # run: the next run reads those documents from disk, wherever it lands, verifies them again
+      # all the same, and goes to the network only for ones no passing run has seen. Saved only after
+      # a pass, so nothing npm rejected is kept. A newly locked package that the same edge serves
+      # badly still fails until a run elsewhere passes.
+      - name: npm's cache from the last passing signature check
+        id: audit-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/npm-audit/_cacache
+          key: npm-audit-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-audit-
       - name: registry signatures and provenance
-        run: npm audit signatures
+        run: npm audit signatures --cache "$RUNNER_TEMP/npm-audit"
+      - name: tidy npm's cache before it is kept (superseded entries out; its size in the log)
+        if: steps.audit-cache.outputs.cache-hit != 'true'
+        run: |
+          npm cache verify --cache "$RUNNER_TEMP/npm-audit"
+          du -sh "$RUNNER_TEMP/npm-audit/_cacache"
+      - if: steps.audit-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/npm-audit/_cacache
+          key: npm-audit-${{ hashFiles('package-lock.json') }}
       - name: advisories (high and above)
         run: npm audit --audit-level=high
       - run: npm run lint
