@@ -232,8 +232,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly seeded: SeededVideos | null;
   /** Slice 5d: the free NFX play sessions, by sid (each with its owner). */
   private readonly nfxSessions = new Map<string, NfxHostSession>();
-  /** NFX-10 §1: the STUN servers each open NFX play's beacons named, by sid (`namedStun`). */
-  private readonly nfxStunClaims = new Map<string, readonly nfx.StunClaim[]>();
+  /** NFX-10 §1: the STUN servers each open NFX play's creator named, by sid (`namedStun`). */
+  private readonly nfxStunCreator = new Map<string, readonly string[]>();
   /** What the worker last took (`nfx.rtc.stun`), so an unchanged pick is not sent again. */
   private nfxStunPushed = '';
   private nfxStunQueue: Promise<void> = Promise.resolve();
@@ -399,17 +399,18 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   }
 
   /**
-   * NFX-10 §1 (the maintainer's plan of 2026-11-19, step 5): the STUN servers that the beacons of
-   * the open NFX plays name, as core's `nfx.selectStunServers` picks them after the settings' own:
-   * global unicast only, by distinct keys, a lone key never beside a server of the user's own, 4
-   * in all. None while the worker has no WebRTC side, which an empty `stunServers` turns off too:
-   * a user who lists no STUN server is never handed one by Nostr.
+   * NFX-10 §1 ("the creator's, or the fallback", nfx ADR 0107): the STUN servers the creators of
+   * the open NFX plays name in their own beacons, as core's `nfx.selectStunServers` picks them
+   * after the settings' own: global unicast, port 1024 or above, 4 in all. No other key's beacon
+   * adds one, however many keys name it, and no announcement ever does. None while the worker has
+   * no WebRTC side, which an empty `stunServers` turns off too: a user who lists no STUN server is
+   * never handed one by Nostr.
    */
   private namedStun(s: Settings): string[] {
     const rtc = this.workerArgs(s).rtc;
     if (rtc === null || rtc === undefined) return [];
-    const claims = [...this.nfxStunClaims.values()].flat();
-    return [...nfx.selectStunServers(rtc.stun, claims).named];
+    const creator = [...this.nfxStunCreator.values()].flat();
+    return [...nfx.selectStunServers(rtc.stun, creator).named];
   }
 
   /** `namedStun` to the worker's WebRTC side when it changed; one at a time, never throws. */
@@ -931,8 +932,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       addresses: async (x) => (await this.o.worker('nfx.play.addresses', { sid: x.sid })).addresses,
     });
     this.nfxSessions.set(sid, s);
-    // NFX-10 §1: the STUN servers its beacons name, beside the settings' own, while it plays.
-    this.nfxStunClaims.set(sid, nfx.beaconStunClaims(video, events, this.now()));
+    // NFX-10 §1: the STUN servers its creator's beacon names, beside the settings' own, while it plays.
+    this.nfxStunCreator.set(sid, nfx.creatorStunServers(video, events, this.now()));
     void this.pushNamedStun();
     // #89: meet the rendition's web swarm too (browsers and other peers holding its segments).
     const at = nfx.VideoAddr.parse(d);
@@ -956,7 +957,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   private async endNfxSession(s: NfxHostSession, viaWorker: boolean): Promise<void> {
     this.nfxSessions.delete(s.sid);
-    if (this.nfxStunClaims.delete(s.sid)) void this.pushNamedStun();
+    if (this.nfxStunCreator.delete(s.sid)) void this.pushNamedStun();
     this.mesh.unplay(s.sid);
     this.o.mediaLink(s.linkToken, null);
     if (viaWorker) await this.o.worker('nfx.play.close', { sid: s.sid }).catch(() => undefined);
@@ -1464,7 +1465,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   onWorkerDown(): void {
     this.mesh.reset();
     // NFX-10 §1: the next worker starts with no named STUN server, and the plays end below.
-    this.nfxStunClaims.clear();
+    this.nfxStunCreator.clear();
     this.nfxStunPushed = '';
     this.sessions.dropAll();
     // Slice 5d: the worker's NFX sessions died with it; revoke their links.

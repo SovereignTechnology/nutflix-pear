@@ -1,6 +1,6 @@
 /**
  * Every NFX test vector this package implements (docs/vendor/nfx-test-vectors, nfx commit
- * b5fe5e4), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
+ * 2389fc4, PR #117's head), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
  * reproduced up to their id: nfx-proto re-signs with a zero BIP-340 `aux_rand`, which no
  * signer here exposes, so a rebuilt event's id is compared and the vector's signature verified.
  */
@@ -37,6 +37,7 @@ import {
   encodeFilesMessage,
   encodePayMessage,
   hyperdhtBindMessage,
+  isGlobalStunAddr,
   manifestATag,
   manifestTags,
   parseBeacon,
@@ -46,6 +47,7 @@ import {
   renderHashList,
   renditionForPlaylist,
   resolveContentName,
+  selectStunServers,
   validateVideoId,
   verifyEvent,
   verifyFile,
@@ -88,6 +90,7 @@ const VECTOR_FILES = [
   'manifest.json',
   'mesh-signal-invalid.json',
   'mesh-signal.json',
+  'stun-select.json',
 ];
 
 interface RawEvent {
@@ -707,5 +710,42 @@ describe('NFX-12 nfx/files/1 and nfx/pay/1 (files1.json)', () => {
           : decodeFilesMessage(c.index, bytes);
       expect(decoded.ok, `${c.name} must be rejected`).toBe(false);
     }
+  });
+});
+
+/**
+ * NFX-10 §1 STUN selection (stun-select.json, nfx ADR 0107): its own, then the creator's, 4 in
+ * all. `cases` run through `selectStunServers` with the creator's servers as `creatorStunServers`
+ * gives them: the beacon pairs whose signer is the creator, in the order heard. Announcements are
+ * in each case only to show they are never selected, so they are never passed. The `fallback`
+ * cases belong to the per-connection fallback, which this package does not implement yet.
+ */
+describe('NFX-10 §1 STUN selection (stun-select.json)', () => {
+  const v = load('stun-select.json') as {
+    max: number;
+    cases: {
+      name: string;
+      own: string[];
+      creator: string;
+      beacons: [string, string][];
+      announced: [string, string][];
+      selected: string[];
+    }[];
+    global_unicast: { yes: string[]; no: string[] };
+  };
+
+  it('pins the cap at 4', () => {
+    expect(v.max).toBe(4);
+  });
+
+  it.each(v.cases.map((c) => [c.name, c] as const))('%s', (_, c) => {
+    const creator = c.beacons.filter(([signer]) => signer === c.creator).map(([, addr]) => addr);
+    const s = selectStunServers(c.own, creator, v.max);
+    expect([...s.own, ...s.named]).toEqual(c.selected);
+  });
+
+  it('global unicast as the selection counts it', () => {
+    for (const a of v.global_unicast.yes) expect(isGlobalStunAddr(a), a).toBe(true);
+    for (const a of v.global_unicast.no) expect(isGlobalStunAddr(a), a).toBe(false);
   });
 });

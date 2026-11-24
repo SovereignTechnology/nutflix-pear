@@ -1,9 +1,12 @@
 # NFX test vectors
 
-Byte-for-byte copies of fifteen files from the NFX suite's `spec/test-vectors/`, at nfx commit
-`b5fe5e472accd9d8c2548faad419a40a1885a61e` (SovereignTechnology/nfx `main`, the merge of PR #81;
-the twelve files vendored before, at `47cb059`, are unchanged there). They are the golden fixtures `packages/core/src/nfx/` is written against (NFX-11 §4:
-the wire is pinned by its fixtures, not by a library version).
+Byte-for-byte copies of sixteen files from the NFX suite's `spec/test-vectors/`, at nfx commit
+`2389fc4af6bc8bb905a718873535047e819f75ae` (SovereignTechnology/nfx PR #117's head, "the creator's
+STUN servers, or the fallback", nfx ADR 0107). The fifteen files vendored before, at `b5fe5e4`
+(the merge of PR #81), are byte-identical there; `stun-select.json` is new. **Re-vendor at #117's
+merge commit before this repository's STUN selection ships.** They are the golden fixtures
+`packages/core/src/nfx/` is written against (NFX-11 §4: the wire is pinned by its fixtures, not by
+a library version).
 
 | File                                                     | What it pins                                     |
 | -------------------------------------------------------- | ------------------------------------------------ |
@@ -17,6 +20,7 @@ the wire is pinned by its fixtures, not by a library version).
 | `files1.json`                                            | `nfx/files/1` and `nfx/pay/1` messages (NFX-12 §§4–5) |
 | `beacon-stun.json`                                       | the `stun` endpoint (NFX-10 §1)                  |
 | `mesh-signal.json`, `mesh-signal-invalid.json`           | signaling over Nostr, kind 25050 `nfx-mesh/1` (NFX-10 §6) |
+| `stun-select.json`                                       | which STUN servers a client uses: its own, the creator's, the fallback (NFX-10 §1) |
 
 `SHA256SUMS` pins every file. `packages/core/src/nfx/__tests__/vectors.test.ts` recomputes the
 hashes and fails on a changed, missing or unpinned file, then runs every case.

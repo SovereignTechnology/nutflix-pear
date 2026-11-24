@@ -749,17 +749,21 @@ async fn named_servers_are_checked_and_capped() {
         .await
         .unwrap_err();
     assert_eq!(err.code, "bad-request");
-    // Not global unicast, or no port: refused whole, and the last list stays.
+    // Not global unicast, no port, or a well-known port: refused whole, and the last list stays.
     for bad in [
         "127.0.0.1:3478",
         "10.0.0.1:3478",
         "100.64.0.1:3478",
         "192.0.2.1:3478",
         "1.2.3.4:0",
+        "1.2.3.4:53",
+        "1.2.3.4:1023",
     ] {
         let err = h.set_named(vec![global(1), addr(bad)]).await.unwrap_err();
         assert_eq!(err.code, "bad-request", "{bad}");
     }
+    // Port 1024 is the lowest a named server may use.
+    assert_eq!(h.set_named(vec![addr("1.2.3.4:1024")]).await.unwrap(), 1);
     // A repeat, an own server and the other family are not asked twice, or at all.
     assert_eq!(h.set_named(vec![global(1), global(1)]).await.unwrap(), 1);
     assert_eq!(

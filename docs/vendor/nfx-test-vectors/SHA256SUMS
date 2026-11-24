@@ -1,5 +1,5 @@
-# sha256 of each vendored NFX test vector: nfx commit b5fe5e472accd9d8c2548faad419a40a1885a61e
-# (SovereignTechnology/nfx main, the merge of PR #81; spec/test-vectors/). packages/core/src/nfx/__tests__ checks it.
+# sha256 of each vendored NFX test vector: nfx commit 2389fc4af6bc8bb905a718873535047e819f75ae
+# (SovereignTechnology/nfx PR #117 head; the fifteen files vendored at b5fe5e4 are unchanged there; spec/test-vectors/). packages/core/src/nfx/__tests__ checks it.
 52ed1e9a8eedd73e2334659b3c6c09f0f0a674257cd5066c4d9fbe682277831d  beacon-hyperdht.json
 828e8b298ab9180dfc660156749122c760eab545f3c4c3e9e3cc172fef552761  beacon-invalid.json
 2f291515e7e82c185b84bb5b5568f3add8cf6672cfbde3e3d2c0d52540e67678  beacon.json
@@ -15,3 +15,4 @@
 4328986b13ba9a21b40bd8961b2e95fa45ba2f3449d387172e98e171241307c7  manifest-open.json
 e63830db187c0e5e540f96d531e578dedac7938ca37e835b9ad89315c439d639  mesh-signal-invalid.json
 9be572db4a410764ab3ef6468bdbcbc6adcc68cd5d98c40ee0329c4dbb82dae2  mesh-signal.json
+6dc25b9903513d0935110c3713485395cce49fde81a6e60b257b331ee4afc50d  stun-select.json

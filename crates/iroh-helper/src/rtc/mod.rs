@@ -46,6 +46,10 @@ pub const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
 pub const MAX_SDP: usize = 16 * 1024;
 /// STUN servers.
 pub const MAX_STUN: usize = 4;
+/// The lowest port of a STUN server named over Nostr (`rtc-stun`; NFX-10 §1, nfx
+/// `MIN_STUN_PORT`): a beacon must not aim the app at a well-known service. The own servers
+/// (`rtc-init`) may use any port.
+pub const MIN_NAMED_STUN_PORT: u16 = 1024;
 /// Events waiting for a poll; older ones are dropped and the next poll says so.
 pub const MAX_EVENTS: usize = 256;
 /// Ranges in one `have` event.
@@ -1004,13 +1008,13 @@ impl Engine {
         if self.own_count + list.len() > MAX_STUN {
             return Err(fail("bad-request", "at most 4 STUN servers in all"));
         }
-        if list
-            .iter()
-            .any(|s| !candidates::may_check(s.ip(), s.port(), self.allow_private, None))
-        {
+        if list.iter().any(|s| {
+            s.port() < MIN_NAMED_STUN_PORT
+                || !candidates::may_check(s.ip(), s.port(), self.allow_private, None)
+        }) {
             return Err(fail(
                 "bad-request",
-                "a named STUN server must be global unicast",
+                "a named STUN server must be global unicast, on port 1024 or above",
             ));
         }
         let mut named: Vec<SocketAddr> = Vec::with_capacity(list.len());

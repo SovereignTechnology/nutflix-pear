@@ -109,7 +109,7 @@ trickle candidates), and both directions.
 - Same-LAN peers do not see each other's LAN address, so they connect through the router's public
   mapping (hairpin) or not at all, unless a test or LAN run sets `allow_private`.
 
-## Note, 2026-11-19: STUN servers named over Nostr (the maintainer)
+## Note, 2026-11-19: STUN servers named over Nostr (the maintainer; its selection superseded by the note of 2026-11-24)
 
 The maintainer's plan for decentralized STUN (2026-11-19, step 5): the app also asks the STUN
 servers that seeders name over Nostr, as the nfx web library already does. Only the beacon half is
@@ -148,3 +148,28 @@ built here. The second source, a signed STUN announcement, waits for nfx to assi
 - **Privacy.** Each named server learns the user's IP address and when they watch, as the
   configured one does. Keys are free to make, so "two keys" is a stranger's to fake; the bound
   that holds whatever Nostr says is at most 4 STUN servers in all, never a non-public address.
+
+## Note, 2026-11-24: the creator's STUN servers, or the fallback (the maintainer)
+
+The maintainer decided on 2026-11-24 that counting keys proves nothing, since keys are free: two
+fresh keys could make every client ask a server of their choice. nfx ADR 0107 amends NFX-10 §1 in
+place, and `stun-select.json` (vendored at nfx PR #117's head, 2389fc4) pins the new rules. This
+replaces the 2026-11-19 note's **Source** and **Selection**. Everything about `rtc-stun` and how
+the helper keeps a named mapping apart stands.
+
+- **Selection** (core's `nfx.selectStunServers(own, creator)`, nfx-proto's `stun::select`): the
+  configured servers first, each once, on any port; then the servers in the `stun` endpoint of the
+  creator's own live beacon for each open play (`nfx.creatorStunServers`: a beacon whose signer is
+  the creator its `a` tag names), in the order heard, each once, global unicast, port 1024 or above,
+  not one of the configured; at most 4 in all. No key counting, and no lone-key rule. The creator
+  signs the manifest, so the user already trusts that key with what they play.
+- **The port floor.** The worker (`isAskableStunAddr`) and the helper (`rtc-stun`,
+  `MIN_NAMED_STUN_PORT`) each refuse a named server below port 1024, so a beacon cannot aim the
+  app at a well-known service.
+- **Announcements (kind 33478) are a directory.** The app never subscribes to them and never uses
+  one by itself. The 2026-11-19 note's plan to feed them into the ranking is dropped.
+- **Any other seeder's server only through NFX-10 §1's fallback**: when no server the app asks
+  returned a mapping, for one peer it already signals with whose SDP names that server's IP, one
+  per seeder, port 1024 or above, 4 in all. Not built yet: it needs the helper to ask a server for
+  one connection only, and comes as its own change.
+- **Before it ships:** re-vendor the vectors at #117's merge commit.

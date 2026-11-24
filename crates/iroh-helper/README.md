@@ -166,7 +166,9 @@ belongs to one swarm, the NFX-10 §2 stream swarm id the worker gives. The `rtc-
   every 25 s (every 3 s while unknown). A STUN name that does not resolve in 3 s is skipped.
 - **`rtc-stun`** (NFX-10 §1) replaces the STUN servers named over Nostr, which the side asks beside
   `rtc-init`'s own. It needs no restart and touches no connection, and `[]` drops them all.
-  - Every one must be an IP literal at a global unicast address with a port, or nothing changes.
+  - Every one must be an IP literal at a global unicast address, on port 1024 or above
+    (`MIN_NAMED_STUN_PORT`: a beacon must not aim the app at a well-known service), or nothing
+    changes.
     With `rtc-init`'s they are at most 4 (`bad-request` otherwise).
   - Named servers of the other address family, or ones already among its own, are not asked. A
     named server is asked only where an ICE check may go (rule 7 above), and a new one at once.

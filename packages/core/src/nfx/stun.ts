@@ -1,15 +1,16 @@
 /**
- * Which STUN servers a WebRTC client uses (NFX-10 §1): its own, then those that keys name over
- * Nostr, picked by one set of rules for every NFX client. They are the rules of the nfx web
- * library (`web/player/src/endpoints.ts`: `beaconStun`, `ranked`) and of the nfx STUN draft
- * (branch `stun/decentralized`, 1ae4068, pending), which the desktop app's WebRTC side now
- * follows too.
+ * Which STUN servers a WebRTC client uses (NFX-10 §1, "the creator's, or the fallback": nfx
+ * ADR 0107, the maintainer's decision of 2026-11-24, which `stun-select.json` pins): its own,
+ * then the ones the video's creator names. The rules are the nfx web library's
+ * (`web/player/src/endpoints.ts`: `selectStun`) and nfx-proto's (`stun::select`).
  *
- * - **Sources.** A `StunClaim` is one key naming one server. Today the claims come from the `stun`
- *   endpoints of a video's live beacons, each named by the beacon's signer (`beaconStunClaims`).
- *   A STUN announcement (a signed event whose kind nfx has yet to assign) will name a server the
- *   same way, by its operator's key, and its claims go into the same `selectStunServers`. A key
- *   counts once per server, whichever source it names the server through.
+ * - **Sources.** A `StunClaim` is one key naming one server: the `stun` endpoints of a video's
+ *   live beacons, each named by the beacon's signer (`beaconStunClaims`). Routinely only the
+ *   creator's count (`creatorStunServers`): a beacon whose signer is the creator its `a` tag names,
+ *   the manifest's author. Keys are free, so a count of other keys proves nothing, and no number of
+ *   them adds a server here. Another seeder's server is reached only by NFX-10 §1's fallback, for
+ *   one peer it already signals with. A STUN service announcement (kind 33478) is a directory for
+ *   people choosing servers to configure, and is never used automatically.
  * - **Global unicast only** (`isGlobalStunAddr`). The address must be in the canonical `ip:port`
  *   form of the `stun` endpoint (`isCanonicalSocketAddr`): an IP literal and never a name (beacons
  *   carry none, and a name could resolve anywhere), and never an IPv4 address written inside IPv6.
@@ -19,18 +20,19 @@
  *   benchmarking, documentation, multicast, reserved and broadcast addresses. For IPv6 only 2000::/3
  *   passes (so no unspecified, loopback, link-local, ULA or multicast address), less the
  *   documentation prefixes 2001:db8::/32 and 3fff::/20 (RFC 9637), exactly. A beacon from
- *   anywhere must not point the user's app at their own network.
+ *   anywhere must not point the user's app at their own network. A server taken from Nostr also
+ *   needs a port of `MIN_STUN_PORT` (1024) or above (`isAskableStunAddr`), so a beacon cannot aim
+ *   the app at a well-known service.
  * - **Selection** (`selectStunServers`):
- *   1. the client's own servers first, each once (`stunServerKey`), never dropped for a named one;
- *   2. then the named servers that pass the check above and are not its own, ranked by the number
- *      of distinct keys that name each, most first, ties in the order first named;
- *   3. a server named by one key alone only when the client has none of its own and no named
- *      server has two keys or more: a lone stranger's key adds no server beside a better one;
+ *   1. the client's own servers first, each once (`stunServerKey`), never dropped for a named one,
+ *      on any port;
+ *   2. then the creator's, in the order heard, each once, if askable and not its own;
+ *   3. no other server named over Nostr;
  *   4. at most `MAX_NFX_STUN_SERVERS` (4) in all.
  *
- * Every server used learns the user's IP address and when they watch. Keys are free to make, so
- * "most keys" counts keys a stranger can multiply. The bound is what holds whatever Nostr says: at
- * most 4 servers in all, and never an address that is not global unicast.
+ * Every server used learns the user's IP address and when they watch. So the app's address goes
+ * only to its own servers, to those the creator of the video the user chose names, and (by the
+ * fallback, not here) to a server at the address of a peer it already signals with.
  */
 import { MAX_NFX_STUN_SERVERS } from '../contracts/index.js';
 import type { NfxVideo, NostrEvent } from '../contracts/index.js';
@@ -41,12 +43,18 @@ import { ipv6Groups, isCanonicalSocketAddr } from './util.js';
 
 /** The most STUN servers taken from one beacon (the nfx web library's `PER_BEACON`). */
 export const MAX_STUN_PER_BEACON = 4;
-/** The most claims `selectStunServers` reads; any past it are ignored. */
+/** The most named servers `selectStunServers` reads; any past it are ignored. */
 export const MAX_STUN_CLAIMS = 1024;
+/**
+ * The lowest port of a STUN server taken from Nostr (NFX-10 §1; nfx `MIN_STUN_PORT`,
+ * `stun::MIN_FALLBACK_PORT`): below it are well-known services (DNS, NTP, SNMP, ...). The
+ * client's own servers may use any port.
+ */
+export const MIN_STUN_PORT = 1024;
 
 /** One key naming one STUN server. */
 export interface StunClaim {
-  /** The key that signed the event naming the server: a beacon's seeder, an announcement's operator. */
+  /** The key that signed the beacon naming the server: its seeder, which may be the creator. */
   readonly key: string;
   /** The server, `ip:port` as the event wrote it: untrusted until `isGlobalStunAddr` passes it. */
   readonly addr: string;
@@ -56,7 +64,7 @@ export interface StunClaim {
 export interface StunSelection {
   /** The client's own servers, each once, in the order given. */
   readonly own: readonly string[];
-  /** The servers named over Nostr, in canonical `ip:port` form, best first. */
+  /** The servers creators named over Nostr, in canonical `ip:port` form, in the order heard. */
   readonly named: readonly string[];
 }
 
@@ -100,6 +108,14 @@ export function isGlobalStunAddr(addr: string): boolean {
     return groups !== undefined && v6Global(groups);
   }
   return v4Global(host.split('.').map(Number));
+}
+
+/**
+ * Whether `addr` may be asked on Nostr's say-so (NFX-10 §1): `isGlobalStunAddr`, on a port of
+ * `MIN_STUN_PORT` or above.
+ */
+export function isAskableStunAddr(addr: string): boolean {
+  return isGlobalStunAddr(addr) && Number(addr.slice(addr.lastIndexOf(':') + 1)) >= MIN_STUN_PORT;
 }
 
 /**
@@ -172,44 +188,52 @@ export function beaconStunClaims(
 }
 
 /**
- * The STUN servers to use: `own` (the client's configured ones) and then those `claims` name,
- * by the rules in the module comment, at most `max` in all (default and ceiling
- * `MAX_NFX_STUN_SERVERS`). `own` may hold names; `named` holds canonical addresses only.
+ * The STUN servers the creator of `video` names at `now`: those of `beaconStunClaims` whose key is
+ * the manifest's author (the creator a beacon's `a` tag names, which that function already
+ * matches), in the order heard. A creator whose node signs beacons with another key names none
+ * here: its servers are for the fallback.
+ */
+export function creatorStunServers(
+  video: Pick<NfxVideo, 'id' | 'author'>,
+  events: readonly NostrEvent[],
+  now: number,
+): string[] {
+  return beaconStunClaims(video, events, now)
+    .filter((c) => c.key === video.author)
+    .map((c) => c.addr);
+}
+
+/**
+ * The STUN servers to use: `own` (the client's configured ones), then those `creator` lists (the
+ * servers creators named, `creatorStunServers`), by the rules in the module comment, at most `max`
+ * in all (default and ceiling `MAX_NFX_STUN_SERVERS`). `own` may hold names; `named` holds
+ * canonical addresses only. nfx-proto's `stun::select(own, creator_named, max)`.
  */
 export function selectStunServers(
   own: readonly string[],
-  claims: Iterable<StunClaim>,
+  creator: Iterable<string>,
   max: number = MAX_NFX_STUN_SERVERS,
 ): StunSelection {
   const cap = Number.isSafeInteger(max) ? Math.min(Math.max(max, 0), MAX_NFX_STUN_SERVERS) : 0;
   const mine: string[] = [];
-  const mineKeys = new Set<string>();
+  const taken = new Set<string>();
   for (const s of own) {
     if (mine.length >= cap) break;
     const k = stunServerKey(s);
-    if (mineKeys.has(k)) continue;
-    mineKeys.add(k);
+    if (taken.has(k)) continue;
+    taken.add(k);
     mine.push(s);
   }
-  // Each named server's distinct keys; a Map keeps the order first named.
-  const keysOf = new Map<string, Set<string>>();
+  const named: string[] = [];
   let read = 0;
-  for (const c of claims) {
-    if (read >= MAX_STUN_CLAIMS) break;
+  for (const addr of creator) {
+    if (mine.length + named.length >= cap || read >= MAX_STUN_CLAIMS) break;
     read += 1;
-    if (!isGlobalStunAddr(c.addr) || mineKeys.has(stunServerKey(c.addr))) continue;
-    const keys = keysOf.get(c.addr);
-    if (keys === undefined) keysOf.set(c.addr, new Set([c.key]));
-    else keys.add(c.key);
+    if (!isAskableStunAddr(addr)) continue;
+    const k = stunServerKey(addr);
+    if (taken.has(k)) continue;
+    taken.add(k);
+    named.push(addr);
   }
-  // Array#sort is stable, so equal counts keep the order first named.
-  const ranked = [...keysOf]
-    .map(([addr, keys]) => ({ addr, keys: keys.size }))
-    .sort((x, y) => y.keys - x.keys);
-  const lone = mine.length === 0 && !ranked.some((r) => r.keys >= 2);
-  const named = ranked
-    .filter((r) => r.keys >= 2 || lone)
-    .slice(0, cap - mine.length)
-    .map((r) => r.addr);
   return { own: mine, named };
 }

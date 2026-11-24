@@ -397,7 +397,7 @@ export class WorkerHost {
         return { swarms: this.nfxRtcSeeding?.allSwarms() ?? [] };
       case 'nfx.rtc.stun':
         // NFX-10 §1: the host's pick; checked again here, as the helper checks it once more.
-        await this.nfxRtc?.setNamed(req.a.named.filter((s) => nfx.isGlobalStunAddr(s)));
+        await this.nfxRtc?.setNamed(req.a.named.filter((s) => nfx.isAskableStunAddr(s)));
         return undefined;
       case 'studio.ffmpeg':
         return this.probe(req.a.recheck, req.a.path);

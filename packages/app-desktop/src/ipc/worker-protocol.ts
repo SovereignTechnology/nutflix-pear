@@ -391,10 +391,10 @@ export interface WorkerMethodTable {
    */
   'nfx.rtc.swarms': [args: Record<string, never>, result: { readonly swarms: readonly string[] }];
   /**
-   * NFX-10 §1 (the maintainer's plan of 2026-11-19, step 5): the STUN servers named over Nostr
-   * that the WebRTC side asks too, after its own (`rtc.stun`), as the host picked them from the
-   * beacons of what it plays (core's `nfx.selectStunServers`). Canonical global unicast
-   * `ip:port`, unique, at most `MAX_NFX_NAMED_STUN`; `[]`: none. Replaces the last list without
+   * NFX-10 §1 (the maintainer's decisions of 2026-11-19 and 2026-11-24): the STUN servers named
+   * over Nostr that the WebRTC side asks too, after its own (`rtc.stun`), as the host picked them
+   * from the creators' own beacons of what it plays (core's `nfx.selectStunServers`). Canonical
+   * global unicast `ip:port` (the worker drops one below port 1024), unique, at most `MAX_NFX_NAMED_STUN`; `[]`: none. Replaces the last list without
    * restarting the WebRTC side; kept while WebRTC is off.
    */
   'nfx.rtc.stun': [args: { readonly named: readonly string[] }, result: undefined];

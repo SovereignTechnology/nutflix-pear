@@ -6,8 +6,8 @@
  *   long poll holds none of their request slots. It has no iroh endpoint and no key.
  * - **Off until the host turns it on** (`set(config)`, with the network's STUN servers); `set(null)`
  *   stops it. Nothing here signals: the host carries offers and answers (over Nostr, nfx #71).
- * - **STUN servers named over Nostr** (NFX-10 §1): `setNamed`, the host's pick from the beacons of
- *   what it plays, asked after the configured ones. Changing them never restarts the helper (its
+ * - **STUN servers named over Nostr** (NFX-10 §1): `setNamed`, the host's pick from the creators'
+ *   own beacons of what it plays, asked after the configured ones. Changing them never restarts the helper (its
  *   connections live on): a running one takes them with `rtc-stun`, a new one right after
  *   `rtc-init`. They fill only the room the configured ones leave (4 in all).
  * - **It serves only from the NFX store.** `rtc-init` names the store as `root`, so the helper
@@ -155,7 +155,8 @@ export class NfxRtcNode {
 
   /**
    * NFX-10 §1: the STUN servers named over Nostr that the WebRTC side asks too, after the
-   * configured ones (canonical global unicast `ip:port`, the host's pick; `[]`: none). Kept while
+   * configured ones (canonical global unicast `ip:port` on port 1024 or above, the host's pick;
+   * `[]`: none). Kept while
    * WebRTC is off. Never restarts the helper, and never throws: a refusal is logged, and the
    * configured servers go on alone.
    */

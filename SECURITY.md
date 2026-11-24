@@ -75,14 +75,16 @@ These are known limits of the released app, not bugs awaiting a report:
   (which its beacons already announce), never your own key. Anyone who knows a video can join
   its room and learn its members' addresses by connecting to them, as with any swarm, and can
   keep others from connecting by filling it. Settings › NFX network switches it off.
-- **STUN servers that seeders name see you too** (since the release after 0.1.3; ADR 0023, note of
-  2026-11-19). While WebRTC is on, the app may also ask STUN servers named in the beacons of a
-  video you play, when at least two seeders' keys name the same one. Each of them learns your IP
-  address and when you watch. Keys are free to make, so a stranger can fake "two seeders". Whatever
-  Nostr says, the app contacts **at most 4 STUN servers in all**, its own first. It never contacts
-  one at an address that is not global unicast, so never on your LAN, loopback or a private range.
-  A lying server can add at most one connection candidate that fails, never replace the one your
-  own server reports. Listing no STUN server switches WebRTC off, and with it every STUN server.
+- **A STUN server the video's creator names sees you too** (since the release after 0.1.3; ADR
+  0023, notes of 2026-11-19 and 2026-11-24). While WebRTC is on, the app may also ask the STUN
+  servers in the creator's own beacon for a video you play: the key that signed the video, which
+  you already trust with what you play. It learns your IP address and when you watch. A server
+  that other keys name is never used this way, however many name it: keys are free to make.
+  Whatever Nostr says, the app contacts **at most 4 STUN servers in all**, its own first. It never
+  contacts one at an address that is not global unicast (so never on your LAN, loopback or a
+  private range), nor on a port below 1024. A lying server can add at most one connection
+  candidate that fails, never replace the one your own server reports. Listing no STUN server
+  switches WebRTC off, and with it every STUN server.
 - **Images can reveal your IP.** With remote images off (the default), an `https` image is fetched
   only when its publisher signed its hash, and the host it comes from still sees your address.
 - **Builds are signed by key, not by a vendor.** There is no operating-system code signing and no

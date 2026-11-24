@@ -9,24 +9,24 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### Added
 
-- **WebRTC also uses STUN servers that seeders name over Nostr** (the maintainer's plan of
-  2026-11-19, step 5; ADR 0023, note of 2026-11-19). This matches the nfx web library. The
-  beacons of a video you play can name STUN servers (NFX-10 §1). The app now asks those too, after
-  the ones in Settings › NFX network, for as long as the video plays. The rules are the same for
-  every NFX client (the nfx STUN draft):
-  - global unicast addresses only;
-  - ranked by how many seeders' keys name each;
-  - a server named by one key only when nothing better exists, so beside your own server two
-    seeders must name the same one;
+- **WebRTC also uses the STUN servers a video's creator names** (the maintainer's decisions of
+  2026-11-19 and 2026-11-24; ADR 0023, notes of those days; NFX-10 §1 as nfx ADR 0107 amends it).
+  This matches the nfx web library. The creator's own beacon for a video you play can name STUN
+  servers. The app now asks those too, after the ones in Settings › NFX network, for as long as
+  the video plays. The rules are the same for every NFX client:
+  - only the beacon the video's creator signed: no other key's server, however many keys name it;
+  - global unicast addresses only, on port 1024 or above;
   - at most 4 STUN servers in all, yours first and never dropped.
 
   Each such server learns your IP address and when you watch (SECURITY.md). An empty STUN list
-  still switches WebRTC off, and with it every STUN server.
+  still switches WebRTC off, and with it every STUN server. Signed STUN announcements (kind
+  33478) are a directory for choosing servers to configure; the app never uses one by itself.
   - **The iroh helper gets an `rtc-stun` request.** It replaces the named servers on the running
     WebRTC side without a restart, so live connections stay up.
   - What a named server reports is offered only as an extra candidate, and only if global unicast.
     It never replaces the configured server's mapping.
-  - A signed STUN announcement (for operators who seed nothing) follows once nfx assigns its kind.
+  - NFX-10 §1's fallback (a seeder's server, for one peer it already signals with, when your own
+    STUN gave no mapping) follows in a later change.
 - **Stats for nerds in the video player** (#123, ADR 0024). Right-click the video, use its menu or
   press `n` to see where the video is coming from, source by source. Peers show by short ID.
   Their addresses appear only behind a "Show addresses" switch, which is off every time the panel
