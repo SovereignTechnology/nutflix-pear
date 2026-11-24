@@ -512,7 +512,7 @@ describe('NFX-10 §1: the STUN servers a play’s beacons name reach the worker'
     expect(validateWorkerArgs['nfx.rtc.stun'](first)).toBe(true);
     // The settings' own still reach the worker unchanged: the named ones never replace them.
     expect(r.worker().calls('nfx.configure').at(-1)).toMatchObject({
-      rtc: { stun: ['web.nutflix.xyz:3478'] },
+      rtc: { stun: ['relay.nutflix.xyz:3478'] },
     });
 
     // WebRTC off: none. On again, while the play is open: back.
