@@ -11,9 +11,11 @@ The desktop app's interface in a browser, working like a Nostr client, for free 
 - **The same screens.** Home (Network and tags), Search, Channel, the NFX watch page and Settings,
   from `@sovit/ui`, in the shell the desktop app uses. Screens that need a wallet, a signer or
   Hypercore (Shorts, Library, Studio, Wallet, Subscriptions, Trending) are not offered.
-- **Discovery over ordinary Nostr relays.** Manifests (kind 38504) from the read relays and the
-  network's scoped relay, beacons (kind 20464) from the scoped relay. Search uses NIP-50 only on
-  relays whose NIP-11 document lists it, and matches a plain query in the page elsewhere.
+- **Discovery over ordinary Nostr relays.** Manifests (kind 38504) from the network's scoped relay
+  first, and from the read relays when it fails, has nothing or returns a short page (merged by
+  address; ADR 0020, 2026-11-19); the Network tab asks both at once. Beacons (kind 20464) from the
+  scoped relay. Search uses NIP-50 only on relays whose NIP-11 document lists it, and matches a
+  plain query in the page elsewhere; it asks the scoped relay first only when that one lists it.
 - **Video over WebRTC.** nfx's web player, as a library pinned by commit and sha256 in
   `nfx-web.lock`, plays a video with hls.js and p2p-media-loader: segments come from other viewers
   and from native peers (nfxd's mesh endpoint, the desktop app), signalled over ordinary Nostr
@@ -38,7 +40,8 @@ the same video. Whoever serves the page can change it; a browser cannot fully pr
   for seeders' live beacons (core's beacon watch) and hand nfx's player the origins they name,
   checked (`https:` only, no query or user-info, public hosts), then the fallback origin
   `https://web.nutflix.xyz/o`, and the signaling relays from Settings (by default
-  `relay.primal.net` and `relay.ditto.pub`, the pair the desktop app uses). Each origin
+  `relay.nutflix.xyz`, `relay.primal.net` and `relay.ditto.pub`, the list the desktop app
+  uses). Each origin
   goes with the renditions its beacons say it serves, and when the seeders hold different
   renditions the player may play only the held ones, the most-held first (issue #97), so it never
   asks an origin for a file it does not serve. Images load

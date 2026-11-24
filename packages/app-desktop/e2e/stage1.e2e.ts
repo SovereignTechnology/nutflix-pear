@@ -12,7 +12,8 @@
  * with two lavfi fixture MP4s and asserts: the security posture (webPreferences, no
  * `--no-sandbox`, no Node in the page, the `window.nutflix` key allowlist, no CSP violation, a
  * `_blank` link opens nothing); price shown → Play; `currentTime > 1`, `videoWidth > 0`; a seek
- * answered 206 through `nf-media:`; the WalletChip rate > 0; Watch → Home mini-player;
+ * answered 206 through `nf-media:`; the WalletChip rate > 0; stats for nerds names a seeder, its
+ * loopback address only behind the switch (`checkNerdStats`); Watch → Home mini-player;
  * Watch → Watch leaves exactly one open session (main's media-link count is 1).
  */
 import assert from 'node:assert/strict';
@@ -26,6 +27,7 @@ import {
   FIXTURE,
   KEY_TREE_SOURCE,
   PKG,
+  checkNerdStats,
   electronBinary,
   hasFfmpeg,
   launch,
@@ -240,6 +242,14 @@ void describe(
 
     // Security review F25: a Markdown _blank link opens nothing by itself — main asks in its
     // trusted prompt window, which shows the link's real host; Cancel leaves everything as it was.
+    void it('stats for nerds names a seeder, its address only behind the switch', async () => {
+      await checkNerdStats(page, {
+        video: '.nf-watch video',
+        kind: 'hypercore',
+        route: (address, path) => /^127\.0\.0\.1:\d+$/.test(address) && path.startsWith('direct'),
+      });
+    });
+
     void it('a Markdown _blank link opens nothing by itself: main asks, showing the real host', async () => {
       // Fixture A's description carries the link; Watch renders it through `Markdown` as
       // `<a target="_blank">`. It must exist — a missing link would make this pass vacuously.

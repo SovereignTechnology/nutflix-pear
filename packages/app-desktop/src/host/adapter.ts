@@ -1554,7 +1554,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   }
 }
 
-/** #89 (contracts v18): the relays WebRTC is signaled on; absent = the default pair. */
+/** #89 (contracts v18): the relays WebRTC is signaled on; absent = the default list. */
 export function nfxMeshRelays(s: Settings): readonly RelayUrl[] {
   return s.nfx?.meshRelays ?? DEFAULT_NFX_MESH_RELAYS;
 }

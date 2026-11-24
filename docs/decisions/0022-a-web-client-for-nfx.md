@@ -70,11 +70,18 @@ A client that does only that avoids every reason ADR 0019 gave:
    desktop app uses, so the two meet) and no tracker, whether configured or named in a beacon.
    The page says that the signaling relays and peers see the viewer's IP address, and that the
    relays learn which videos are watched.
+   **Note 2026-11-18 (the maintainer):** the default signaling relays are now
+   `wss://relay.nutflix.xyz` (the network's scoped relay, which NFX-04 §1, amended that day, lets
+   carry kind 25050 `nfx-mesh/1`), `relay.primal.net` and `relay.ditto.pub`, the desktop app's list
+   too.
 4. **Our own STUN server.** `iceServers` lists `stun:web.nutflix.xyz:3478` and nothing else: a
    Binding responder that SovTech runs (nfxd's `--stun`, built on the nfx side), with no TURN and no
    third party. A Nostr relay cannot do this job. It is a WebSocket over TCP, so it never sees the
    browser's UDP mapping, and browsers gather server-reflexive candidates only from the STUN
    servers in `iceServers`. Nostr stays the discovery path.
+   **Note 2026-11-18 (the maintainer):** the STUN server is now named `relay.nutflix.xyz:3478`
+   (`stun:relay.nutflix.xyz:3478`, and the desktop app's `DEFAULT_NFX_STUN_SERVERS`): the same
+   address and responder, under the network's own relay name.
 5. **In v1, an HTTPS origin serves the hash list, playlists and init segments.** Origins come from
    the beacons first, by nfx's player's rules, then `https://web.nutflix.xyz/o` as a fallback.
    Media segments come from peers over WebRTC where they can, and from the origin otherwise;
@@ -85,6 +92,8 @@ A client that does only that avoids every reason ADR 0019 gave:
    is `wss://relay.nutflix.xyz`, as in the desktop app's `DEFAULT_NFX`. NFX is always on in this
    client, on `nfx:testnet:1`, because it is the only thing the client does. The iroh relay is not
    used: no iroh runs in the browser.
+   **Note 2026-11-18 (the maintainer):** the read relays are now `relay.primal.net` and
+   `relay.ditto.pub` (ADR 0009's note of that day).
 7. **Signed out in v1. NIP-07 comes later.** v1 has no signer, so the page never holds a key. NIP-07
    sign-in follows v1, and the key then stays in the browser extension. No NIP-46 runs in the page
    in v1. Free videos only.

@@ -28,6 +28,12 @@
 # pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
 # web/player/package-lock.json. Node 22.
 #
+# 059364f is nfx #102's merge. Since 491d35e the library's API only gained (its tar is 4b80a071…):
+#   #102      per-peer statistics (`MeshStats.peerList`, `connected`, `segments`, `signal`;
+#             `Stats.originBytes`, `bandwidthEstimate`) and `Session.addresses()`, read only when
+#             called. The stats-for-nerds panel (ADR 0024) shows them.
+#   #108      `remoteCandidates: 'global'`, opt-in. This site does not set it.
+#
 # 491d35e is nfx v0.1.2's release commit (#92), the nfxd booty and the public testnet seeder run.
 # Since b5fe5e4 the library changed, and so did its tar (23a551e8…; GitHub's runner and a Kata VM
 # give the same bytes):
@@ -57,7 +63,7 @@
 # tar, whose bytes differ between 1.34 and 1.35: GitHub's ubuntu-24.04 runner and a Kata VM give the
 # same tar, e43bc98a…. The web-site workflow (.github/workflows/web-site.yml) builds it again on
 # every run and fails unless it matches.
-nfx 491d35ec3c70e5bdd7b8871bb6a64946d4ed3761 69b1e66a2c4d64e22ee5fe643b4f18e789727163e54af19721eb98d6d746197f 23a551e82c5d401aa506189c5624899718b5000627b0975501d1e66b83307c71
+nfx 059364f4d311f8f85c66b7e94f71e59d36f0683c 8773ff97bd8829b4c67e20744f0ebdc8436d32fb82f63715402d8eb53aec7ebe 4b80a0711f8a800d0d506bb61fa11f07a2de0f1b0c59355550378bf4d1266a61
 tool rust 1.98.0
 tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
 tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f

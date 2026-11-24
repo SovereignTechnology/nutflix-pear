@@ -27,6 +27,53 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   - What a named server reports is offered only as an extra candidate, and only if global unicast.
     It never replaces the configured server's mapping.
   - A signed STUN announcement (for operators who seed nothing) follows once nfx assigns its kind.
+- **Stats for nerds in the video player** (#123, ADR 0024). Right-click the video, use its menu or
+  press `n` to see where the video is coming from, source by source. Peers show by short ID.
+  Their addresses appear only behind a "Show addresses" switch, which is off every time the panel
+  opens and is never saved.
+
+### Changed
+
+- **Free videos (NFX) are found through the network's own relay first** (ADR 0020, the
+  maintainer's decision of 2026-11-19), in the app and the web client. The Subscriptions, tags and
+  author feeds, search and opening a video ask the network's scoped relay (`relay.nutflix.xyz` by
+  default) first, and your read relays only as the fallback: when the scoped relay fails or times
+  out, has nothing, or returns a short page, which is then merged with theirs (one entry per
+  video, its newest revision, the scoped relay's copy on a tie). An outage, or a scoped relay that
+  restarted and is still empty or refilling, never blanks or shrinks the catalogue. This departs
+  on purpose from NFX-04 §4, which says public relays first.
+  - Search asks the scoped relay first only when it answers NIP-50 text search
+    (`relay.nutflix.xyz` does); otherwise your read relays first, as before.
+  - The scoped relay now sees which authors your Subscriptions feed follows, the tags and search
+    text you use and the videos you open; your read relays see them only when it falls short.
+  - Unchanged: beacons (the scoped relays only), where a free upload's announcement goes (your
+    write relays and the scoped relays), and the Network tab, which asks both at once.
+- **New default relays** (the maintainer's decisions of 2026-11-18), in the app and the web client
+  alike:
+  - **Signaling** goes first to the network's own relay, `wss://relay.nutflix.xyz`, which SovTech
+    runs, then to `relay.primal.net` and `relay.ditto.pub`. NFX-04 §1, amended that day, lets the
+    network's scoped relay carry signaling (kind 25050 `nfx-mesh/1`, ephemeral and never stored).
+    Like the other signaling relays, it learns which videos you seed or watch; it already saw your
+    IP address.
+  - **The read relays** are now `relay.primal.net` and `relay.ditto.pub`: `relay.damus.io` refuses
+    this project's address and `nos.lol` has rate-limited it. Comments, reactions, profiles and the
+    other social events stay off `relay.nutflix.xyz`, which keeps NFX's own events only.
+  - **STUN** is named `relay.nutflix.xyz:3478` (was `web.nutflix.xyz:3478`): the same server and
+    address, under the network's own relay name.
+  - **Saved settings are kept.** Only an install or a browser that has never saved a setting picks
+    up the new lists; any change in Settings saves the relay lists as they were. Settings › Relays
+    and Settings › NFX network are where to change them.
+  - **Release notices** (`scripts/release-publish.mjs`) go to `nos.lol`, `relay.primal.net` and
+    `relay.ditto.pub`; the 0.1.3 notice failed on relay.damus.io.
+- **The web client is built with nfx's player library at 059364f** (`packages/app-web/nfx-web.lock`,
+  nfx #102). Its stats for nerds panel now lists each WebRTC peer by short ID, with what it sent
+  and received, and shows a peer's address only behind the panel's "Show addresses" switch. The
+  desktop app is unchanged by it.
+
+### Fixed
+
+- **The Network tab no longer drops videos** when the scoped relay's page and your read relays'
+  page are each short of a full page but longer together: the rest now comes on the next page.
 
 ### CI
 

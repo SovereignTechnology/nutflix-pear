@@ -6,7 +6,9 @@
  * - Merged feeds: newest first under one time cursor, nothing lost or repeated across pages.
  * - Twins: a same-author NFX copy of a NIP-71 video is dropped, also across pages; slice 5d-4,
  *   when the network can play (scoped relays): a free NIP-71 video gives way to its copy instead.
- * - NFX-04 §4: the read relays first, the scoped relays only as the fallback.
+ * - ADR 0020 2026-11-19 (a deviation from NFX-04 §4's SHOULD): the scoped relays first; the read
+ *   relays as the fallback when the scoped read fails, finds nothing or returns a short page,
+ *   which is merged with theirs (one per address, the newest revision, the scoped copy on a tie).
  * - An NFX failure lists the NIP-71 videos alone.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +18,7 @@ import type {
   FeedQuery,
   NfxAddress,
   NostrEvent,
+  NostrEventId,
   NostrFilter,
   NetworkAdapter,
   RelayUrl,
@@ -308,7 +311,7 @@ describe('twins when the network can play (slice 5d-4)', () => {
   });
 });
 
-describe('NfxCatalog (NFX-04 §4)', () => {
+describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
   const PUBLIC = 'wss://public.test' as RelayUrl;
   const SCOPED = 'wss://scoped.test' as RelayUrl;
 
@@ -338,24 +341,204 @@ describe('NfxCatalog (NFX-04 §4)', () => {
     return { pub, scoped, client, asked };
   }
 
-  it('reads the public relays first; the scoped relays only when they have nothing', async () => {
-    const t = twoPools();
-    const creator = new kit.TestSigner();
-    const cat = new NfxCatalog(
+  const scopedCatalog = (t: ReturnType<typeof twoPools>): NfxCatalog =>
+    new NfxCatalog(
       () => t.client,
       NS,
       () => [SCOPED],
     );
-    t.scoped.store(await kit.sign(creator, nfxDraft('scoped-only', 2)));
-    const fromScoped = await cat.feed({ source: 'author', author: creator.pubkey }, null);
-    expect(fromScoped.items.map((v) => v.title)).toEqual(['NFX scoped-only']);
-    expect(t.asked.some((relays) => relays.includes(SCOPED))).toBe(true);
+  const titles = (p: { readonly items: readonly { readonly title: string }[] }): string[] =>
+    p.items.map((v) => v.title);
+  const askedPublic = (t: ReturnType<typeof twoPools>): boolean =>
+    t.asked.some((relays) => !relays.includes(SCOPED));
+  /** A second revision of `first`'s address at the same second whose id sorts BELOW it. */
+  async function lowerIdTwin(
+    by: TestSignerLike,
+    first: NostrEvent,
+    videoId: string,
+    ageHours: number,
+  ): Promise<NostrEvent> {
+    for (let i = 0; i < 256; i++) {
+      const ev = await kit.sign(by, nfxDraft(videoId, ageHours, [['t', `variant${String(i)}`]]));
+      if (ev.id < first.id) return ev;
+    }
+    throw new Error('no lower id in 256 tries');
+  }
 
-    t.asked.length = 0;
+  it('reads the scoped relays first; a full page there never asks the public relays', async () => {
+    const t = twoPools();
+    const creator = new kit.TestSigner();
+    t.scoped.store(await kit.sign(creator, nfxDraft('scoped-one', 1)));
+    t.scoped.store(await kit.sign(creator, nfxDraft('scoped-two', 2)));
+    t.pub.store(await kit.sign(creator, nfxDraft('public-only', 0.5)));
+    const cat = scopedCatalog(t);
+    const page = await cat.feed({ source: 'author', author: creator.pubkey, limit: 2 }, null);
+    expect(titles(page)).toEqual(['NFX scoped-one', 'NFX scoped-two']);
+    expect(page.next).toBeDefined();
+    const tags = await cat.feed({ source: 'tags', tags: ['space'], limit: 1 }, null);
+    expect(titles(tags)).toEqual(['NFX scoped-one']);
+    expect(t.asked[0]).toEqual([SCOPED]);
+    expect(askedPublic(t)).toBe(false);
+  });
+
+  it('the scoped relays down or timing out with an error: the public relays answer alone', async () => {
+    const t = twoPools();
+    const creator = new kit.TestSigner();
     t.pub.store(await kit.sign(creator, nfxDraft('public-copy', 1)));
-    const fromPublic = await cat.feed({ source: 'author', author: creator.pubkey }, null);
-    expect(fromPublic.items.map((v) => v.title)).toEqual(['NFX public-copy']);
-    expect(t.asked.every((relays) => !relays.includes(SCOPED))).toBe(true);
+    const down = vi.spyOn(t.scoped, 'query').mockRejectedValue(new Error('timed out'));
+    const cat = scopedCatalog(t);
+    expect(titles(await cat.feed({ source: 'author', author: creator.pubkey }, null))).toEqual([
+      'NFX public-copy',
+    ]);
+    expect(titles(await cat.feed({ source: 'tags', tags: ['space'] }, null))).toEqual([
+      'NFX public-copy',
+    ]);
+    expect((await cat.video(addr(creator.pubkey, 'public-copy')))?.title).toBe('NFX public-copy');
+    expect(down).toHaveBeenCalled();
+    expect(t.asked[0]).toEqual([SCOPED]);
+  });
+
+  it('the scoped relays empty (restarted in-memory, or nothing before the wait ran out): the public pages, cursor and all', async () => {
+    const t = twoPools();
+    const creator = new kit.TestSigner();
+    t.pub.store(await kit.sign(creator, nfxDraft('public-one', 1)));
+    t.pub.store(await kit.sign(creator, nfxDraft('public-two', 2)));
+    const cat = scopedCatalog(t);
+    const first = await cat.feed({ source: 'tags', tags: ['space'], limit: 1 }, null);
+    expect(titles(first)).toEqual(['NFX public-one']);
+    expect(first.next).toBeDefined();
+    const second = await cat.feed(
+      { source: 'tags', tags: ['space'], limit: 1, cursor: first.next! },
+      null,
+    );
+    expect(titles(second)).toEqual(['NFX public-two']);
+    expect(t.asked[0]).toEqual([SCOPED]);
+    expect(askedPublic(t)).toBe(true);
+  });
+
+  it('a short scoped page (a relay partly refilled) is merged with the public one: one per address, the newest revision, newest first, the limit kept', async () => {
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    t.scoped.store(await kit.sign(a, nfxDraft('clip-one', 1)));
+    t.scoped.store(await kit.sign(a, nfxDraft('clip-three', 3))); // an older revision
+    t.pub.store(await kit.sign(a, nfxDraft('clip-two', 2)));
+    t.pub.store(await kit.sign(a, nfxDraft('clip-three', 2.5))); // the newer one
+    t.pub.store(await kit.sign(a, nfxDraft('clip-four', 4)));
+    const page = await scopedCatalog(t).feed(
+      { source: 'author', author: a.pubkey, limit: 3 },
+      null,
+    );
+    expect(titles(page)).toEqual(['NFX clip-one', 'NFX clip-two', 'NFX clip-three']);
+    expect(page.items[2]!.event.created_at).toBe(mocks.FIXTURE_NOW - 2.5 * HOUR);
+    expect(page.next).toBeDefined(); // clip-four is still to come
+    expect(t.asked[0]).toEqual([SCOPED]);
+    expect(askedPublic(t)).toBe(true);
+  });
+
+  it('pages across a partly refilled scoped relay lose and repeat nothing', async () => {
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    // The scoped relay holds the newest three again; the public relays hold all but the newest.
+    const clips = ['clip-one', 'clip-two', 'clip-three', 'clip-four', 'clip-five'];
+    for (const [i, id] of clips.entries()) {
+      const ev = await kit.sign(a, nfxDraft(id, i + 1));
+      if (i < 3) t.scoped.store(ev);
+      if (i > 0) t.pub.store(ev);
+    }
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 8; i++) {
+      const page = await scopedCatalog(t).feed(
+        {
+          source: 'author',
+          author: a.pubkey,
+          limit: 2,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        null,
+      );
+      seen.push(...titles(page));
+      cursor = page.next;
+      if (cursor === undefined) break;
+    }
+    expect(seen).toEqual(clips.map((id) => `NFX ${id}`));
+  });
+
+  it('the scoped copy wins a tie: the same address and second on both, even with the higher id', async () => {
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    const scopedCopy = await kit.sign(a, nfxDraft('tie-clip', 2));
+    t.scoped.store(scopedCopy);
+    t.pub.store(await lowerIdTwin(a, scopedCopy, 'tie-clip', 2));
+    t.pub.store(await kit.sign(a, nfxDraft('public-clip', 3)));
+    const page = await scopedCatalog(t).feed({ source: 'author', author: a.pubkey }, null);
+    expect(titles(page)).toEqual(['NFX tie-clip', 'NFX public-clip']);
+    expect(page.items[0]!.eventId).toBe(scopedCopy.id);
+  });
+
+  it('the public relays failing too: a short scoped page stands; with nothing scoped, their error', async () => {
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    t.scoped.store(await kit.sign(a, nfxDraft('scoped-clip', 1)));
+    vi.spyOn(t.pub, 'query').mockRejectedValue(new Error('public down'));
+    const cat = scopedCatalog(t);
+    expect(titles(await cat.feed({ source: 'author', author: a.pubkey }, null))).toEqual([
+      'NFX scoped-clip',
+    ]);
+    const nobody = new kit.TestSigner();
+    await expect(cat.feed({ source: 'author', author: nobody.pubkey }, null)).rejects.toThrow(
+      'public down',
+    );
+    await expect(cat.video(addr(nobody.pubkey, 'missing'))).rejects.toThrow('public down');
+  });
+
+  it('video(): the scoped relays first; the public relays only when they have none of it', async () => {
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    const both = await kit.sign(a, nfxDraft('on-both', 1));
+    t.scoped.store(both);
+    t.pub.store(both);
+    t.pub.store(await kit.sign(a, nfxDraft('public-only', 2)));
+    const cat = scopedCatalog(t);
+    expect((await cat.video(addr(a.pubkey, 'on-both')))?.eventId).toBe(both.id);
+    expect(askedPublic(t)).toBe(false);
+    expect((await cat.video(addr(a.pubkey, 'public-only')))?.title).toBe('NFX public-only');
+    expect(askedPublic(t)).toBe(true);
+  });
+
+  it('twinsOf asks the scoped relays only, which every feed page reads first; without any, the read relays', async () => {
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    const legacyId = 'ab'.repeat(32) as NostrEventId;
+    t.scoped.store(await kit.sign(a, nfxDraft('scoped-twin', 1, [['e', legacyId]])));
+    t.pub.store(await kit.sign(a, nfxDraft('public-twin', 1, [['e', legacyId]])));
+    const legacy = [{ id: legacyId, author: a.pubkey }];
+    expect(titles({ items: await scopedCatalog(t).twinsOf(legacy) })).toEqual(['NFX scoped-twin']);
+    expect(askedPublic(t)).toBe(false);
+    const unscoped = new NfxCatalog(
+      () => t.client,
+      NS,
+      () => [],
+    );
+    expect(titles({ items: await unscoped.twinsOf(legacy) })).toEqual(['NFX public-twin']);
+  });
+
+  it('reads only: it never publishes or subscribes (beacons and manifest publishing are unchanged, elsewhere)', async () => {
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    t.scoped.store(await kit.sign(a, nfxDraft('scoped-clip', 1)));
+    const spies = [t.pub, t.scoped].flatMap((p) => [
+      vi.spyOn(p, 'publish'),
+      vi.spyOn(p, 'subscribe'),
+    ]);
+    const cat = scopedCatalog(t);
+    await cat.feed({ source: 'author', author: a.pubkey }, null);
+    await cat.feed({ source: 'tags', tags: ['space'] }, null);
+    await cat.feed({ source: 'network' }, null);
+    await cat.search({ text: 'scoped' });
+    await cat.video(addr(a.pubkey, 'scoped-clip'));
+    await cat.twinsOf([{ id: 'cd'.repeat(32) as NostrEventId, author: a.pubkey }]);
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
   });
 
   it('without scoped relays, asks the public relays only', async () => {
@@ -464,6 +647,33 @@ describe('NfxCatalog (NFX-04 §4)', () => {
       expect(scopedDown).toHaveBeenCalled();
       vi.spyOn(t.pub, 'query').mockRejectedValue(new Error('public down'));
       await expect(cat.feed({ source: 'network' }, null)).rejects.toThrow(/down/);
+    });
+
+    it('the scoped copy wins a tie, even with the higher id', async () => {
+      const t = twoPools();
+      const a = new kit.TestSigner();
+      const scopedCopy = await kit.sign(a, nfxDraft('tie-clip', 2));
+      t.scoped.store(scopedCopy);
+      t.pub.store(await lowerIdTwin(a, scopedCopy, 'tie-clip', 2));
+      const page = await catalog(t).feed({ source: 'network' }, null);
+      expect(page.items.map((v) => v.eventId)).toEqual([scopedCopy.id]);
+    });
+
+    it('two short pages longer together than the limit keep a cursor: nothing is dropped', async () => {
+      const t = twoPools();
+      const a = new kit.TestSigner();
+      for (const [id, hours, pool] of [
+        ['clip-one', 1, t.scoped],
+        ['clip-two', 2, t.pub],
+        ['clip-three', 3, t.scoped],
+        ['clip-four', 4, t.pub],
+        ['clip-five', 5, t.pub],
+      ] as const)
+        pool.store(await kit.sign(a, nfxDraft(id, hours)));
+      expect(await pages(catalog(t), 4)).toEqual([
+        ['NFX clip-one', 'NFX clip-two', 'NFX clip-three', 'NFX clip-four'],
+        ['NFX clip-five'],
+      ]);
     });
   });
 

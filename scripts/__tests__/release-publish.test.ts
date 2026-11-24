@@ -179,9 +179,9 @@ describe('release-publish: the whole flow (fakes for the bunker, prompts and rel
     expect({ ...signed, id: '', sig: '' }).toEqual(template);
     expect(published).toEqual([signed]);
     expect(results.map((r) => r.relay)).toEqual([
-      'wss://relay.damus.io',
       'wss://nos.lol',
       'wss://relay.primal.net',
+      'wss://relay.ditto.pub',
     ]);
     // The bunker URI and its secret are never logged.
     expect(lines.join('\n')).not.toContain(SECRET);
@@ -333,9 +333,9 @@ describe('release-publish: the CLI', () => {
   it('pins the SovTech key and the three relays; no option takes a key, a URI or a relay', async () => {
     const p = await lib<PublishLib>('release-publish.mjs');
     expect(p.RELEASE_RELAYS).toEqual([
-      'wss://relay.damus.io',
       'wss://nos.lol',
       'wss://relay.primal.net',
+      'wss://relay.ditto.pub',
     ]);
     expect(Object.isFrozen(p.RELEASE_RELAYS)).toBe(true);
     expect(p.CONFIRM_WORD).toBe('publish');
