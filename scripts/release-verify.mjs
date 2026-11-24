@@ -40,6 +40,7 @@ import {
   RELEASE_NOTICE_KIND,
   RUNTIME_D_TAG,
   SAFE_NAME,
+  assertRuntimeBounds,
   assertRuntimeRelease,
   sha256File,
   sovtechPubkeyHex,
@@ -156,11 +157,15 @@ function releaseShape(ev, trustedPubkey, d) {
     refuse('malformed commit tag (want a full 40-hex git sha)');
   if (d !== RUNTIME_D_TAG) return { artifacts, version, commit, createdAt: ev.created_at, d };
   const verlink = one('verlink');
-  // The app reads these only as two-item tags, and at most 32 tags: anything else it would refuse
-  // after the notice had gone out.
+  // The app reads these only as two-item tags, and refuses anything out of its bounds: such a
+  // notice would go out, and no install could use it.
   for (const k of ['d', 'version', 'verlink'])
     if (tag(k)[0].length !== 2) refuse(`the "${k}" tag must have exactly one value`);
-  if (ev.tags.length > 32) refuse('a nutflix-runtime notice has at most 32 tags');
+  try {
+    assertRuntimeBounds(ev);
+  } catch (e) {
+    refuse(e instanceof Error ? e.message : String(e));
+  }
   try {
     assertRuntimeRelease({ verlink, version, names: artifacts.map((a) => a.name) });
   } catch (e) {

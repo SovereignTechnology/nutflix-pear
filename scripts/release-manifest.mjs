@@ -294,6 +294,35 @@ export function sumsText(artifacts) {
     .join('');
 }
 
+/**
+ * nutflix-runtime's production `pear://` link: the same value as `RELEASE_UPGRADE_LINK` in its
+ * `packaging/update-root.ts`, and set in a reviewed commit the same way. While it is `null`, no
+ * nutflix-runtime notice is published, because no install could act on one.
+ */
+export const RUNTIME_PRODUCTION_LINK = null;
+/** What the app's `notice.ts` reads: a notice outside these bounds it refuses. */
+export const RUNTIME_NOTICE_BOUNDS = Object.freeze({
+  tags: 32,
+  tagItems: 6,
+  tagChars: 512,
+  contentChars: 16 * 1024,
+});
+
+/** Throws unless the app would read this event's tags and content at all. */
+export function assertRuntimeBounds({ tags, content }) {
+  const b = RUNTIME_NOTICE_BOUNDS;
+  if (content.length > b.contentChars)
+    throw new Error(`a nutflix-runtime notice has at most ${String(b.contentChars)} characters`);
+  if (tags.length > b.tags) throw new Error(`a nutflix-runtime notice has at most ${b.tags} tags`);
+  for (const t of tags) {
+    if (t.length === 0) throw new Error('a nutflix-runtime notice has no empty tag');
+    if (t.length > b.tagItems)
+      throw new Error(`a nutflix-runtime tag has at most ${String(b.tagItems)} items`);
+    if (t.some((v) => v.length > b.tagChars))
+      throw new Error(`a nutflix-runtime tag value has at most ${String(b.tagChars)} characters`);
+  }
+}
+
 /** Throws unless this is a whole nutflix-runtime release: its link, a plain version, five targets. */
 export function assertRuntimeRelease({ verlink, version, names }) {
   if (typeof verlink !== 'string' || !RUNTIME_VERLINK.test(verlink))

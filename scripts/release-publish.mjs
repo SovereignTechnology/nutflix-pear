@@ -41,6 +41,7 @@ import {
   RELEASE_D_TAG,
   RELEASE_D_TAGS,
   RUNTIME_D_TAG,
+  RUNTIME_PRODUCTION_LINK,
   sovtechPubkeyHex,
 } from './release-manifest.mjs';
 import {
@@ -90,6 +91,37 @@ export const RUNTIME_RELEASE_RELAYS = Object.freeze([
   'wss://relay.primal.net',
   'wss://relay.ditto.pub',
 ]);
+/**
+ * A nutflix-runtime notice has to reach both of these. `relay.nutflix.xyz` is on the list because
+ * the app reads it, but its NIP-11 document does not admit kind 30071, so it is expected to refuse.
+ */
+export const RUNTIME_REQUIRED_RELAYS = Object.freeze([
+  'wss://relay.primal.net',
+  'wss://relay.ditto.pub',
+]);
+/**
+ * How far ahead of this machine's clock a nutflix-runtime notice may be dated. An install keeps the
+ * newest notice it has seen as a floor, so a date ahead of the real one would make the next real
+ * notice stale.
+ */
+export const RUNTIME_MAX_FUTURE_S = 600;
+
+/** Throws unless this nutflix-runtime release may go out: see the constants above. */
+export function assertRuntimePublishable({ verlink, createdAt }, productionLink, nowS) {
+  if (productionLink === null)
+    refuse(
+      'RUNTIME_PRODUCTION_LINK is not set: no nutflix-runtime install follows a link yet, so nothing was signed',
+    );
+  const key = String(productionLink).slice('pear://'.length);
+  const [fork, length, ...rest] = String(verlink).slice('pear://'.length).split('.');
+  if (rest.length !== 1 || rest[0] !== key)
+    refuse(`${String(verlink)} is not a version of the production link ${String(productionLink)}`);
+  if (fork === undefined || Number(length) === 0)
+    refuse(`${String(verlink)} names an empty version`);
+  if (Number(createdAt) > nowS + RUNTIME_MAX_FUTURE_S)
+    refuse('the notice is dated in the future: it would make the next real notice stale');
+}
+
 /** The relays of a release, by its `d`. */
 export const relaysFor = (d) => (d === RUNTIME_D_TAG ? RUNTIME_RELEASE_RELAYS : RELEASE_RELAYS);
 /** How long each relay has to answer the publish. */
@@ -139,6 +171,8 @@ export async function publishRelease({
   dryRun = false,
   trustedPubkey = sovtechPubkeyHex(),
   d = RELEASE_D_TAG,
+  runtimeLink = RUNTIME_PRODUCTION_LINK,
+  nowS = Math.floor(Date.now() / 1000),
 }) {
   const relays = givenRelays ?? relaysFor(d);
   const signedAlready =
@@ -150,6 +184,7 @@ export async function publishRelease({
   } else {
     // 1. Before the network: the template and every file.
     const t = checkUnsignedRelease(event, trustedPubkey, d);
+    if (d === RUNTIME_D_TAG) assertRuntimePublishable(t, runtimeLink, nowS);
     await checkFiles(t.artifacts, { allDir: dir, d });
     log(`template ok: ${String(t.artifacts.length)} artifact(s) in ${dir} match it`);
     // 2. The bunker, which must sign for the trusted key.
@@ -179,6 +214,7 @@ export async function publishRelease({
   }
   // As a user will check it: signature, key, shape, every file.
   const r = await verifyRelease(signed, { allDir: dir, trustedPubkey, d });
+  if (d === RUNTIME_D_TAG) assertRuntimePublishable(r, runtimeLink, nowS);
   if (!signedAlready) log(`signed and verified; saved to ${save(signed)}`);
   const text = summary(r, relays);
   if (dryRun) {
@@ -193,6 +229,15 @@ export async function publishRelease({
   for (const x of results)
     log(`${x.ok ? 'OK    ' : 'FAILED'} ${x.relay}${x.message === '' ? '' : `: ${x.message}`}`);
   if (!results.some((x) => x.ok)) refuse('no relay accepted the release notice');
+  if (d === RUNTIME_D_TAG) {
+    const missing = RUNTIME_REQUIRED_RELAYS.filter(
+      (u) => !results.some((x) => x.relay === u && x.ok),
+    );
+    if (missing.length > 0)
+      refuse(
+        `the notice did not reach ${missing.join(', ')}: run this again with release-event.json`,
+      );
+  }
   return { signed, results };
 }
 

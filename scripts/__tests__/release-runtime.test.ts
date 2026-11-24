@@ -67,6 +67,7 @@ interface Result {
 interface Publish {
   RELEASE_RELAYS: readonly string[];
   RUNTIME_RELEASE_RELAYS: readonly string[];
+  RUNTIME_REQUIRED_RELAYS: readonly string[];
   relaysFor(d: string): readonly string[];
   publishRelease(o: Record<string, unknown>): Promise<{ signed: Ev; results: Result[] }>;
 }
@@ -83,6 +84,9 @@ const KEY = 'y'.repeat(52);
 const VERLINK = `pear://0.42.${KEY}`;
 const COMMIT = 'ab'.repeat(20);
 const CREATED = 1_800_000_000;
+const LINK = `pear://${KEY}`;
+/** What a publish of a runtime notice needs from the source, passed as the library allows. */
+const RUNTIME_PUBLISH = { runtimeLink: LINK, nowS: CREATED };
 
 let tmp: { dir: string; cleanup(): void };
 beforeEach(() => {
@@ -452,6 +456,7 @@ describe('a nutflix-runtime notice', () => {
       dir: tmp.dir,
       trustedPubkey: getPublicKey(sk),
       d: 'nutflix-runtime',
+      ...RUNTIME_PUBLISH,
       confirm: (text: string) => {
         lines.push(text);
         return Promise.resolve(true);
@@ -484,11 +489,126 @@ describe('a nutflix-runtime notice', () => {
       dir: tmp.dir,
       trustedPubkey: getPublicKey(sk),
       d: 'nutflix-runtime',
+      ...RUNTIME_PUBLISH,
       dryRun: true,
       publish: () => Promise.reject(new Error('must not publish')),
       log: () => undefined,
     });
     expect(r.results).toEqual([]);
+  });
+
+  describe('what may be published', () => {
+    const signedNotice = async (
+      over: Record<string, unknown> = {},
+    ): Promise<{ ev: Ev; pk: string }> => {
+      const t = await load<Template>('release-template.mjs');
+      const paths = writeFive(tmp.dir);
+      const unsigned = await t.templateFor(paths, {
+        d: 'nutflix-runtime',
+        version: '0.2.0',
+        commit: COMMIT,
+        createdAt: CREATED,
+        verlink: VERLINK,
+        ...over,
+      });
+      const sk = generateSecretKey();
+      return { ev: sign(unsigned, sk), pk: getPublicKey(sk) };
+    };
+    const publish = async (
+      ev: Ev,
+      pk: string,
+      over: Record<string, unknown> = {},
+    ): Promise<{ results: Result[] }> => {
+      const p = await load<Publish>('release-publish.mjs');
+      return p.publishRelease({
+        event: ev,
+        dir: tmp.dir,
+        trustedPubkey: pk,
+        d: 'nutflix-runtime',
+        ...RUNTIME_PUBLISH,
+        confirm: () => Promise.resolve(true),
+        publish: (relays: readonly string[]) =>
+          Promise.resolve(relays.map((relay) => ({ relay, ok: true, message: '' }))),
+        save: () => 'unused',
+        log: () => undefined,
+        ...over,
+      });
+    };
+
+    it('nothing while the production link is not set', async () => {
+      const { ev, pk } = await signedNotice();
+      await expect(publish(ev, pk, { runtimeLink: null })).rejects.toThrow(
+        /RUNTIME_PRODUCTION_LINK is not set/,
+      );
+    });
+
+    it('not a version of another link', async () => {
+      const { ev, pk } = await signedNotice();
+      await expect(publish(ev, pk, { runtimeLink: `pear://${'b'.repeat(52)}` })).rejects.toThrow(
+        /not a version of the production link/,
+      );
+    });
+
+    it('not an empty version', async () => {
+      const { ev, pk } = await signedNotice({ verlink: `pear://0.0.${KEY}` });
+      await expect(publish(ev, pk)).rejects.toThrow(/empty version/);
+    });
+
+    it('not a date ahead of the clock', async () => {
+      const { ev, pk } = await signedNotice();
+      await expect(publish(ev, pk, { nowS: CREATED - 601 })).rejects.toThrow(/in the future/);
+      expect((await publish(ev, pk, { nowS: CREATED - 600 })).results).toHaveLength(3);
+    });
+
+    it('fails unless both required relays took it, and tolerates relay.nutflix.xyz', async () => {
+      const p = await load<Publish>('release-publish.mjs');
+      expect(p.RUNTIME_REQUIRED_RELAYS).toEqual([
+        'wss://relay.primal.net',
+        'wss://relay.ditto.pub',
+      ]);
+      const { ev, pk } = await signedNotice();
+      const answering =
+        (refusing: string) =>
+        (relays: readonly string[]): Promise<Result[]> =>
+          Promise.resolve(relays.map((relay) => ({ relay, ok: relay !== refusing, message: '' })));
+      expect(
+        (await publish(ev, pk, { publish: answering('wss://relay.nutflix.xyz') })).results,
+      ).toHaveLength(3);
+      await expect(
+        publish(ev, pk, { publish: answering('wss://relay.ditto.pub') }),
+      ).rejects.toThrow(/did not reach wss:\/\/relay\.ditto\.pub/);
+    });
+
+    it.each([
+      ['an empty tag', (t: string[][]) => [...t, []], /no empty tag/],
+      [
+        'a tag of seven items',
+        (t: string[][]) => [...t, ['n', '1', '2', '3', '4', '5', '6']],
+        /at most 6/,
+      ],
+      ['a value over 512', (t: string[][]) => [...t, ['n', 'x'.repeat(513)]], /at most 512/],
+    ])('refuses %s, which the app would refuse', async (_n, change, re) => {
+      const m = await load<Manifest>('release-manifest.mjs');
+      const c = await load<Verify>('release-verify.mjs');
+      const sk = generateSecretKey();
+      const t = m.unsignedEvent(input());
+      expect(() =>
+        c.checkEvent(sign({ ...t, tags: change(t.tags) }, sk), getPublicKey(sk), 'nutflix-runtime'),
+      ).toThrow(re);
+    });
+
+    it('refuses content over what the app reads', async () => {
+      const m = await load<
+        Manifest & { assertRuntimeBounds(e: { tags: string[][]; content: string }): void }
+      >('release-manifest.mjs');
+      const tags = m.unsignedEvent(input()).tags;
+      expect(() => {
+        m.assertRuntimeBounds({ tags, content: 'x'.repeat(16 * 1024) });
+      }).not.toThrow();
+      expect(() => {
+        m.assertRuntimeBounds({ tags, content: 'x'.repeat(16 * 1024 + 1) });
+      }).toThrow(/at most 16384 characters/);
+    });
   });
 
   it('the command line refuses a runtime template without a link', () => {
