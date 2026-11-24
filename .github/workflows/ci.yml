@@ -60,14 +60,16 @@ jobs:
             if (bad.length) { console.error("non-registry resolutions:", bad.map(([k]) => k)); process.exit(1); }'
       # npm checks every registry signature and attestation on every run, against keys from
       # Sigstore's TUF root. An attestation document never changes for a version, and the registry's
-      # CDN caches it for a year. Runs on GitHub's AWS us-west-2 runners keep getting one of them
-      # (caniuse-lite 1.0.30001818 from 11-16, enhanced-resolve 5.27.0 after it) in a form npm
-      # rejects as EMISSINGSIGNATUREKEY: from 2026-11-16 to 11-24, 36 of the 37 runs there failed this
-      # step and none of the 81 elsewhere did. So npm keeps its HTTP cache from the last passing
-      # run: the next run reads those documents from disk, wherever it lands, verifies them again
-      # all the same, and goes to the network only for ones no passing run has seen. Saved only after
-      # a pass, so nothing npm rejected is kept. A newly locked package that the same edge serves
-      # badly still fails until a run elsewhere passes.
+      # CDN caches it for a year, but some edges hold a wrong copy of some of them: valid JSON
+      # without the publish key (npm: EMISSINGSIGNATUREKEY) or a plain-text `OK` body (npm:
+      # FETCH_ERROR). A runner that reaches such an edge fails this step. Seen from 2026-11-16 to
+      # 11-24 on 37 of the 38 runs on AWS us-west-2 (caniuse-lite 1.0.30001818, then
+      # enhanced-resolve 5.27.0), on 1 of 82 elsewhere (westus3, typescript-eslint 8.72.2). So npm
+      # keeps its HTTP cache from the last passing run: the next run reads those documents from
+      # disk, wherever it lands, verifies them again all the same, and goes to the network only for
+      # ones no passing run has seen. Saved only after a pass, so nothing npm rejected is kept. A
+      # run that is cold, or locks a package that the edge it reaches serves badly, still fails
+      # until a run that reaches good copies passes.
       - name: npm's cache from the last passing signature check
         id: audit-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
