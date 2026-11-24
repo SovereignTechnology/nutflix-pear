@@ -11,6 +11,8 @@ trying to do.
 
 ## Use the app
 
+- Open the [playback budget worksheet](playback-budget.html) from a local checkout in your browser
+  to try different block prices and see the creator and seeder shares. It works offline.
 - [Releases](https://github.com/SovereignTechnology/nutflix-pear/releases): the downloads, with
   checksums and the signed release notice.
 - [README: Install](../README.md#install) covers installing and verifying a release.
