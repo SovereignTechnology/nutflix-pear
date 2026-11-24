@@ -7,9 +7,10 @@
 //   2. it was signed by the SovTech key (npub1s0vtech…) — no other key is accepted, and there
 //      is deliberately no option to accept one;
 //   3. it is a release notice of the product you verify: kind 30071, `d` = nutflix-desktop (or,
-//      with `--d nfx`, NFX's own release; no other `d` is accepted), and its `artifact`
-//      tags, content (the SHA256SUMS text), `x` (sha256 of that text), `files` (the count) and
-//      `size` (the total) agree; `commit`, when present, is a full 40-hex sha;
+//      with `--d nfx`, NFX's own release, or with `--d nutflix-runtime`, that app's; no other `d`
+//      is accepted), and its `artifact` tags, content (the SHA256SUMS text), `x` (sha256 of that
+//      text), `files` (the count) and `size` (the total) agree; `commit`, when present, is a full
+//      40-hex sha. A nutflix-runtime notice also has one versioned link and its five targets;
 //   4. each file you name (or, with --all, every artifact of the release) is listed, and its
 //      size and sha256 match.
 // It prints the release's version, commit and creation date (the event's `created_at`: when
@@ -21,6 +22,8 @@
 //   node scripts/release-verify.mjs <signed-event.json> <file>...        each file must match
 //   node scripts/release-verify.mjs <signed-event.json> --all <dir>      every artifact, in <dir>
 //   node scripts/release-verify.mjs <signed-event.json> --d nfx <file>  an NFX release
+//   A nutflix-runtime notice's macOS bundles are directories, checked by their tree digest
+//   (`treeDigest` in release-manifest.mjs).
 //
 // It reads the files and the event; it contacts nothing.
 import { createHash } from 'node:crypto';
@@ -35,10 +38,13 @@ import {
   RELEASE_D_TAG,
   RELEASE_D_TAGS,
   RELEASE_NOTICE_KIND,
+  RUNTIME_D_TAG,
   SAFE_NAME,
+  assertRuntimeRelease,
   sha256File,
   sovtechPubkeyHex,
   sumsText,
+  treeDigest,
 } from './release-manifest.mjs';
 
 /** A release event is small; anything bigger is refused before it is parsed. */
@@ -148,7 +154,19 @@ function releaseShape(ev, trustedPubkey, d) {
   const commit = commits[0]?.[1];
   if (commits.length === 1 && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit)))
     refuse('malformed commit tag (want a full 40-hex git sha)');
-  return { artifacts, version, commit, createdAt: ev.created_at, d };
+  if (d !== RUNTIME_D_TAG) return { artifacts, version, commit, createdAt: ev.created_at, d };
+  const verlink = one('verlink');
+  // The app reads these only as two-item tags, and at most 32 tags: anything else it would refuse
+  // after the notice had gone out.
+  for (const k of ['d', 'version', 'verlink'])
+    if (tag(k)[0].length !== 2) refuse(`the "${k}" tag must have exactly one value`);
+  if (ev.tags.length > 32) refuse('a nutflix-runtime notice has at most 32 tags');
+  try {
+    assertRuntimeRelease({ verlink, version, names: artifacts.map((a) => a.name) });
+  } catch (e) {
+    refuse(e instanceof Error ? e.message : String(e));
+  }
+  return { artifacts, version, commit, verlink, createdAt: ev.created_at, d };
 }
 
 /**
@@ -186,16 +204,25 @@ export async function verifyRelease(
   ev,
   { files = [], allDir, trustedPubkey = sovtechPubkeyHex(), d = RELEASE_D_TAG },
 ) {
-  const { artifacts, version, commit, createdAt } = checkEvent(ev, trustedPubkey, d);
-  const ok = await checkFiles(artifacts, { files, allDir });
-  return { version, commit, createdAt, d, files: ok };
+  const { artifacts, version, commit, verlink, createdAt } = checkEvent(ev, trustedPubkey, d);
+  const ok = await checkFiles(artifacts, { files, allDir, d });
+  return {
+    version,
+    commit,
+    ...(verlink === undefined ? {} : { verlink }),
+    createdAt,
+    d,
+    files: ok,
+  };
 }
 
 /**
  * Check 4: each of `files` (or, with `allDir`, every artifact, in that directory) is listed in
- * `artifacts` and matches its size and sha256. Returns the artifacts checked.
+ * `artifacts` and matches its size and sha256. For `d` = nutflix-runtime, a `.app` is a directory
+ * and is checked by its tree digest; for every other release an artifact is a regular file.
+ * Returns the artifacts checked.
  */
-export async function checkFiles(artifacts, { files = [], allDir }) {
+export async function checkFiles(artifacts, { files = [], allDir, d = RELEASE_D_TAG }) {
   const byName = new Map(artifacts.map((a) => [a.name, a]));
   const targets = [];
   if (allDir !== undefined) {
@@ -216,8 +243,10 @@ export async function checkFiles(artifacts, { files = [], allDir }) {
     } catch {
       refuse(`${a.name} is missing`);
     }
-    if (!st.isFile()) refuse(`${path} is not a regular file`);
-    const got = await sha256File(path);
+    const bundle = d === RUNTIME_D_TAG && a.name.endsWith('.app');
+    if (bundle ? !st.isDirectory() : !st.isFile())
+      refuse(`${path} is not a ${bundle ? 'bundle directory' : 'regular file'}`);
+    const got = bundle ? await treeDigest(path) : await sha256File(path);
     if (got.bytes !== a.bytes)
       refuse(`${a.name}: size ${String(got.bytes)}, release says ${String(a.bytes)}`);
     if (got.sha256 !== a.sha256) refuse(`${a.name}: sha256 does not match the signed release`);
@@ -264,6 +293,7 @@ export async function run(argv) {
   process.stdout.write(
     `${r.d} release ${r.version}${r.commit === undefined ? '' : ` (commit ${r.commit})`}, created ${created}\n`,
   );
+  if (r.verlink !== undefined) process.stdout.write(`versioned link: ${r.verlink}\n`);
   process.stdout.write(
     `release-verify: ${String(r.files.length)} file(s) match the release signed by the SovTech key\n`,
   );

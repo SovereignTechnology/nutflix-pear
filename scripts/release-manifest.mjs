@@ -41,6 +41,13 @@
 //   not signed. A name cannot tell two builds of the SAME version apart: that takes --made.
 //   --out defaults to packages/app-desktop/out/release (gitignored); --version to
 //   @sovit/app-desktop's version; --commit to `git rev-parse HEAD`; --created-at to now.
+//
+// nutflix-runtime's notice (`d` = nutflix-runtime, made by that repository's release tool or by
+// release-template.mjs) is the same event with one more tag, ["verlink", "pear://<fork>.<length>.<key>"],
+// and names exactly its five targets. A macOS bundle is a directory, so its `sha256` is the tree
+// digest of nutflix-runtime's src/update/hash.ts (`treeDigest` below), and its `bytes` the sum of
+// its regular files. A vector shared by the two repositories holds them to the same bytes
+// (scripts/__fixtures__/nutflix-runtime-notice.vector.json).
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
@@ -49,6 +56,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -62,12 +70,26 @@ import { decode } from 'nostr-tools/nip19';
 export const RELEASE_NOTICE_KIND = 30071;
 export const RELEASE_D_TAG = 'nutflix-desktop';
 /**
- * Every release notice the SovTech key signs with these scripts, by its `d`: the desktop app, and
- * NFX's own releases (its nfxd and nfx-package tarball, 2026-11-06). The verify and publish
- * scripts take one of these with `--d` (default the desktop's); any other `d` is refused, and a
- * notice for one product never verifies as another's.
+ * Every release notice the SovTech key signs with these scripts, by its `d`: the desktop app,
+ * NFX's own releases (its nfxd and nfx-package tarball, 2026-11-06), and nutflix-runtime. The verify
+ * and publish scripts take one of these with `--d` (default the desktop's); any other `d` is
+ * refused, and a notice for one product never verifies as another's.
  */
-export const RELEASE_D_TAGS = Object.freeze([RELEASE_D_TAG, 'nfx']);
+export const RUNTIME_D_TAG = 'nutflix-runtime';
+export const RELEASE_D_TAGS = Object.freeze([RELEASE_D_TAG, 'nfx', RUNTIME_D_TAG]);
+/** nutflix-runtime's five targets, by the name a notice gives each (its `artifactName`). */
+export const RUNTIME_ARTIFACT_NAMES = Object.freeze([
+  'Nutflix-darwin-arm64.app',
+  'Nutflix-darwin-x64.app',
+  'Nutflix-linux-arm64.AppImage',
+  'Nutflix-linux-x64.AppImage',
+  'Nutflix-win32-x64.msix',
+]);
+/** nutflix-runtime's versioned link: the same pattern as its `src/update/notice.ts`. */
+export const RUNTIME_VERLINK =
+  /^pear:\/\/[0-9]{1,15}\.[0-9]{1,15}\.[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/;
+/** nutflix-runtime's versions: plain a.b.c (`PLAIN_VERSION` in its `src/update/status.ts`). */
+export const RUNTIME_VERSION = /^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$/;
 /** The SovTech org key (Cameron, 2026-09-24): every release is signed by it, nothing else. */
 export const SOVTECH_NPUB = 'npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx';
 
@@ -115,6 +137,45 @@ export async function sha256File(path) {
     h.update(chunk);
     bytes += chunk.length;
   }
+  return { sha256: h.digest('hex'), bytes };
+}
+
+/** No bundle holds more (nutflix-runtime's `MAX_TREE_ENTRIES`). */
+const MAX_TREE_ENTRIES = 200_000;
+
+/**
+ * nutflix-runtime's digest of a macOS bundle (its `src/update/hash.ts`): the sha256 of one JSON line
+ * per file and symlink, sorted by path: `["<path>","file",<owner-executable>,"<sha256>"]\n` or
+ * `["<path>","link",false,"<target>"]\n`. `bytes` is the sum of the regular files. A symlink at the
+ * top or a special file inside is refused. The shared vector pins this to the app's own code.
+ */
+export async function treeDigest(dir) {
+  const top = lstatSync(dir);
+  if (!top.isDirectory()) throw new Error(`${dir} is not a directory`);
+  const lines = [];
+  let bytes = 0;
+  const walk = async (d, rel) => {
+    for (const name of readdirSync(d)) {
+      if (lines.length >= MAX_TREE_ENTRIES) throw new Error(`${dir} has too many entries`);
+      const p = join(d, name);
+      const key = rel === '' ? name : `${rel}/${name}`;
+      const st = lstatSync(p);
+      if (st.isSymbolicLink())
+        lines.push({ key, line: `${JSON.stringify([key, 'link', false, readlinkSync(p)])}\n` });
+      else if (st.isDirectory()) await walk(p, key);
+      else if (st.isFile()) {
+        const got = await sha256File(p);
+        bytes += got.bytes;
+        const exec = (st.mode & 0o100) !== 0;
+        lines.push({ key, line: `${JSON.stringify([key, 'file', exec, got.sha256])}\n` });
+      } else throw new Error(`${p}: a bundle holds only files and symlinks`);
+    }
+  };
+  await walk(dir, '');
+  // UTF-16 code-unit order, as hash.ts sorts: it is the same on every platform.
+  lines.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const h = createHash('sha256');
+  for (const l of lines) h.update(l.line, 'utf8');
   return { sha256: h.digest('hex'), bytes };
 }
 
@@ -233,15 +294,44 @@ export function sumsText(artifacts) {
     .join('');
 }
 
-/** The unsigned NIP-01 event: `id` and `sig` empty until the SovTech signer fills them. */
-export function unsignedEvent({ artifacts, version, commit, createdAt, d = RELEASE_D_TAG }) {
+/** Throws unless this is a whole nutflix-runtime release: its link, a plain version, five targets. */
+export function assertRuntimeRelease({ verlink, version, names }) {
+  if (typeof verlink !== 'string' || !RUNTIME_VERLINK.test(verlink))
+    throw new Error(
+      'a nutflix-runtime notice needs a versioned link, pear://<fork>.<length>.<key>',
+    );
+  if (typeof version !== 'string' || !RUNTIME_VERSION.test(version))
+    throw new Error('a nutflix-runtime version is a plain a.b.c');
+  const got = [...names].sort(byteOrder);
+  if (JSON.stringify(got) !== JSON.stringify([...RUNTIME_ARTIFACT_NAMES]))
+    throw new Error(
+      `a nutflix-runtime notice names its five targets: ${RUNTIME_ARTIFACT_NAMES.join(', ')}`,
+    );
+}
+
+/**
+ * The unsigned NIP-01 event: `id` and `sig` empty until the SovTech signer fills them. `verlink` is
+ * for nutflix-runtime's notice, which requires it; any other release refuses one.
+ */
+export function unsignedEvent({
+  artifacts,
+  version,
+  commit,
+  createdAt,
+  d = RELEASE_D_TAG,
+  verlink,
+}) {
   if (!RELEASE_D_TAGS.includes(d)) throw new Error(`unknown release d ${JSON.stringify(d)}`);
+  if (d === RUNTIME_D_TAG)
+    assertRuntimeRelease({ verlink, version, names: artifacts.map((a) => a.name) });
+  else if (verlink !== undefined) throw new Error(`a ${d} notice has no versioned link`);
   const sorted = [...artifacts].sort((a, b) => byteOrder(a.name, b.name));
   const content = sumsText(sorted);
   const tags = [
     ['d', d],
     ['version', version],
   ];
+  if (verlink !== undefined) tags.push(['verlink', verlink]);
   if (commit) tags.push(['commit', commit]);
   tags.push(
     ['x', createHash('sha256').update(content, 'utf8').digest('hex')],

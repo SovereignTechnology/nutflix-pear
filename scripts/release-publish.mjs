@@ -24,7 +24,8 @@
 //   node scripts/release-publish.mjs <release-event.unsigned.json | release-event.json>
 //        --dir <dir with the downloaded artifacts> [--d <release>] [--dry-run]
 //   `--d nfx` signs NFX's own release notice (its nfxd and nfx-package tarball) instead of the
-//   desktop app's (`nutflix-desktop`, the default); no other `d` is accepted.
+//   desktop app's (`nutflix-desktop`, the default), and `--d nutflix-runtime` that app's, which
+//   goes to its own three relays (`relaysFor`); no other `d` is accepted.
 import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import process from 'node:process';
@@ -36,7 +37,12 @@ import { SimplePool, useWebSocketImplementation } from 'nostr-tools/pool';
 import { npubEncode } from 'nostr-tools/nip19';
 import WebSocket from 'ws';
 
-import { RELEASE_D_TAG, RELEASE_D_TAGS, sovtechPubkeyHex } from './release-manifest.mjs';
+import {
+  RELEASE_D_TAG,
+  RELEASE_D_TAGS,
+  RUNTIME_D_TAG,
+  sovtechPubkeyHex,
+} from './release-manifest.mjs';
 import {
   checkFiles,
   checkUnsignedRelease,
@@ -75,6 +81,17 @@ export const RELEASE_RELAYS = Object.freeze([
   'wss://relay.primal.net',
   'wss://relay.ditto.pub',
 ]);
+/**
+ * Where nutflix-runtime's notice is published: the relays that app reads a notice from
+ * (`RELEASE_NOTICE_RELAYS` in its `packaging/update-root.ts`), and no others.
+ */
+export const RUNTIME_RELEASE_RELAYS = Object.freeze([
+  'wss://relay.nutflix.xyz',
+  'wss://relay.primal.net',
+  'wss://relay.ditto.pub',
+]);
+/** The relays of a release, by its `d`. */
+export const relaysFor = (d) => (d === RUNTIME_D_TAG ? RUNTIME_RELEASE_RELAYS : RELEASE_RELAYS);
 /** How long each relay has to answer the publish. */
 export const PUBLISH_TIMEOUT_MS = 15_000;
 /** What must be typed to publish: not a reflexive `y`. */
@@ -88,6 +105,7 @@ function summary(r, relays) {
   const when = new Date(Number(r.createdAt) * 1000).toISOString();
   return [
     `${r.d} release ${r.version}${r.commit === undefined ? '' : ` (commit ${r.commit})`}, created ${when}`,
+    ...(r.verlink === undefined ? [] : [`versioned link: ${r.verlink}`]),
     ...r.files.map((a) => `  ${a.sha256}  ${a.name}  (${String(a.bytes)} bytes)`),
     `relays: ${relays.join(', ')}`,
   ].join('\n');
@@ -110,7 +128,7 @@ function summary(r, relays) {
 export async function publishRelease({
   event,
   dir,
-  relays = RELEASE_RELAYS,
+  relays: givenRelays,
   askBunkerUri,
   connect,
   adopt,
@@ -122,6 +140,7 @@ export async function publishRelease({
   trustedPubkey = sovtechPubkeyHex(),
   d = RELEASE_D_TAG,
 }) {
+  const relays = givenRelays ?? relaysFor(d);
   const signedAlready =
     typeof event === 'object' && event !== null && event.id !== '' && event.sig !== '';
   let signed;
@@ -131,7 +150,7 @@ export async function publishRelease({
   } else {
     // 1. Before the network: the template and every file.
     const t = checkUnsignedRelease(event, trustedPubkey, d);
-    await checkFiles(t.artifacts, { allDir: dir });
+    await checkFiles(t.artifacts, { allDir: dir, d });
     log(`template ok: ${String(t.artifacts.length)} artifact(s) in ${dir} match it`);
     // 2. The bunker, which must sign for the trusted key.
     const uri = await askBunkerUri();

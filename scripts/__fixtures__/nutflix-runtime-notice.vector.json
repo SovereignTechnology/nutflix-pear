@@ -1,0 +1,214 @@
+{
+  "schema": "nutflix-runtime-notice-vector/1",
+  "about": "One release notice, written out by hand from the format, that nutflix-runtime and nutflix-pear must both produce and read. `signed` is signed by a throwaway key that was discarded: it is not a release key.",
+  "input": {
+    "version": "0.2.0",
+    "verlink": "pear://0.1234.ybybybybybybybybybybybybybybybybybybybybybybybybybyb",
+    "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+    "createdAt": 1800000000,
+    "artifacts": [
+      {
+        "name": "Nutflix-darwin-arm64.app",
+        "sha256": "06e17de7f550b89d3d16b8a3104701cd81d52355a98ab4e457724a0f847a2899",
+        "bytes": 54
+      },
+      {
+        "name": "Nutflix-darwin-x64.app",
+        "sha256": "b4098c4460ef22251d39ad42288a99ff6754c894fe1a4bc8f7b5ae2af5d6c897",
+        "bytes": 200000002
+      },
+      {
+        "name": "Nutflix-linux-arm64.AppImage",
+        "sha256": "17d46d4991b2edd5e445342a72ba0cb7cf09e4849b5e98c16408ce11e05c7388",
+        "bytes": 150000003
+      },
+      {
+        "name": "Nutflix-linux-x64.AppImage",
+        "sha256": "2cc29203eb8483cf10595a15013d5b2e6305a1472b38c933ef0cbaaa27989735",
+        "bytes": 150000004
+      },
+      {
+        "name": "Nutflix-win32-x64.msix",
+        "sha256": "6f420d153133bb76af8e7ba54a10e9c87701e40eb26901ea27c3ae737a5118b0",
+        "bytes": 120000005
+      }
+    ]
+  },
+  "unsigned": {
+    "id": "",
+    "pubkey": "83d8bce2f7d6966f306e6f1a712497cf0a2c77d073923136a0e2bb54963b3434",
+    "created_at": 1800000000,
+    "kind": 30071,
+    "tags": [
+      [
+        "d",
+        "nutflix-runtime"
+      ],
+      [
+        "version",
+        "0.2.0"
+      ],
+      [
+        "verlink",
+        "pear://0.1234.ybybybybybybybybybybybybybybybybybybybybybybybybybyb"
+      ],
+      [
+        "commit",
+        "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+      ],
+      [
+        "x",
+        "5f46404d861b0aa88f57e3f8fe43d3e0c3d052286086c014dbd6f7a8c8947f97"
+      ],
+      [
+        "files",
+        "5"
+      ],
+      [
+        "size",
+        "620000068"
+      ],
+      [
+        "artifact",
+        "Nutflix-darwin-arm64.app",
+        "06e17de7f550b89d3d16b8a3104701cd81d52355a98ab4e457724a0f847a2899",
+        "54"
+      ],
+      [
+        "artifact",
+        "Nutflix-darwin-x64.app",
+        "b4098c4460ef22251d39ad42288a99ff6754c894fe1a4bc8f7b5ae2af5d6c897",
+        "200000002"
+      ],
+      [
+        "artifact",
+        "Nutflix-linux-arm64.AppImage",
+        "17d46d4991b2edd5e445342a72ba0cb7cf09e4849b5e98c16408ce11e05c7388",
+        "150000003"
+      ],
+      [
+        "artifact",
+        "Nutflix-linux-x64.AppImage",
+        "2cc29203eb8483cf10595a15013d5b2e6305a1472b38c933ef0cbaaa27989735",
+        "150000004"
+      ],
+      [
+        "artifact",
+        "Nutflix-win32-x64.msix",
+        "6f420d153133bb76af8e7ba54a10e9c87701e40eb26901ea27c3ae737a5118b0",
+        "120000005"
+      ]
+    ],
+    "content": "06e17de7f550b89d3d16b8a3104701cd81d52355a98ab4e457724a0f847a2899  Nutflix-darwin-arm64.app\nb4098c4460ef22251d39ad42288a99ff6754c894fe1a4bc8f7b5ae2af5d6c897  Nutflix-darwin-x64.app\n17d46d4991b2edd5e445342a72ba0cb7cf09e4849b5e98c16408ce11e05c7388  Nutflix-linux-arm64.AppImage\n2cc29203eb8483cf10595a15013d5b2e6305a1472b38c933ef0cbaaa27989735  Nutflix-linux-x64.AppImage\n6f420d153133bb76af8e7ba54a10e9c87701e40eb26901ea27c3ae737a5118b0  Nutflix-win32-x64.msix\n",
+    "sig": ""
+  },
+  "signed": {
+    "id": "0a7e76371e3b47eb3399db0cd86236618a9b85e261e4f335da1949b95cf3dd99",
+    "pubkey": "4c42092dddf355183d00a0dcdf12d27e372b0836cd7ff39ce1ad463f715fd832",
+    "created_at": 1800000000,
+    "kind": 30071,
+    "tags": [
+      [
+        "d",
+        "nutflix-runtime"
+      ],
+      [
+        "version",
+        "0.2.0"
+      ],
+      [
+        "verlink",
+        "pear://0.1234.ybybybybybybybybybybybybybybybybybybybybybybybybybyb"
+      ],
+      [
+        "commit",
+        "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+      ],
+      [
+        "x",
+        "5f46404d861b0aa88f57e3f8fe43d3e0c3d052286086c014dbd6f7a8c8947f97"
+      ],
+      [
+        "files",
+        "5"
+      ],
+      [
+        "size",
+        "620000068"
+      ],
+      [
+        "artifact",
+        "Nutflix-darwin-arm64.app",
+        "06e17de7f550b89d3d16b8a3104701cd81d52355a98ab4e457724a0f847a2899",
+        "54"
+      ],
+      [
+        "artifact",
+        "Nutflix-darwin-x64.app",
+        "b4098c4460ef22251d39ad42288a99ff6754c894fe1a4bc8f7b5ae2af5d6c897",
+        "200000002"
+      ],
+      [
+        "artifact",
+        "Nutflix-linux-arm64.AppImage",
+        "17d46d4991b2edd5e445342a72ba0cb7cf09e4849b5e98c16408ce11e05c7388",
+        "150000003"
+      ],
+      [
+        "artifact",
+        "Nutflix-linux-x64.AppImage",
+        "2cc29203eb8483cf10595a15013d5b2e6305a1472b38c933ef0cbaaa27989735",
+        "150000004"
+      ],
+      [
+        "artifact",
+        "Nutflix-win32-x64.msix",
+        "6f420d153133bb76af8e7ba54a10e9c87701e40eb26901ea27c3ae737a5118b0",
+        "120000005"
+      ]
+    ],
+    "content": "06e17de7f550b89d3d16b8a3104701cd81d52355a98ab4e457724a0f847a2899  Nutflix-darwin-arm64.app\nb4098c4460ef22251d39ad42288a99ff6754c894fe1a4bc8f7b5ae2af5d6c897  Nutflix-darwin-x64.app\n17d46d4991b2edd5e445342a72ba0cb7cf09e4849b5e98c16408ce11e05c7388  Nutflix-linux-arm64.AppImage\n2cc29203eb8483cf10595a15013d5b2e6305a1472b38c933ef0cbaaa27989735  Nutflix-linux-x64.AppImage\n6f420d153133bb76af8e7ba54a10e9c87701e40eb26901ea27c3ae737a5118b0  Nutflix-win32-x64.msix\n",
+    "sig": "0e6c88dc423dfb3e8ee0776793d24d42da9991d49603e0b71573e965ccb5a8d95a1cde64457af654b0e6d391036a0e384b4d2e12135b2012f0fb3c406e353433"
+  },
+  "bundle": {
+    "name": "Nutflix-darwin-arm64.app",
+    "entries": [
+      {
+        "path": "Contents/Info.plist",
+        "kind": "file",
+        "exec": false,
+        "text": "<plist>vector</plist>\n"
+      },
+      {
+        "path": "Contents/MacOS/Nutflix",
+        "kind": "file",
+        "exec": true,
+        "text": "#!/bin/sh\necho vector\n"
+      },
+      {
+        "path": "Contents/Frameworks/E.framework/Versions/A/E",
+        "kind": "file",
+        "exec": true,
+        "text": "E"
+      },
+      {
+        "path": "Contents/Frameworks/E.framework/Versions/Current",
+        "kind": "link",
+        "target": "A"
+      },
+      {
+        "path": "Contents/Frameworks/E.framework/E",
+        "kind": "link",
+        "target": "Versions/Current/E"
+      },
+      {
+        "path": "Contents/Resources/naïve \"name\"\nline.txt",
+        "kind": "file",
+        "exec": false,
+        "text": "odd name\n"
+      }
+    ],
+    "sha256": "06e17de7f550b89d3d16b8a3104701cd81d52355a98ab4e457724a0f847a2899",
+    "bytes": 54
+  }
+}
