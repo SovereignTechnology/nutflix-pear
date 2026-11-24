@@ -30,7 +30,18 @@ not. Showing the user their own connections is allowed, provided the user asks.
    free NFX video, a settings menu item on a paid one), or press `n`. It closes with its ×, with
    `n` again, or with the same menu item. It reads the session once a second while open, and not
    at all while closed.
-2. **What it shows.**
+   - **Shorts** opens it by right-clicking the short (buttons, links and the panel's own text keep
+     the browser's menu), by its controls' "Stats for nerds" button, or by `n`; Escape closes the
+     menu and then the panel, and moving to another short closes it with the played one.
+   - **The mini-player** has no `n` (it sits over every screen, where Watch and Shorts own that
+     key). It opens by its bar's "Stats for nerds" button or by right-clicking its video, and the
+     panel opens above the mini-player, where it has room; Escape closes it. A new hand-off is
+     a new session, so it starts closed with the address switch off.
+   - Both hear the paid seeders (`onPeers`, which does not replay) for the session's whole life
+     but redraw only while the panel is open.
+2. **What it shows**, sources first (a small player scrolls the panel, and the sources are what it
+   is for; found by playing a video on the live web client in a 1280 px window, where the
+   player's own numbers filled the visible part and the sources sat below the fold).
    - **Sources:** one row per source, with its kind (HTTPS origin, WebRTC peer, iroh, HyperDHT or
      Hypercore seeder), a short id (a key cut to 8 hex, an origin's host whole), what it was found
      through, bytes each way, files, and whether its connection is open.

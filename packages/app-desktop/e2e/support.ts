@@ -379,13 +379,15 @@ export interface NerdStatsCheck {
   readonly kind: 'iroh' | 'hypercore';
   /** Whether a row's Address and Path cells are the route this run must show. */
   readonly route: (address: string, path: string) => boolean;
+  /** The key that closes it at the end: `n` (the players) or Escape (the mini-player has no `n`). */
+  readonly closeWith?: 'n' | 'Escape';
 }
 
 /**
  * Stats for nerds (ADR 0024), driven as a viewer drives it: right-click opens it on a connected
  * `kind` row that has received data, with no address; the switch shows the route under a banner;
- * closed with the switch on, it reopens with the switch off; `n` closes it. Errors never quote an
- * address.
+ * closed with the switch on, it reopens with the switch off; `n` (or `closeWith`) closes it.
+ * Errors never quote an address.
  */
 export async function checkNerdStats(page: Page, o: NerdStatsCheck): Promise<void> {
   const panel = page.getByTestId('nerd-stats');
@@ -441,7 +443,7 @@ export async function checkNerdStats(page: Page, o: NerdStatsCheck): Promise<voi
 
   await open();
   await assertNoAddress('after reopening');
-  await page.keyboard.press('n');
+  await page.keyboard.press(o.closeWith ?? 'n');
   await panel.waitFor({ state: 'detached', timeout: 5_000 });
 }
 

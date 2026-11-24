@@ -5,8 +5,8 @@
  */
 import { act, createElement, type ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { NfxPlayStats, PlaySourceAddress } from '@sovit/core';
-import { NerdStats, useNerdStats, type NerdFeed } from '../NerdStats/NerdStats.js';
+import type { NfxPlayStats, PeerSpend, PlaySession, PlaySourceAddress, Sats } from '@sovit/core';
+import { NerdStats, useNerdStats, useSessionPeers, type NerdFeed } from '../NerdStats/NerdStats.js';
 import {
   addressText,
   copyText,
@@ -336,5 +336,105 @@ describe('stats for nerds: the panel', () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(String((writeText.mock.calls[0] as unknown[])[0])).not.toContain(KEY);
     expect(mounted.container.textContent).toContain('Copied (no addresses).');
+  });
+});
+
+function peer(pubkey: string, blocks: number): PeerSpend {
+  return {
+    pubkey: pubkey as PeerSpend['pubkey'],
+    sats: blocks as Sats,
+    ratePerMin: 0 as Sats,
+    blocks,
+  };
+}
+
+/** A session that only knows `onPeers`, with the listeners it was given and how many are live. */
+function fakePeerSession(): {
+  readonly session: PlaySession;
+  readonly emit: (list: readonly PeerSpend[]) => void;
+  readonly live: () => number;
+  readonly subscribed: () => number;
+} {
+  const listeners = new Set<(p: readonly PeerSpend[]) => void>();
+  let subscribed = 0;
+  const session = {
+    onPeers: (cb: (p: readonly PeerSpend[]) => void) => {
+      subscribed += 1;
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+  } as unknown as PlaySession;
+  return {
+    session,
+    emit: (list) => {
+      act(() => {
+        for (const cb of [...listeners]) cb(list);
+      });
+    },
+    live: () => listeners.size,
+    subscribed: () => subscribed,
+  };
+}
+
+function PeersProbe({
+  session,
+  open,
+}: {
+  readonly session: PlaySession | null;
+  readonly open: boolean;
+}): ReactElement {
+  const peers = useSessionPeers(session, open);
+  return createElement('output', { 'data-testid': 'peers' }, peers.map((p) => p.pubkey).join(','));
+}
+
+describe('stats for nerds: useSessionPeers (the paid seeders for Shorts and the mini-player)', () => {
+  const A = 'aa'.repeat(32);
+  const B = 'bb'.repeat(32);
+  const shown = (r: Rendered): string => r.get('[data-testid="peers"]').textContent;
+
+  it('listens from the start, shows nothing while closed, and opens with the latest list', () => {
+    const f = fakePeerSession();
+    mounted = render(createElement(PeersProbe, { session: f.session, open: false }));
+    const r = mounted;
+    // `onPeers` does not replay: it is heard before the panel ever opens.
+    expect(f.subscribed()).toBe(1);
+    f.emit([peer(A, 3)]);
+    f.emit([peer(A, 4), peer(B, 1)]);
+    expect(shown(r)).toBe('');
+    r.rerender(createElement(PeersProbe, { session: f.session, open: true }));
+    expect(shown(r)).toBe(`${A},${B}`);
+    // Open: a new list shows at once.
+    f.emit([peer(B, 2)]);
+    expect(shown(r)).toBe(B);
+    // Closed again: emptied, and still heard; opening shows what came while it was closed.
+    r.rerender(createElement(PeersProbe, { session: f.session, open: false }));
+    expect(shown(r)).toBe('');
+    f.emit([peer(A, 9)]);
+    expect(shown(r)).toBe('');
+    r.rerender(createElement(PeersProbe, { session: f.session, open: true }));
+    expect(shown(r)).toBe(A);
+    expect(f.subscribed()).toBe(1);
+  });
+
+  it('lets go of a session that is replaced or released, and forgets its seeders', () => {
+    const first = fakePeerSession();
+    const second = fakePeerSession();
+    mounted = render(createElement(PeersProbe, { session: first.session, open: true }));
+    const r = mounted;
+    first.emit([peer(A, 1)]);
+    expect(shown(r)).toBe(A);
+    r.rerender(createElement(PeersProbe, { session: second.session, open: true }));
+    expect(first.live()).toBe(0);
+    expect(second.live()).toBe(1);
+    expect(shown(r)).toBe(''); // the old session's seeders are not the new one's
+    first.emit([peer(A, 2)]);
+    expect(shown(r)).toBe('');
+    second.emit([peer(B, 1)]);
+    expect(shown(r)).toBe(B);
+    r.rerender(createElement(PeersProbe, { session: null, open: true }));
+    expect(second.live()).toBe(0);
+    expect(shown(r)).toBe('');
+    r.unmount();
+    mounted = undefined;
   });
 });

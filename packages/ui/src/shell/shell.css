@@ -178,15 +178,28 @@ body {
   z-index: var(--nf-z-mini-player);
   width: 400px;
   max-width: calc(100vw - 2 * var(--nf-space-16));
-  overflow: hidden;
   border-radius: var(--nf-radius-lg);
   background: var(--nf-color-bg-elevated);
   box-shadow: var(--nf-shadow-md);
 }
 
+/* The video clips itself to the box's top corners: the box no longer clips, because the
+   "Stats for nerds" panel (ADR 0024) opens above it. */
 .nf-shell__mini-media {
+  position: relative;
+  overflow: hidden;
   aspect-ratio: 16 / 9;
+  border-radius: var(--nf-radius-lg) var(--nf-radius-lg) 0 0;
   background: #000;
+}
+
+.nf-shell__mini-nerd {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--nf-space-8));
+  left: 0;
+  max-height: min(60vh, 480px);
+  overflow: auto;
 }
 
 .nf-shell__mini-media video {

@@ -7,7 +7,7 @@
  * they are. `useNerdStats` holds that rule; `NerdStats` only draws.
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import type { NfxPlayStats, PlaySourceAddress } from '@sovit/core';
+import type { NfxPlayStats, PeerSpend, PlaySession, PlaySourceAddress } from '@sovit/core';
 import { cx } from '../shared/format.js';
 import {
   addressText,
@@ -99,16 +99,8 @@ export function NerdStats({
           screenshots.
         </p>
       ) : null}
-      <table className="nf-nerd__rows">
-        <tbody>
-          {rows.map(([k, v]) => (
-            <tr key={k}>
-              <th scope="row">{k}</th>
-              <td>{v}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* The sources first: they are what the panel is for, and in a small player the panel
+          scrolls, so what is below the fold is the player's own numbers. */}
       {sources.length > 0 ? (
         <table className="nf-nerd__sources">
           <thead>
@@ -161,6 +153,16 @@ export function NerdStats({
       ) : (
         <p className="nf-nerd__status">No source has sent bytes yet.</p>
       )}
+      <table className="nf-nerd__rows">
+        <tbody>
+          {rows.map(([k, v]) => (
+            <tr key={k}>
+              <th scope="row">{k}</th>
+              <td>{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
       {status !== '' ? (
         <p className="nf-nerd__status" role="status">
           {status}
@@ -189,6 +191,36 @@ export interface NerdState<S> {
 }
 
 const NO_ADDRESSES: ReadonlyMap<string, PlaySourceAddress> = new Map();
+const NO_PEERS: readonly PeerSpend[] = [];
+
+/**
+ * The paid session's seeders (`onPeers`) for a panel, for the players that do not already keep
+ * them (Shorts, the mini-player). `onPeers` does not replay what it last said, so this listens
+ * for the session's whole life and keeps only the latest list; it re-renders its caller only
+ * while `open`, and opens with that latest list rather than an empty one.
+ */
+export function useSessionPeers(session: PlaySession | null, open: boolean): readonly PeerSpend[] {
+  const [shown, setShown] = useState<readonly PeerSpend[]>(NO_PEERS);
+  const latest = useRef<readonly PeerSpend[]>(NO_PEERS);
+  const openRef = useRef(open);
+  openRef.current = open;
+
+  useEffect(() => {
+    latest.current = NO_PEERS;
+    setShown(NO_PEERS);
+    if (session === null) return undefined;
+    return session.onPeers((list) => {
+      latest.current = list;
+      if (openRef.current) setShown(list);
+    });
+  }, [session]);
+
+  useEffect(() => {
+    setShown(open ? latest.current : NO_PEERS);
+  }, [open]);
+
+  return shown;
+}
 
 /**
  * Polls `feed` every `intervalMs` while `open`. Addresses start off on every open and are

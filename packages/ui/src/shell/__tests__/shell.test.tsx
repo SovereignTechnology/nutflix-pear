@@ -47,6 +47,8 @@ interface RecordedSession {
   readonly videoId: NostrEventId;
   readonly pause: MockInstance;
   readonly resume: MockInstance;
+  /** How often the screens asked this session where its seeders are (v19, ADR 0024). */
+  addressCalls(): number;
 }
 
 let mounted: Mounted[] = [];
@@ -124,10 +126,19 @@ async function mount(
   base.play = async (id: NostrEventId, r?: string) => {
     playSpy(id, r);
     const session = await origPlay(id, r);
+    let addressCalls = 0;
+    const realAddresses = session.addresses?.bind(session);
+    if (realAddresses !== undefined) {
+      session.addresses = () => {
+        addressCalls += 1;
+        return realAddresses();
+      };
+    }
     sessions.push({
       videoId: id,
       pause: vi.spyOn(session, 'pause'),
       resume: vi.spyOn(session, 'resume'),
+      addressCalls: () => addressCalls,
     });
     return session;
   };
@@ -365,6 +376,188 @@ describe('Shorts over the mini-player (SE-3)', () => {
     expect(m.coordinator.snapshot()).toMatchObject({ open: 2, unpaused: 1 });
     expect(shortUi().textContent).not.toContain('Paused — not paying');
     expect(q(m, 'aside[aria-label="Mini-player"]').textContent).toContain('Paused — not paying');
+    invariant(m);
+  });
+});
+
+describe('stats for nerds in Shorts and the mini-player (ADR 0024)', () => {
+  const NERD = '[data-testid="nerd-stats"]';
+  const MENU = '.nf-nerd-menu';
+  const MINI = 'aside[aria-label="Mini-player"]';
+  const FRAME = '.nf-shorts article[aria-current="true"] .nf-shorts__frame';
+  const STATS_BUTTON = '.nf-shorts__controls button[aria-label="Stats for nerds (n)"]';
+
+  function key(k: string, target: EventTarget = document.body): void {
+    act(() => {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  }
+  function contextMenu(el: Element): MouseEvent {
+    const ev = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 5,
+      clientY: 5,
+    });
+    act(() => {
+      el.dispatchEvent(ev);
+    });
+    return ev;
+  }
+  const shown = (m: Mounted, sel: string): boolean => m.container.querySelector(sel) !== null;
+  const addrCells = (m: Mounted): string[] =>
+    [...m.container.querySelectorAll('.nf-nerd__addr')].map((e) => e.textContent);
+  const switchOf = (m: Mounted, scope: string): HTMLInputElement =>
+    q(m, `${scope} .nf-nerd__switch input`) as HTMLInputElement;
+
+  it('Shorts: the button, the right-click menu and n open it; seeders by short id, addresses only behind the switch', async () => {
+    const m = await mount();
+    await go(m, { name: 'shorts' });
+    // No short is playing: n does nothing, and the browser's own menu stays.
+    key('n');
+    expect(shown(m, NERD)).toBe(false);
+    expect(contextMenu(q(m, FRAME)).defaultPrevented).toBe(false);
+    expect(shown(m, MENU)).toBe(false);
+
+    await click(q(m, '.nf-shorts button[aria-label^="Play — "]'));
+    const short = must(m.sessions[0], "the short's session");
+    // The seeders speak before the panel opens: it opens with what they said (no replay).
+    m.tick();
+    expect(shown(m, NERD)).toBe(false);
+
+    await click(q(m, STATS_BUTTON));
+    const text = q(m, NERD).textContent;
+    expect(text).toContain('Paid this session');
+    expect(
+      m.container.querySelectorAll(`${NERD} tr[data-kind="hypercore"]`).length,
+    ).toBeGreaterThan(0);
+    expect(text).not.toMatch(/[0-9a-f]{16}/); // a seeder is its 8 hex, never its key
+    expect(addrCells(m)).toHaveLength(0);
+    expect(short.addressCalls()).toBe(0);
+
+    // Addresses: behind the switch, with the banner, and asked for only from then on.
+    await click(switchOf(m, NERD));
+    expect(shown(m, '.nf-nerd__banner')).toBe(true);
+    expect(addrCells(m)).toContain('203.0.113.10:49737');
+    expect(short.addressCalls()).toBeGreaterThan(0);
+
+    // n closes it; the short's own menu opens it again, with the switch off and no asking.
+    key('n');
+    expect(shown(m, NERD)).toBe(false);
+    const asked = short.addressCalls();
+    expect(contextMenu(q(m, FRAME)).defaultPrevented).toBe(true);
+    await click(q(m, `${MENU} button`));
+    expect(shown(m, NERD)).toBe(true);
+    expect(switchOf(m, NERD).checked).toBe(false);
+    expect(addrCells(m)).toHaveLength(0);
+    m.tick();
+    await flush();
+    expect(short.addressCalls()).toBe(asked);
+
+    // Escape closes the menu first, then the panel.
+    contextMenu(q(m, FRAME));
+    expect(shown(m, MENU)).toBe(true);
+    key('Escape');
+    expect(shown(m, MENU)).toBe(false);
+    expect(shown(m, NERD)).toBe(true);
+    key('Escape');
+    expect(shown(m, NERD)).toBe(false);
+
+    // Typing in a field never toggles it.
+    key('n');
+    expect(shown(m, NERD)).toBe(true);
+    const field = document.createElement('input');
+    document.body.append(field);
+    key('n', field);
+    field.remove();
+    expect(shown(m, NERD)).toBe(true);
+
+    // Moving to the next short closes the played one, and the panel with it.
+    key('j');
+    await flush();
+    expect(shown(m, NERD)).toBe(false);
+    expect(m.live()).toBe(0);
+    key('n');
+    expect(shown(m, NERD)).toBe(false);
+  });
+
+  it("Shorts: the browser's own menu stays on buttons and on the panel's text", async () => {
+    const m = await mount();
+    await go(m, { name: 'shorts' });
+    await click(q(m, '.nf-shorts button[aria-label^="Play — "]'));
+    await click(q(m, STATS_BUTTON));
+    expect(
+      contextMenu(q(m, '.nf-shorts__controls button[aria-label="Mute (m)"]')).defaultPrevented,
+    ).toBe(false);
+    expect(contextMenu(q(m, `${NERD} .nf-nerd__title`)).defaultPrevented).toBe(false);
+    expect(shown(m, MENU)).toBe(false);
+    expect(shown(m, NERD)).toBe(true);
+  });
+
+  it('the mini-player: its button and a right-click open it, with the paid rate; no n', async () => {
+    const m = await mount({ name: 'watch', videoId: V1 });
+    await playWatch(m);
+    await go(m, { name: 'home' });
+    const session = must(m.sessions[0], "the mini's session");
+    m.tick();
+
+    // n belongs to the screens, not to this player.
+    key('n');
+    expect(shown(m, `${MINI} ${NERD}`)).toBe(false);
+
+    await click(q(m, `${MINI} button[aria-label="Stats for nerds"]`));
+    const panel = q(m, `${MINI} ${NERD}`);
+    expect(panel.textContent).toContain('Paid rate');
+    expect(panel.querySelectorAll('tr[data-kind="hypercore"]').length).toBeGreaterThan(0);
+    expect(panel.textContent).not.toMatch(/[0-9a-f]{16}/);
+    expect(addrCells(m)).toHaveLength(0);
+    expect(session.addressCalls()).toBe(0);
+
+    await click(switchOf(m, MINI));
+    expect(addrCells(m)).toContain('203.0.113.10:49737');
+    expect(session.addressCalls()).toBeGreaterThan(0);
+
+    // × closes it; the video's own menu opens it again, with the switch off.
+    await click(q(m, `${MINI} button[aria-label="Close stats"]`));
+    expect(shown(m, `${MINI} ${NERD}`)).toBe(false);
+    expect(contextMenu(q(m, `${MINI} .nf-shell__mini-media`)).defaultPrevented).toBe(true);
+    await click(q(m, `${MINI} ${MENU} button`));
+    expect(switchOf(m, MINI).checked).toBe(false);
+    expect(addrCells(m)).toHaveLength(0);
+
+    // Escape closes the menu first, then the panel.
+    contextMenu(q(m, `${MINI} .nf-shell__mini-media`));
+    expect(shown(m, `${MINI} ${MENU}`)).toBe(true);
+    key('Escape');
+    expect(shown(m, `${MINI} ${MENU}`)).toBe(false);
+    expect(shown(m, `${MINI} ${NERD}`)).toBe(true);
+    key('Escape');
+    expect(shown(m, `${MINI} ${NERD}`)).toBe(false);
+    invariant(m);
+  });
+
+  it('the mini-player: a new hand-off starts closed with the switch off, and says when it is paused', async () => {
+    const m = await mount({ name: 'watch', videoId: V1 });
+    await playWatch(m);
+    await go(m, { name: 'home' });
+    await click(q(m, `${MINI} button[aria-label="Stats for nerds"]`));
+    await click(switchOf(m, MINI));
+    expect(switchOf(m, MINI).checked).toBe(true);
+
+    // Playing V2 pauses the mini: the panel says so.
+    await go(m, { name: 'watch', videoId: V2 });
+    await playWatch(m);
+    expect(m.coordinator.snapshot().mini?.paused).toBe(true);
+    expect(q(m, `${MINI} ${NERD}`).textContent).toContain('paused, not paying');
+
+    // Leaving V2 hands it over: the mini is V2's session now, and the panel is closed.
+    await go(m, { name: 'home' });
+    expect(m.coordinator.snapshot().mini?.handoff.videoId).toBe(V2);
+    expect(shown(m, `${MINI} ${NERD}`)).toBe(false);
+    await click(q(m, `${MINI} button[aria-label="Stats for nerds"]`));
+    expect(switchOf(m, MINI).checked).toBe(false);
     invariant(m);
   });
 });

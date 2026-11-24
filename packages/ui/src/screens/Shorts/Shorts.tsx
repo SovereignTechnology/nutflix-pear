@@ -59,6 +59,7 @@ import {
   IconButton,
   Markdown,
   MintChip,
+  NerdStats,
   ReactionButtons,
   SatsBadge,
   Sheet,
@@ -72,11 +73,15 @@ import {
   mintHost,
   nip71Only,
   parseMarkdown,
+  peerSpendRows,
   reactionStateOf,
   reactionStep,
   renditionPriceSats,
   shortPubkey,
+  statRows,
   toPlainText,
+  useNerdStats,
+  useSessionPeers,
   type MyReaction,
   type ReactionState,
   type ToastItem,
@@ -93,6 +98,10 @@ export const SHORTS_DEFAULT_PREFETCH_SEC = 30;
 
 /** Nutzap amounts offered in the sheet (sats). */
 export const SHORTS_NUTZAP_AMOUNTS: readonly number[] = [21, 100, 500, 1000];
+
+/** The stats-for-nerds context menu's size (px), to keep it inside the frame. */
+const NERD_MENU_WIDTH = 170;
+const NERD_MENU_HEIGHT = 40;
 
 /** Wheel distance (px) that counts as "next/previous" within one gesture. */
 const WHEEL_THRESHOLD = 40;
@@ -371,6 +380,37 @@ export function Shorts({
   const [priceOverride, setPriceOverride] = useState<Readonly<Record<string, Sats>>>({});
   const priceOverrideRef = useRef(priceOverride);
   priceOverrideRef.current = priceOverride;
+
+  // v19 (ADR 0024): stats for nerds on the bound short. Its seeders are heard for the session's
+  // life but only re-render this screen while the panel is open; the seeders' addresses are
+  // asked for only while the viewer has switched them on. Releasing the session closes it all.
+  const [nerdOpen, setNerdOpen] = useState(false);
+  const [nerdMenuAt, setNerdMenuAt] = useState<{
+    readonly x: number;
+    readonly y: number;
+  } | null>(null);
+  const nerdShown = nerdOpen && binding !== null;
+  const nerd = useNerdStats(nerdShown, {
+    addresses: binding?.session.addresses?.bind(binding.session),
+    element: () => videoElRef.current,
+  });
+  const nerdPeers = useSessionPeers(binding?.session ?? null, nerdShown);
+  useEffect(() => {
+    if (binding === null) {
+      setNerdOpen(false);
+      setNerdMenuAt(null);
+    }
+  }, [binding]);
+  useEffect(() => {
+    if (nerdMenuAt === null) return undefined;
+    const close = (): void => {
+      setNerdMenuAt(null);
+    };
+    document.addEventListener('click', close);
+    return () => {
+      document.removeEventListener('click', close);
+    };
+  }, [nerdMenuAt]);
 
   /** Stops paying and forgets the session. No state updates (safe on unmount). */
   const releaseSession = useCallback((): void => {
@@ -1082,6 +1122,14 @@ export function Shorts({
     } else if (key === 'm' && bindingRef.current !== null) {
       e.preventDefault();
       setMuted((m) => !m);
+    } else if (key === 'n' && bindingRef.current !== null) {
+      e.preventDefault();
+      setNerdMenuAt(null);
+      setNerdOpen((o) => !o);
+    } else if (key === 'Escape' && (nerdMenuAt !== null || nerdOpen)) {
+      e.preventDefault();
+      if (nerdMenuAt !== null) setNerdMenuAt(null);
+      else setNerdOpen(false);
     }
   };
   useEffect(() => {
@@ -1366,7 +1414,32 @@ export function Shorts({
         inert={!active}
       >
         <div className="nf-shorts__short">
-          <div className="nf-shorts__frame">
+          <div
+            className="nf-shorts__frame"
+            onContextMenu={
+              bound
+                ? (e) => {
+                    // Our menu (stats for nerds) on the short, instead of the browser's; the
+                    // browser's stays on buttons and links and on the panel's own text.
+                    const t = e.target;
+                    if (isInteractiveTarget(t)) return;
+                    if (t instanceof Element && t.closest('.nf-shorts__nerd') !== null) return;
+                    e.preventDefault();
+                    const box = e.currentTarget.getBoundingClientRect();
+                    setNerdMenuAt({
+                      x: Math.min(
+                        Math.max(0, e.clientX - box.left),
+                        Math.max(0, box.width - NERD_MENU_WIDTH),
+                      ),
+                      y: Math.min(
+                        Math.max(0, e.clientY - box.top),
+                        Math.max(0, box.height - NERD_MENU_HEIGHT),
+                      ),
+                    });
+                  }
+                : undefined
+            }
+          >
             {bound ? (
               <video
                 ref={videoElRef}
@@ -1454,7 +1527,59 @@ export function Shorts({
                       setMuted((m) => !m);
                     }}
                   />
+                  <IconButton
+                    icon="info"
+                    label="Stats for nerds (n)"
+                    tone="overlay"
+                    pressed={nerdOpen}
+                    onClick={() => {
+                      setNerdMenuAt(null);
+                      setNerdOpen((o) => !o);
+                    }}
+                  />
                 </div>
+              </div>
+            ) : null}
+            {bound && nerdMenuAt !== null ? (
+              <div
+                className="nf-nerd-menu"
+                role="menu"
+                style={{ left: `${String(nerdMenuAt.x)}px`, top: `${String(nerdMenuAt.y)}px` }}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNerdMenuAt(null);
+                    setNerdOpen((o) => !o);
+                  }}
+                >
+                  {nerdOpen ? 'Hide stats for nerds' : 'Stats for nerds'}
+                </button>
+              </div>
+            ) : null}
+            {bound && nerdShown ? (
+              <div className="nf-shorts__nerd">
+                <NerdStats
+                  rows={[
+                    ...statRows(null, nerd.sample, { rendition: binding.session.rendition }),
+                    [
+                      'Paid this session',
+                      pb.spend === undefined
+                        ? '–'
+                        : `${formatInteger(pb.spend.total)} sats (${formatInteger(pb.spend.ratePerMin)} sats/min)`,
+                    ],
+                  ]}
+                  sources={peerSpendRows(nerdPeers)}
+                  canShowAddresses={nerd.canShowAddresses}
+                  showAddresses={nerd.showAddresses}
+                  addresses={nerd.addresses}
+                  onShowAddresses={nerd.setShowAddresses}
+                  onClose={() => {
+                    setNerdOpen(false);
+                  }}
+                />
               </div>
             ) : null}
             {renderCenter(video, pb, bound, price)}

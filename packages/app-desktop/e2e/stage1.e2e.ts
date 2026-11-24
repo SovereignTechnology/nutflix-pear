@@ -284,6 +284,17 @@ void describe(
       assert.equal(await mediaLinks(app), 1);
     });
 
+    // ADR 0024: the mini-player's own panel, opened by its video's menu (it has no `n`).
+    void it("the mini-player's stats for nerds names a seeder, its address only behind the switch", async () => {
+      await checkNerdStats(page, {
+        video: '.nf-shell__mini video',
+        kind: 'hypercore',
+        closeWith: 'Escape',
+        route: (address, path) => /^127\.0\.0\.1:\d+$/.test(address) && path.startsWith('direct'),
+      });
+      assert.equal(await mediaLinks(app), 1);
+    });
+
     void it('Watch → Watch leaves exactly one open session', async () => {
       await page.locator('aside[aria-label="Mini-player"] button[aria-label="Expand"]').click();
       await page.locator('.nf-watch').waitFor();
