@@ -138,6 +138,18 @@
   gap: var(--nf-space-8);
 }
 
+/* "Stats for nerds" (ADR 0024): over the bound short, under its top bar; it scrolls when it is
+   taller or wider than the frame (the sources table is wide, the frame is 9:16). */
+.nf-shorts__nerd {
+  position: absolute;
+  top: calc(var(--nf-space-12) + 52px);
+  right: var(--nf-space-12);
+  left: var(--nf-space-12);
+  z-index: 3;
+  max-height: calc(100% - 52px - 2 * var(--nf-space-12));
+  overflow: auto;
+}
+
 .nf-shorts__status {
   display: flex;
   flex-wrap: wrap;

@@ -10,8 +10,17 @@
  *   - Expand → navigate to the video; the router's intercept turns that into `resumeSession`;
  *   - Close → `coordinator.dismissMini()` closes the session.
  */
-import { useEffect, useRef, type ReactElement } from 'react';
-import { IconButton, SatsBadge } from '../components/index.js';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
+import {
+  IconButton,
+  NerdStats,
+  SatsBadge,
+  formatInteger,
+  peerSpendRows,
+  statRows,
+  useNerdStats,
+  useSessionPeers,
+} from '../components/index.js';
 import type { Route } from '../screens/index.js';
 import type { MiniState, PlaybackCoordinator } from './coordinator.js';
 
@@ -22,6 +31,10 @@ export interface MiniPlayerProps {
   /** sats/min while this session is the one paying. */
   readonly ratePerMin: number;
 }
+
+/** The stats-for-nerds context menu's size (px), to keep it inside the video. */
+const NERD_MENU_WIDTH = 170;
+const NERD_MENU_HEIGHT = 40;
 
 function playQuietly(v: HTMLVideoElement): void {
   try {
@@ -75,9 +88,102 @@ export function MiniPlayer({
     else playQuietly(v);
   }, [paused, session]);
 
+  // v19 (ADR 0024): stats for nerds, opened by the bar's button or a right-click on the video
+  // (no `n`: this player sits over every screen, and Watch and Shorts own that key). A new
+  // hand-off is a new session: the panel and its address switch start closed again.
+  const [nerdOpen, setNerdOpen] = useState(false);
+  const [menuAt, setMenuAt] = useState<{ readonly x: number; readonly y: number } | null>(null);
+  const nerd = useNerdStats(nerdOpen, {
+    addresses: session.addresses?.bind(session),
+    element: () => ref.current,
+  });
+  const peers = useSessionPeers(session, nerdOpen);
+  useEffect(() => {
+    setNerdOpen(false);
+    setMenuAt(null);
+  }, [session]);
+  useEffect(() => {
+    if (!nerdOpen && menuAt === null) return undefined;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (menuAt !== null) setMenuAt(null);
+      else setNerdOpen(false);
+    };
+    const onClick = (): void => {
+      setMenuAt(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('click', onClick);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('click', onClick);
+    };
+  }, [nerdOpen, menuAt]);
+
   return (
     <aside className="nf-shell__mini" aria-label="Mini-player">
-      <div className="nf-shell__mini-media">
+      {nerdOpen ? (
+        <div className="nf-shell__mini-nerd">
+          <NerdStats
+            rows={[
+              ...statRows(null, nerd.sample, { rendition: session.rendition }),
+              [
+                'Paid rate',
+                paused ? 'paused, not paying' : `${formatInteger(ratePerMin)} sats/min`,
+              ],
+            ]}
+            sources={peerSpendRows(peers)}
+            canShowAddresses={nerd.canShowAddresses}
+            showAddresses={nerd.showAddresses}
+            addresses={nerd.addresses}
+            onShowAddresses={nerd.setShowAddresses}
+            onClose={() => {
+              setNerdOpen(false);
+            }}
+          />
+        </div>
+      ) : null}
+      <div
+        className="nf-shell__mini-media"
+        onContextMenu={
+          url !== undefined
+            ? (e) => {
+                // Our menu (stats for nerds) on the video, instead of the browser's.
+                e.preventDefault();
+                const box = e.currentTarget.getBoundingClientRect();
+                setMenuAt({
+                  x: Math.min(
+                    Math.max(0, e.clientX - box.left),
+                    Math.max(0, box.width - NERD_MENU_WIDTH),
+                  ),
+                  y: Math.min(
+                    Math.max(0, e.clientY - box.top),
+                    Math.max(0, box.height - NERD_MENU_HEIGHT),
+                  ),
+                });
+              }
+            : undefined
+        }
+      >
+        {menuAt !== null ? (
+          <div
+            className="nf-nerd-menu"
+            role="menu"
+            style={{ left: `${String(menuAt.x)}px`, top: `${String(menuAt.y)}px` }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuAt(null);
+                setNerdOpen((o) => !o);
+              }}
+            >
+              {nerdOpen ? 'Hide stats for nerds' : 'Stats for nerds'}
+            </button>
+          </div>
+        ) : null}
         {url !== undefined ? (
           <video
             ref={ref}
@@ -121,6 +227,16 @@ export function MiniPlayer({
           onClick={() => {
             if (paused) coordinator.resumeMini();
             else session.pause();
+          }}
+        />
+        <IconButton
+          icon="info"
+          label="Stats for nerds"
+          size="sm"
+          pressed={nerdOpen}
+          onClick={() => {
+            setMenuAt(null);
+            setNerdOpen((o) => !o);
           }}
         />
         <IconButton

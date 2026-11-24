@@ -31,7 +31,7 @@ export type {
 } from './ReactionButtons/reaction.js';
 export { PeerMeter } from './PeerMeter/PeerMeter.js';
 export type { PeerMeterProps } from './PeerMeter/PeerMeter.js';
-export { NerdStats, useNerdStats } from './NerdStats/NerdStats.js';
+export { NerdStats, useNerdStats, useSessionPeers } from './NerdStats/NerdStats.js';
 export type { NerdFeed, NerdState, NerdStatsProps } from './NerdStats/NerdStats.js';
 export {
   addressText,

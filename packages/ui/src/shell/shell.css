@@ -172,21 +172,47 @@ body {
 /* ---- mini-player (shell level, survives navigation) ---------------------------------------- */
 
 .nf-shell__mini {
+  --nf-mini-width: min(400px, calc(100vw - 2 * var(--nf-space-16)));
+
   position: fixed;
   right: var(--nf-space-16);
   bottom: var(--nf-space-16);
   z-index: var(--nf-z-mini-player);
-  width: 400px;
-  max-width: calc(100vw - 2 * var(--nf-space-16));
-  overflow: hidden;
+  width: var(--nf-mini-width);
   border-radius: var(--nf-radius-lg);
   background: var(--nf-color-bg-elevated);
   box-shadow: var(--nf-shadow-md);
 }
 
+/* The video clips itself to the box's top corners: the box no longer clips, because the
+   "Stats for nerds" panel (ADR 0024) opens above it. */
 .nf-shell__mini-media {
+  position: relative;
+  overflow: hidden;
   aspect-ratio: 16 / 9;
+  border-radius: var(--nf-radius-lg) var(--nf-radius-lg) 0 0;
   background: #000;
+}
+
+/* The panel opens above the box, so its height is the room above it: the viewport less the box
+   (a 16:9 video, about 56px of bar and its 16px offset), the 8px gap and 16px of margin at the
+   top. A short window gets a short panel that scrolls (never one that starts off screen), a tall
+   one stops at 480px, and 96px is the least worth showing. */
+.nf-shell__mini-nerd {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--nf-space-8));
+  left: 0;
+  max-height: max(
+    96px,
+    min(
+      480px,
+      calc(
+        100vh - var(--nf-mini-width) * 9 / 16 - 56px - 2 * var(--nf-space-16) - var(--nf-space-8)
+      )
+    )
+  );
+  overflow: auto;
 }
 
 .nf-shell__mini-media video {

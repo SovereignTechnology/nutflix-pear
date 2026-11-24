@@ -13,6 +13,9 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
   press `n` to see where the video is coming from, source by source. Peers show by short ID.
   Their addresses appear only behind a "Show addresses" switch, which is off every time the panel
   opens and is never saved.
+- **Stats for nerds in Shorts and the mini-player.** The same panel, opened by a "Stats for nerds"
+  button or by right-clicking the video (in Shorts also with `n`). Addresses stay behind the same
+  switch.
 
 ### Changed
 
