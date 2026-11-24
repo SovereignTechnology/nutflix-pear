@@ -3,7 +3,11 @@
 // own release tarball (its workflow builds no notice), for release-publish.mjs to sign. The
 // desktop app's notice comes from release-manifest.mjs, which checks the makers' file names.
 //
-//   node scripts/release-template.mjs --d <release> --version <v> --commit <40-hex sha> <file>...
+//   node scripts/release-template.mjs --d <release> --version <v> --commit <40-hex sha>
+//        [--verlink <pear://fork.length.key>] <file>...
+//
+// `--verlink` is nutflix-runtime's, and required there: its notice names one versioned link and
+// exactly its five targets, and a macOS bundle (a directory) goes in by its tree digest.
 //
 // It writes release-event.unsigned.json beside the first file (never over an existing one) and
 // prints its path. `--d` is one of RELEASE_D_TAGS; every file is read in full for its sha256 and
@@ -14,12 +18,19 @@ import { basename, dirname, join } from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
-import { RELEASE_D_TAGS, SAFE_NAME, sha256File, unsignedEvent } from './release-manifest.mjs';
+import {
+  RELEASE_D_TAGS,
+  RUNTIME_D_TAG,
+  SAFE_NAME,
+  sha256File,
+  treeDigest,
+  unsignedEvent,
+} from './release-manifest.mjs';
 
 const VERSION = /^[0-9A-Za-z.+-]{1,64}$/;
 
 /** The unsigned notice for `files` (paths), or a thrown Error saying what is wrong. */
-export async function templateFor(files, { d, version, commit, createdAt }) {
+export async function templateFor(files, { d, version, commit, createdAt, verlink }) {
   if (!RELEASE_D_TAGS.includes(d)) throw new Error(`--d takes one of ${RELEASE_D_TAGS.join(', ')}`);
   if (typeof version !== 'string' || !VERSION.test(version))
     throw new Error('--version must be a plain version string');
@@ -34,11 +45,13 @@ export async function templateFor(files, { d, version, commit, createdAt }) {
     if (seen.has(name)) throw new Error(`${name} is named twice`);
     seen.add(name);
     const st = lstatSync(path);
-    if (!st.isFile()) throw new Error(`${path} is not a regular file`);
-    const got = await sha256File(path);
+    const bundle = d === RUNTIME_D_TAG && name.endsWith('.app');
+    if (bundle ? !st.isDirectory() : !st.isFile())
+      throw new Error(`${path} is not a ${bundle ? 'bundle directory' : 'regular file'}`);
+    const got = bundle ? await treeDigest(path) : await sha256File(path);
     artifacts.push({ name, sha256: got.sha256, bytes: got.bytes });
   }
-  return unsignedEvent({ artifacts, version, commit, createdAt, d });
+  return unsignedEvent({ artifacts, version, commit, createdAt, d, verlink });
 }
 
 export async function run(argv) {
@@ -46,7 +59,7 @@ export async function run(argv) {
   const opt = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--d' || a === '--version' || a === '--commit') {
+    if (a === '--d' || a === '--version' || a === '--commit' || a === '--verlink') {
       const v = argv[++i];
       if (v === undefined) throw new Error(`${a} needs a value`);
       opt[a.slice(2)] = v;
@@ -58,6 +71,7 @@ export async function run(argv) {
     version: opt.version,
     commit: opt.commit,
     createdAt: Math.floor(Date.now() / 1000),
+    verlink: opt.verlink,
   });
   const out = join(dirname(files[0]), 'release-event.unsigned.json');
   if (existsSync(out)) throw new Error(`${out} exists already: move it away first`);

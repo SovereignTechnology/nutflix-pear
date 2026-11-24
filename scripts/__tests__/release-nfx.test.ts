@@ -66,10 +66,10 @@ function sign(t: Unsigned): { ev: unknown; pubkey: string } {
 }
 
 describe('the NFX release notice', () => {
-  it('the allow-list is the desktop app and NFX, the desktop the default', async () => {
+  it('the allow-list is the desktop app, NFX and nutflix-runtime, the desktop the default', async () => {
     const m = await load<Manifest>('release-manifest.mjs');
     expect(m.RELEASE_D_TAG).toBe('nutflix-desktop');
-    expect([...m.RELEASE_D_TAGS]).toEqual(['nutflix-desktop', 'nfx']);
+    expect([...m.RELEASE_D_TAGS]).toEqual(['nutflix-desktop', 'nfx', 'nutflix-runtime']);
   });
 
   it('release-template builds an nfx notice that verifies with --d nfx, file for file', async () => {
