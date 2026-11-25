@@ -609,7 +609,10 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     session.source.attach(document.createElement('video'));
     await tick();
     expect(r.player.last.options.signaling).toBeUndefined();
-    expect(r.player.last.options.origins).toEqual([{ url: 'https://seed.example/o', tier: 3 }, WEB_FALLBACK_ORIGIN]);
+    expect(r.player.last.options.origins).toEqual([
+      { url: 'https://seed.example/o', tier: 3 },
+      WEB_FALLBACK_ORIGIN,
+    ]);
     await session.close();
     expect(r.player.last.session.destroyed).toBe(1);
   });
@@ -632,7 +635,10 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
       kind: 'nostr',
       relays: [...WEB_MESH_RELAYS],
     });
-    expect(r.player.last.options.origins).toEqual([{ url: 'https://late.example/o', tier: 3 }, WEB_FALLBACK_ORIGIN]);
+    expect(r.player.last.options.origins).toEqual([
+      { url: 'https://late.example/o', tier: 3 },
+      WEB_FALLBACK_ORIGIN,
+    ]);
   });
 
   it('no free beacon for this address: no-seeders (a paid one, another creator’s, another video’s)', async () => {

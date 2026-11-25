@@ -170,7 +170,9 @@ describe('beaconEndpoints: free beacons for this address only, newest per seeder
       beacon(s, video.id, [https('https://old.example/o')], { createdAt: T - 30 }),
       beacon(s, video.id, [https('https://new.example/o')], { createdAt: T - 5 }),
     ];
-    expect(beaconEndpoints(video, events, T).origins).toEqual([{ url: 'https://new.example/o', tier: 3 }]);
+    expect(beaconEndpoints(video, events, T).origins).toEqual([
+      { url: 'https://new.example/o', tier: 3 },
+    ]);
   });
 
   it('expired, tampered and unsigned beacons are dropped', () => {
