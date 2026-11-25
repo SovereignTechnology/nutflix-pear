@@ -28,7 +28,7 @@
 # pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
 # web/player/package-lock.json. Node 22.
 #
-# 1c13b54 is nfx #119's head (NFX-17 seeder lookup, and failover). Since 059364f the library:
+# 4b6095c is nfx #119's squash merge on main (NFX-17 seeder lookup, and failover; after 0.1.4). Since 059364f the library:
 #   #117/#118  STUN from the creator's beacon and the relays a page signals through only (NFX-10 §1).
 #   #119       fetches every file from all the sources it knows, one source's bytes per file, leaving
 #              one that stalls, runs slow or sends bytes that do not verify (NFX-17 §4.3), and takes
@@ -70,7 +70,7 @@
 # tar, whose bytes differ between 1.34 and 1.35: GitHub's ubuntu-24.04 runner and a Kata VM give the
 # same tar, e43bc98a…. The web-site workflow (.github/workflows/web-site.yml) builds it again on
 # every run and fails unless it matches.
-nfx 1c13b54f60b5f326d28ed43d3c16ef82bd7df4c4 f1ec5b5a9cf90cf7a965a5f667a1ce296fe0593c1b69c07ea3032c37fc9de875 25a060b2106b15c80f521284a0c0d47b757b6cfe49c60c3818589470b0997f92
+nfx 4b6095c2aea7f05e7ee384c478fb59857b4eac1d e79940123edc0764f866e4000aefe3ed7ce412a0a3382f698ce60fa7b3a0a04e 93f8f13de0975d299602a7abfcb1d1e211158c68e0e944f2397a05766b08e1ad
 tool rust 1.98.0
 tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
 tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f
