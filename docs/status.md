@@ -1,24 +1,23 @@
 # Status
 
-Last updated 2026-11-17 (UTC). For what each release contains, see the [CHANGELOG](../CHANGELOG.md);
+Last updated 2026-11-25 (UTC). For what each release contains, see the [CHANGELOG](../CHANGELOG.md);
 for what does not work yet, see the README's [known limitations](../README.md#known-limitations).
 
 ## Release
 
-- **Desktop 0.1.3** is the current release: tag `desktop-v0.1.3`, 2026-11-17 (UTC), as a Linux
-  x86_64 `.deb` and AppImage. Free video works with no setup: NFX is on by default, on
-  `nfx:testnet:1`'s public relays (`wss://relay.nutflix.xyz`, `https://iroh.nutflix.xyz/`), with
-  `relay.ditto.pub` as a fourth default relay so Search answers; the app trades video with web
-  browsers over WebRTC, signaled over Nostr (ADR 0023); Studio makes one size by default and the
-  creator picks the others (issue #97). Before the release it was checked against nfx 0.1.2 (nfx
-  491d35e, the nfxd booty and the public testnet run): the exit run both ways, the real app over
-  iroh (tier 3), the NAT matrix (69 of 69 cells), the app trading a video with headless Chromium
-  over a stock Nostr relay, and, over the internet, a fresh install's settings finding booty's
-  Big Buck Bunny on the default relays and playing its 1080p end to end (403 MB at 19 Mbit/s,
-  `host/__tests__/nfx-live.integration.test.ts` in a Kata VM). 0.1.2 (2026-11-07) added Home's
-  Network tab; 0.1.1 (2026-11-06) brought free video over NFX, tested in both directions against
-  nfxd on one machine, behind simulated NATs and on two machines over the internet; 0.1.0 was
-  published 2026-10-05. Downloads, checksums and the signed release notice are on the
+- **Desktop 0.1.4** is the current release: tag `desktop-v0.1.4`, 2026-11-25 (UTC), as a Linux
+  x86_64 `.deb` and AppImage. It adds stats for nerds in every player (where a video's bytes come
+  from, source by source; peers by short ID, addresses only behind a switch that is off every
+  time), finds free videos through the network's own relay (`relay.nutflix.xyz`) before your read
+  relays, and changes the default relays (`relay.damus.io` and `nos.lol` leave the read relays;
+  signaling goes to `relay.nutflix.xyz` first). Electron is 45.3.1 and the iroh helper's lock is
+  iroh 1.4.1. The interop jobs (exit, NAT matrix, the app trading with headless Chromium) still
+  judge the app against nfx 0.1.2's nfxd (nfx 491d35e), as for 0.1.3; they have not been moved to
+  nfx 0.1.4's. 0.1.3 (2026-11-17) made free video work with no setup: NFX on by default on
+  `nfx:testnet:1`'s public relays, trading video with web browsers over WebRTC signaled over Nostr
+  (ADR 0023), one size by default with the creator picking others (issue #97). 0.1.2
+  (2026-11-07) added Home's Network tab; 0.1.1 (2026-11-06) brought free video over NFX; 0.1.0
+  was published 2026-10-05. Downloads, checksums and the signed release notice are on the
   [Releases page](https://github.com/SovereignTechnology/nutflix-pear/releases/latest).
 - It is **experimental**. There is no Windows, macOS or arm64 build, no automatic update and no
   operating-system code signing.

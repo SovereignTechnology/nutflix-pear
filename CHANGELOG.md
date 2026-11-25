@@ -7,6 +7,11 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-25
+
+Stats for nerds in every player, free videos found through the network's own relay first, and
+new default relays.
+
 ### Added
 
 - **Stats for nerds in the video player** (#123, ADR 0024). Right-click the video, use its menu or
@@ -50,10 +55,20 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
     and Settings › NFX network are where to change them.
   - **Release notices** (`scripts/release-publish.mjs`) go to `nos.lol`, `relay.primal.net` and
     `relay.ditto.pub`; the 0.1.3 notice failed on relay.damus.io.
-- **The web client is built with nfx's player library at 059364f** (`packages/app-web/nfx-web.lock`,
-  nfx #102). Its stats for nerds panel now lists each WebRTC peer by short ID, with what it sent
-  and received, and shows a peer's address only behind the panel's "Show addresses" switch. The
-  desktop app is unchanged by it.
+- **The web client is built with nfx's player library at 4b6095c** (`packages/app-web/nfx-web.lock`,
+  nfx #102, #117, #118 and #119). Its stats for nerds panel lists each WebRTC peer by short ID,
+  with what it sent and received, and shows a peer's address only behind the panel's "Show
+  addresses" switch. It fetches every file from all the sources it knows, one source's bytes per
+  file, and leaves one that stalls, runs slow or sends bytes that do not verify (NFX-17 §4.3). It
+  ranks origins in tiers (NFX-17 §4.2): the video creator's own beacon first, other seeders'
+  next, and this site's fallback last. Origins are no longer ranked by how many seeders name them,
+  since keys are free (#147). The desktop app is unchanged by it.
+- **Dependencies.** Electron 45.3.1 (from 44.9.3; #127, #134), the iroh helper's lock at iroh 1.4.1
+  (iroh-blobs stays at 0.103.x, which NFX-11 §4 pins; #121) and `url` 2.5.9 (RUSTSEC-2026-0592,
+  a stack overflow in `Url::origin()` that the helper's code never calls; #139),
+  `@cashu/cashu-ts` 4.13.0 (the money path keeps its synchronous DLEQ check; #133), jsdom 30 for
+  the tests, and the patch and minor groups of that week. Building from source now needs Node
+  22.22.2 or newer (`engines`; #134). There is no change to what the app does with money.
 
 ### Fixed
 
@@ -62,6 +77,12 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ### CI
 
+- **Release notices for nutflix-runtime** (`scripts/release-publish.mjs`, #144) can be drafted,
+  verified and published with `d=nutflix-runtime`, only for the exact version, verlink and
+  per-target sha256s that project's update gate checks. Nothing about the desktop notice changed.
+- **`npm audit signatures`** keeps npm's cache of the attestation documents from the last passing
+  run (#145): a runner that reached a wrong copy of one on the registry's CDN failed with
+  `EMISSINGSIGNATUREKEY` or `FETCH_ERROR`. Every signature is still verified on each run.
 - **`rust-advisories`** ignores RUSTSEC-2026-0543 (chrono is unmaintained; every version, no patched
   release), which reaches the iroh helper through iroh-blobs and netwatch's Windows watcher. It is a
   maintenance notice, not a vulnerability; the ignore is dated like the helper's others (revisit by
@@ -493,7 +514,8 @@ The first release of the desktop app, for Linux x86_64. It is experimental: read
 - Windows, macOS and arm64 builds, automatic updates and operating-system code signing.
 - A web app: `packages/app-web` is an empty scaffold.
 
-[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.3...HEAD
+[Unreleased]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.4...HEAD
+[0.1.4]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.3...desktop-v0.1.4
 [0.1.3]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.2...desktop-v0.1.3
 [0.1.2]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.1...desktop-v0.1.2
 [0.1.1]: https://github.com/SovereignTechnology/nutflix-pear/compare/desktop-v0.1.0...desktop-v0.1.1
