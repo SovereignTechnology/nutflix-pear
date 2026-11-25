@@ -576,7 +576,12 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     expect(given).toBe(el);
     const { onEvent, signal, manifestJson, ...rest } = options;
     expect(rest).toEqual({
-      origins: ['https://seed-1.example/o', 'https://seed-2.example/o', WEB_FALLBACK_ORIGIN],
+      // Strangers' seeders are open sources (NFX-17 §4.2); this site's own origin the last resort.
+      origins: [
+        { url: 'https://seed-1.example/o', tier: 3 },
+        { url: 'https://seed-2.example/o', tier: 3 },
+        WEB_FALLBACK_ORIGIN,
+      ],
       // Pear #89: over Nostr; the trackers the beacons name are not asked.
       signaling: { kind: 'nostr', relays: ['wss://signal.example', 'ws://127.0.0.1:7778'] },
       iceServers: [{ urls: ['stun:relay.nutflix.xyz:3478'] }],
@@ -604,7 +609,7 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     session.source.attach(document.createElement('video'));
     await tick();
     expect(r.player.last.options.signaling).toBeUndefined();
-    expect(r.player.last.options.origins).toEqual(['https://seed.example/o', WEB_FALLBACK_ORIGIN]);
+    expect(r.player.last.options.origins).toEqual([{ url: 'https://seed.example/o', tier: 3 }, WEB_FALLBACK_ORIGIN]);
     await session.close();
     expect(r.player.last.session.destroyed).toBe(1);
   });
@@ -627,7 +632,7 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
       kind: 'nostr',
       relays: [...WEB_MESH_RELAYS],
     });
-    expect(r.player.last.options.origins).toEqual(['https://late.example/o', WEB_FALLBACK_ORIGIN]);
+    expect(r.player.last.options.origins).toEqual([{ url: 'https://late.example/o', tier: 3 }, WEB_FALLBACK_ORIGIN]);
   });
 
   it('no free beacon for this address: no-seeders (a paid one, another creator’s, another video’s)', async () => {
@@ -828,9 +833,11 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     const { options } = r.player.last;
     // 720p and 360p are held by two seeders each: the higher bandwidth first; 1080p never.
     expect(options.renditions).toEqual(['720p', '360p']);
+    // Origins by tier, first seen first, never by how many seeders name them (NFX-17 §4.2):
+    // strangers' seeders are open sources (tier 3), this site's own the last resort.
     expect(options.origins).toEqual([
-      { url: 'https://seed-2.example/o', renditions: ['720p'] },
-      { url: 'https://seed-1.example/o', renditions: ['360p'] },
+      { url: 'https://seed-1.example/o', renditions: ['360p'], tier: 3 },
+      { url: 'https://seed-2.example/o', renditions: ['720p'], tier: 3 },
       WEB_FALLBACK_ORIGIN,
     ]);
     expect('level' in options).toBe(false);

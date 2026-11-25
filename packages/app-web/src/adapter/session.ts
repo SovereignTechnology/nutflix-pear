@@ -150,9 +150,18 @@ export function playAddress(a: NfxLibPeerAddress): PlaySourceAddress {
   };
 }
 
-/** An origin as `open()` takes it: a bare base when it serves every rendition. */
+/**
+ * An origin as `open()` takes it: a bare base when it serves every rendition and is this site's
+ * own (tier 4, the library's default); otherwise with its claim and its tier (NFX-17 §4.2).
+ */
 export function originSource(o: PlayOrigin): string | NfxOriginSource {
-  return o.renditions === undefined ? o.url : { url: o.url, renditions: [...o.renditions] };
+  const tier = o.tier ?? 4;
+  if (o.renditions === undefined && tier === 4) return o.url;
+  return {
+    url: o.url,
+    ...(o.renditions === undefined ? {} : { renditions: [...o.renditions] }),
+    ...(tier === 4 ? {} : { tier }),
+  };
 }
 
 /** What `rendition` reads while hls.js picks. */
