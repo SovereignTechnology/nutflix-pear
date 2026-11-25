@@ -73,6 +73,11 @@ export interface NfxOriginSource {
   readonly url: string;
   /** At most 32 ids; ids the hash list does not name are ignored. */
   readonly renditions?: string[];
+  /**
+   * NFX-17 §4.2: 1, named by the creator's own beacon; 2, by a key the viewer rates; 3, by any
+   * other beacon; 4, configured by this site, the last resort. Absent: 4.
+   */
+  readonly tier?: 1 | 2 | 3 | 4;
 }
 
 /** `open()`'s options, as this client passes them (always a signed manifest, never a bare root). */
@@ -80,9 +85,10 @@ export interface NfxOpenOptions {
   /** The signed kind-38504 event as JSON; the library verifies it again (NFX-02). */
   readonly manifestJson: string;
   /**
-   * Origin bases (NFX-05 §6) tried in order: the session takes every file from the first that
-   * serves a hash list that verifies and holds an allowed rendition. A bare string serves every
-   * rendition.
+   * Origin bases (NFX-05 §6): the session takes the hash list from whichever delivers a copy
+   * that verifies, then every file from all of them in NFX-17 §4.2's tiers, one source's bytes
+   * per file, leaving a source that stalls, runs slow or sends bytes that do not verify (§4.3).
+   * A bare string serves every rendition and is tier 4.
    */
   readonly origins: (string | NfxOriginSource)[];
   /**

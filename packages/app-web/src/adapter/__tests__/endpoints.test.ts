@@ -120,7 +120,10 @@ describe('beaconEndpoints: free beacons for this address only, newest per seeder
     ];
     const found = beaconEndpoints(video, events, T);
     expect(found).toEqual({
-      origins: [{ url: 'https://a.example/o' }, { url: 'https://c.example/o' }],
+      origins: [
+        { url: 'https://a.example/o', tier: 3 },
+        { url: 'https://c.example/o', tier: 3 },
+      ],
       seeders: 2,
       reachable: 2,
     });
@@ -167,7 +170,9 @@ describe('beaconEndpoints: free beacons for this address only, newest per seeder
       beacon(s, video.id, [https('https://old.example/o')], { createdAt: T - 30 }),
       beacon(s, video.id, [https('https://new.example/o')], { createdAt: T - 5 }),
     ];
-    expect(beaconEndpoints(video, events, T).origins).toEqual([{ url: 'https://new.example/o' }]);
+    expect(beaconEndpoints(video, events, T).origins).toEqual([
+      { url: 'https://new.example/o', tier: 3 },
+    ]);
   });
 
   it('expired, tampered and unsigned beacons are dropped', () => {
@@ -204,8 +209,8 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
       beacon(new Key(), video.id, [held('https://some.example/o', ['360p', '720p'])]),
     ];
     expect(beaconEndpoints(video, events, T).origins).toEqual([
-      { url: 'https://all.example/o' },
-      { url: 'https://some.example/o', renditions: ['360p', '720p'] },
+      { url: 'https://all.example/o', tier: 3 },
+      { url: 'https://some.example/o', renditions: ['360p', '720p'], tier: 3 },
     ]);
   });
 
@@ -241,8 +246,8 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
       beacon(new Key(), video.id, [held('https://wide.example/o', ['480p'])]),
     ];
     expect(beaconEndpoints(video, events, T).origins).toEqual([
-      { url: 'https://o.example/o', renditions: ['360p', '720p'] },
-      { url: 'https://wide.example/o', renditions: ['480p'] },
+      { url: 'https://o.example/o', renditions: ['360p', '720p'], tier: 3 },
+      { url: 'https://wide.example/o', renditions: ['480p'], tier: 3 },
     ]);
     // Claims that share nothing leave nothing: the player skips that origin.
     const disjoint = [
@@ -250,7 +255,7 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
       beacon(new Key(), video.id, [held('https://o.example/o', ['720p'])]),
     ];
     expect(beaconEndpoints(video, disjoint, T).origins).toEqual([
-      { url: 'https://o.example/o', renditions: [] },
+      { url: 'https://o.example/o', renditions: [], tier: 3 },
     ]);
   });
 
@@ -265,8 +270,9 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
       beacon(new Key(), video.id, [https('https://p.example/o')]),
     ];
     expect(beaconEndpoints(video, events, T).origins).toEqual([
-      { url: 'https://p.example/o' },
-      { url: 'https://o.example/o', renditions: ['720p'] },
+      // First seen first: how many seeders name an origin never ranks it (NFX-17 §4.2).
+      { url: 'https://o.example/o', renditions: ['720p'], tier: 3 },
+      { url: 'https://p.example/o', tier: 3 },
     ]);
   });
 
@@ -299,6 +305,31 @@ describe('what an origin serves (pear #97, nfx’s `originSources`)', () => {
   });
 });
 
+describe('tiers (NFX-17 §4.2): the creator’s own origins first, never ranked by count', () => {
+  it('the creator’s beacon names tier 1 origins, ahead of strangers’ however many name theirs', () => {
+    const events = [
+      beacon(new Key(), video.id, [https('https://many.example/o')]),
+      beacon(new Key(), video.id, [https('https://many.example/o')]),
+      beacon(new Key(), video.id, [https('https://many.example/o')]),
+      beacon(creator, video.id, [https('https://own.example/o')]),
+    ];
+    expect(beaconEndpoints(video, events, T).origins).toEqual([
+      { url: 'https://own.example/o', tier: 1 },
+      { url: 'https://many.example/o', tier: 3 },
+    ]);
+  });
+
+  it('an origin the creator and a stranger both name takes the creator’s tier and claim', () => {
+    const events = [
+      beacon(new Key(), video.id, [{ ...https('https://shared.example/o'), renditions: ['240p'] }]),
+      beacon(creator, video.id, [{ ...https('https://shared.example/o'), renditions: ['720p'] }]),
+    ];
+    expect(beaconEndpoints(video, events, T).origins).toEqual([
+      { url: 'https://shared.example/o', renditions: ['720p'], tier: 1 },
+    ]);
+  });
+});
+
 describe('playOrigins: the beacons’ origins, then the fallback', () => {
   it('orders and dedupes', () => {
     expect(
@@ -321,7 +352,7 @@ describe('playOrigins: the beacons’ origins, then the fallback', () => {
 
   it('with no beacon endpoints: the fallback origin alone', () => {
     expect(playOrigins({ origins: [] }, WEB_FALLBACK_ORIGIN)).toEqual([
-      { url: WEB_FALLBACK_ORIGIN },
+      { url: WEB_FALLBACK_ORIGIN, tier: 4 },
     ]);
   });
 
@@ -345,7 +376,7 @@ describe('playOrigins: the beacons’ origins, then the fallback', () => {
       beacon(new Key(), video.id, [{ ...https(`${WEB_FALLBACK_ORIGIN}/`), renditions: ['360p'] }]),
     ];
     expect(playOrigins(beaconEndpoints(video, events, T), WEB_FALLBACK_ORIGIN)).toEqual([
-      { url: WEB_FALLBACK_ORIGIN, renditions: ['360p'] },
+      { url: WEB_FALLBACK_ORIGIN, renditions: ['360p'], tier: 3 },
     ]);
   });
 });

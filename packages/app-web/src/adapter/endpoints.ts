@@ -44,6 +44,13 @@ export const MAX_CLAIMED_RENDITIONS = 32;
 export interface PlayOrigin {
   readonly url: string;
   readonly renditions?: readonly string[];
+  /**
+   * Where it ranks among the session's sources (NFX-17 §4.2, the library's `OriginSource.tier`):
+   * 1, named by the video creator's own beacon; 3, by any other seeder's (an open source); 4,
+   * this site's own fallback, the last resort. How many seeders name an origin never ranks it.
+   * Absent: 4.
+   */
+  readonly tier?: 1 | 3 | 4;
 }
 
 /** A beacon's origin as `https://host[:port][/prefix]`, or `null` when it may not be used. */
@@ -81,8 +88,8 @@ export function narrowClaim(
 }
 
 /** `url` with `claim` as a `PlayOrigin`. */
-function playOrigin(url: string, claim: readonly string[] | null): PlayOrigin {
-  return claim === null ? { url } : { url, renditions: claim };
+function playOrigin(url: string, claim: readonly string[] | null, tier: 1 | 3 | 4): PlayOrigin {
+  return claim === null ? { url, tier } : { url, renditions: claim, tier };
 }
 
 /** What the live beacons of one video name, for this client. */
@@ -103,7 +110,7 @@ export function beaconEndpoints(
 ): BeaconEndpoints {
   const newestFirst = [...events].sort((a, b) => b.created_at - a.created_at);
   const seeders = new Set<string>();
-  const origins = new Map<string, { n: number; claim: string[] | null }>();
+  const origins = new Map<string, { claim: string[] | null; tier: 1 | 3 }>();
   let free = 0;
   let reachable = 0;
   for (const ev of newestFirst) {
@@ -130,18 +137,22 @@ export function beaconEndpoints(
     }
     const serving = [...own.origins.values()].filter((c) => c === null || c.length > 0);
     if (serving.length > 0) reachable += 1;
+    // The creator's own beacon names tier 1 origins; any other seeder's, open ones (NFX-17 §4.2).
+    // An origin takes the best tier that names it, and the claims of that tier.
+    const tier: 1 | 3 = b.seeder === video.author ? 1 : 3;
     for (const [o, claim] of own.origins) {
       const c = origins.get(o);
-      if (c === undefined) origins.set(o, { n: 1, claim });
-      else origins.set(o, { n: c.n + 1, claim: narrowClaim(c.claim, claim) });
+      if (c === undefined || tier < c.tier) origins.set(o, { claim, tier });
+      else if (tier === c.tier) origins.set(o, { claim: narrowClaim(c.claim, claim), tier });
     }
   }
-  // `Array.prototype.sort` is stable: ties keep first-seen order.
-  const rankedOrigins = [...origins].sort((x, y) => y[1].n - x[1].n);
+  // By tier, never by how many seeders name an origin: keys are free (NFX-17 §4.2). The library
+  // orders open sources itself. `Array.prototype.sort` is stable: ties keep first-seen order.
+  const rankedOrigins = [...origins].sort((x, y) => x[1].tier - y[1].tier);
   return {
     origins: rankedOrigins
       .slice(0, MAX_BEACON_ORIGINS)
-      .map(([url, { claim }]) => playOrigin(url, claim)),
+      .map(([url, { claim, tier }]) => playOrigin(url, claim, tier)),
     seeders: free,
     reachable,
   };
@@ -157,7 +168,8 @@ export function playOrigins(
   fallbackOrigin: string,
 ): PlayOrigin[] {
   const origins: PlayOrigin[] = [];
-  for (const o of [...beacons.origins, { url: fallbackOrigin }]) {
+  // This site's own origin is configured, not named by a beacon: the last resort (tier 4).
+  for (const o of [...beacons.origins, { url: fallbackOrigin, tier: 4 as const }]) {
     if (!origins.some((x) => x.url === o.url)) origins.push(o);
   }
   return origins;
