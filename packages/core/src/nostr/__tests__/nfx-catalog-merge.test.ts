@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { NfxVideo, Page } from '../../contracts/index.js';
 import { decodeTimeCursor, timeCursor } from '../cursor.js';
-import { mergeNfxPages } from '../nfx-catalog.js';
+import { mergeNfxPages } from '../nfx-merge.js';
 
 /** A listed video as the merge sees it: its address, its revision's id and second. */
 const video = (address: string, id: string, at: number): NfxVideo =>

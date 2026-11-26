@@ -10,7 +10,12 @@ import type { NostrEvent, NostrFilter, RelayUrl, UnixSeconds } from '../../contr
 import { NostrClient } from '../client.js';
 import { FakeRelayPool } from '../fake-relay.js';
 import { NfxCatalog } from '../nfx-catalog.js';
-import { nfxVideoMatchesText, scanNfxVideos, searchNfxVideosRouted } from '../nfx-feeds.js';
+import {
+  NFX_SCAN_PAGE,
+  nfxVideoMatchesText,
+  scanNfxVideos,
+  searchNfxVideosRouted,
+} from '../nfx-feeds.js';
 import { RelaySearchSupport, nip11Url, relayInfoSupportsSearch } from '../relay-info.js';
 import type { PoolLike } from '../types.js';
 import { T0, TestSigner, sign } from './helpers.js';
@@ -243,6 +248,46 @@ describe('search routed by NIP-50 support', () => {
     const second = await scanNfxVideos(c, NS, 'needle', {}, { limit: 5, cursor: first.next });
     expect(second.items.map((v) => v.eventId)).toEqual([old.id]);
     expect(second.next).toBeUndefined();
+  });
+
+  it('a scan that read a full page and matched nothing still bounds the cursor: an older match there is reached (CodeRabbit, pear #157)', async () => {
+    const r = relays([SEARCHING, STOCK]);
+    const creator = new TestSigner();
+    // The NIP-50 relay: one old match. The stock relay: a full scan page of newer non-matches,
+    // then a match below it.
+    const old = await store(
+      r.of(SEARCHING),
+      creator,
+      manifest('video-old0', T0 - 5000, 'Lagrange far'),
+    );
+    for (let i = 0; i < NFX_SCAN_PAGE; i++) {
+      await store(
+        r.of(STOCK),
+        creator,
+        manifest(`video-${String(i).padStart(4, '0')}`, T0 - 10 - i, 'Hohmann'),
+      );
+    }
+    const near = await store(
+      r.of(STOCK),
+      creator,
+      manifest('video-near', T0 - 60 - NFX_SCAN_PAGE, 'Lagrange near'),
+    );
+    const c = client(r.pool, [SEARCHING, STOCK]);
+    const found: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 10; i++) {
+      const page = await searchNfxVideosRouted(
+        c,
+        NS,
+        'lagrange',
+        {},
+        { supports: nip50([SEARCHING]), limit: 1, ...(cursor === undefined ? {} : { cursor }) },
+      );
+      found.push(...page.items.map((v) => v.eventId));
+      if (page.next === undefined) break;
+      cursor = page.next;
+    }
+    expect(found).toEqual([near.id, old.id]);
   });
 
   it("fails only when every relay set does; one that fails leaves the other's results", async () => {

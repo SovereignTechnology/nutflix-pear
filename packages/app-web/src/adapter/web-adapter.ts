@@ -226,7 +226,7 @@ export class WebNetworkAdapter implements NetworkAdapter {
 
   /**
    * The relays beacons are read from: the scoped relays and the read relays, together (ADR 0026,
-   * NFX-03 §5 as amended by nfx decision record 0110). Seeders announce on both, so a scoped relay
+   * NFX-03 §5 as amended by nfx decision record 0111). Seeders announce on both, so a scoped relay
    * that is down no longer hides every seeder.
    */
   #beaconRelays(): readonly RelayUrl[] {
@@ -303,7 +303,7 @@ export class WebNetworkAdapter implements NetworkAdapter {
         if (q.author !== undefined && !isHex64(q.author)) fail('invalid-argument', 'not a pubkey');
         const page = await this.#read(() => this.#catalog.feed(q, null));
         // An unreachable relay answers nothing, which reads as an empty network. Say which it was
-        // (NFX-04 §4 as amended by nfx decision record 0110): nothing here, and no relay reached.
+        // (NFX-04 §4 as amended by nfx decision record 0111): nothing here, and no relay reached.
         if (page.items.length === 0 && this.#noRelayReached()) {
           fail('relay-down', 'no relay could be reached');
         }

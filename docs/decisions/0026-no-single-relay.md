@@ -8,7 +8,7 @@ Accepted (Cameron, 2026-11-26: "how do we fix this, make it more decentralized, 
 stack"). Amends [ADR 0020](0020-speak-nfx.md)'s 2026-11-19 amendment ("catalog reads go to the
 network's own relay first") and its "beacons on the scoped relays only". The matching change on
 the nfx side is NFX-03 §5/§7 and NFX-04 §4, amended in place by its decision record
-[0110](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0110-no-single-relay-or-host.md)
+[0111](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0111-no-single-relay-or-host.md)
 (the NFX spec is not locked; its Frozen text may be amended).
 
 ## Context

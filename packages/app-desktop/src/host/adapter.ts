@@ -410,7 +410,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   /**
    * Where other seeders' beacons are read: the scoped relays and the read relays together, while
-   * NFX is on (ADR 0026, NFX-03 §5 as amended by nfx decision record 0110), so a scoped relay that
+   * NFX is on (ADR 0026, NFX-03 §5 as amended by nfx decision record 0111), so a scoped relay that
    * is down no longer hides every seeder. This app's own beacons still go to the scoped relays
    * only (`beaconRelays`).
    */
