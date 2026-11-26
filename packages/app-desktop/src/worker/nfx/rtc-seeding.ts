@@ -5,7 +5,9 @@
  *
  * The work runs in passes, one at a time: at every `set`, every `refresh` (the host's beacon round
  * is the clock, as for iroh), and when the helper restarts. A pass serves what is stored and not
- * yet served, and stops serving what is no longer stored. For each video, each rendition:
+ * yet served, and stops serving what is no longer stored. NFX-18: a kept video is served by the
+ * renditions it holds (`./served.ts`), and again when it holds another. For each video, each
+ * rendition served:
  * - **Its swarm** is `video.webStreamSwarmId(rendition)` (NFX-10 §2), the id the browser player
  *   joins.
  * - **Its segments** are its playlist's, in order (`renditionMembers`, the verified hash list's
@@ -19,13 +21,15 @@
  *   WebRTC (it still is over iroh and HyperDHT); that is logged once.
  */
 import { nfx } from '@sovit/core';
-import type { Logger, NfxVideoRecord } from '@sovit/seeder';
+import type { Logger } from '@sovit/seeder';
 import { NFX_MAX_READ_BYTES } from '@sovit/seeder';
 
 import type { HelperRtcSegment, IrohHelper } from '../iroh/helper.js';
 import { MAX_GET_BYTES } from '../iroh/helper.js';
 import type { NfxIrohStore } from './iroh-seeding.js';
 import type { NfxRtcNode } from './rtc-node.js';
+import type { NfxServedVideo } from './served.js';
+import { servedKey, servesRendition } from './served.js';
 
 /** JSON bytes of segment entries in one `rtc-serve` (the frame's cap is 64 KiB). */
 export const PAGE_BYTES = 48 * 1024;
@@ -39,7 +43,8 @@ export interface NfxRtcSeedingDeps {
 }
 
 interface Served {
-  readonly root: string;
+  /** `servedKey`: its root and the renditions served. */
+  readonly key: string;
   readonly swarms: readonly string[];
 }
 
@@ -78,7 +83,7 @@ export class NfxRtcSeeding {
   private generation = -1;
   /** By video address. */
   private readonly served = new Map<string, Served>();
-  /** `<video> <root>` of videos the current helper will not serve. */
+  /** `<video> <servedKey>` of videos the current helper will not serve. */
   private readonly refused = new Set<string>();
   private readonly offGeneration: () => void;
 
@@ -164,7 +169,8 @@ export class NfxRtcSeeding {
   private async pass(): Promise<void> {
     const epoch = this.epoch;
     if (!this.on || !this.d.node.on) return;
-    if (this.served.size === 0 && this.d.store.videos().length === 0) return;
+    const all = this.d.store.served();
+    if (this.served.size === 0 && all.length === 0) return;
     const helper = await this.d.node.start();
     if (helper === null || epoch !== this.epoch) return;
     const generation = this.d.node.generation;
@@ -174,16 +180,17 @@ export class NfxRtcSeeding {
       this.refused.clear();
       this.generation = generation;
     }
-    const stored = new Map(this.d.store.videos().map((r) => [r.video, r] as const));
+    const stored = new Map(all.map((r) => [r.video, r] as const));
     for (const [video, s] of [...this.served]) {
-      if (stored.get(video)?.root === s.root) continue;
+      const now = stored.get(video);
+      if (now !== undefined && servedKey(now) === s.key) continue;
       this.served.delete(video);
       for (const swarm of s.swarms) await helper.rtcUnserve(swarm).catch(() => false);
     }
     for (const r of stored.values()) {
       if (epoch !== this.epoch || this.d.node.generation !== generation) return;
       if (this.served.has(r.video)) continue;
-      const key = `${r.video} ${r.root}`;
+      const key = `${r.video} ${servedKey(r)}`;
       if (this.refused.has(key)) continue;
       try {
         this.served.set(r.video, await this.serve(helper, r, epoch));
@@ -207,7 +214,7 @@ export class NfxRtcSeeding {
     }
   }
 
-  private async serve(helper: IrohHelper, r: NfxVideoRecord, epoch: number): Promise<Served> {
+  private async serve(helper: IrohHelper, r: NfxServedVideo, epoch: number): Promise<Served> {
     const video = nfx.VideoAddr.parse(r.video);
     if (!video.ok) throw new NotServable('not an NFX video address');
     const listBytes = await this.read(video.value, r.root);
@@ -216,6 +223,7 @@ export class NfxRtcSeeding {
     const list = verified.value;
     const tables: (readonly [string, HelperRtcSegment[]])[] = [];
     for (const rendition of list.renditions) {
+      if (!servesRendition(r.renditions, rendition.id)) continue;
       const entry = list.files.find((f) => f.role === 'playlist' && f.name === rendition.playlist);
       if (entry === undefined) throw new NotServable(`no playlist for ${rendition.id}`);
       const members = nfx.renditionMembers(list, await this.read(video.value, entry.sha256));
@@ -240,7 +248,7 @@ export class NfxRtcSeeding {
       }
       done.push(swarm);
     }
-    return { root: r.root, swarms: done };
+    return { key: servedKey(r), swarms: done };
   }
 
   /** A whole stored file of `video`: its hash list or a playlist (at most 16 MiB). */

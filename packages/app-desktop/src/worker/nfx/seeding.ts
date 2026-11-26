@@ -21,8 +21,11 @@ import type {
 import { hyperdhtEndpoint, listenNfx } from '@sovit/seeder';
 
 export interface NfxSeedingDeps {
-  /** The DHT node to listen on (the swarm's), or `null` while there is none. */
-  readonly dht: () => NfxDht | null;
+  /**
+   * The DHT node to listen on: the swarm's with a mint, else the watching side's own (NFX-18: an
+   * app with no mint seeds what it keeps); `null` while there is none.
+   */
+  readonly dht: () => NfxDht | null | Promise<NfxDht | null>;
   /** A key pair derived by name from the worker's primary key (`Corestore.createKeyPair`). */
   readonly keyPair: (name: string) => Promise<PeerKeyPair>;
   readonly source: NfxFileSource;
@@ -86,12 +89,12 @@ export class NfxSeeding {
   private async apply(on: boolean): Promise<void> {
     const want = on && !this.closed;
     if (want && this.listener === null) {
-      const dht = this.d.dht();
-      if (dht === null) {
-        this.d.logger.warn('nfx: no DHT to listen on; not seeding NFX');
-        return;
-      }
       try {
+        const dht = await this.d.dht();
+        if (dht === null) {
+          this.d.logger.warn('nfx: no DHT to listen on; not seeding NFX');
+          return;
+        }
         const keyPair = await this.peerKeyPair();
         this.listener = await listenNfx(dht, { keyPair, source: this.d.source });
         this.d.logger.info('nfx: seeding over HyperDHT', { namespace: this.namespace });

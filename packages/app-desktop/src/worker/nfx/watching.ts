@@ -363,8 +363,12 @@ export class NfxWatching {
     return this.server;
   }
 
-  /** The swarm's DHT node, else the own one (created once). */
-  private dht(): Promise<NfxDht> {
+  /**
+   * The swarm's DHT node, else the own one (created once): what play sessions dial from, and
+   * what the NFX-12 listener of an app with no mint listens on (NFX-18). The listener closes
+   * before `shutdown` destroys it.
+   */
+  dht(): Promise<NfxDht> {
     const swarm = this.d.swarmDht();
     if (swarm !== null) return Promise.resolve(swarm);
     if (this.closing !== null) return Promise.reject(new Error('nfx: shutting down'));
