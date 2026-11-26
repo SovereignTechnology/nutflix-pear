@@ -240,7 +240,10 @@
           const number = /^\d{1,16}$/.test(raw) ? BigInt(raw) : -1n;
           const valid = number >= min && number <= max;
           input.setAttribute('aria-invalid', String(!valid));
+          // Only the input whose message is shown points at it.
+          input.removeAttribute('aria-errormessage');
           if (!valid && !error) {
+            input.setAttribute('aria-errormessage', 'error');
             const label = input.labels[0].textContent;
             error =
               label +
