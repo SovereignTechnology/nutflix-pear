@@ -7,6 +7,14 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### CI
+
+- **The interop runs judge the app against nfx 0.1.4** (nfx 226fd79, its release commit):
+  `nfx-exit`, `nfx-exit-two-host`, `spike-iroh` and `nfx-web-e2e` build nfxd from it, where they
+  built 0.1.2's (491d35e). They check nfx out as `SovereignTechnology/nutflix`, the repository's
+  name since its 2026-11-26 rename. The toolchain (Rust 1.98.0) and wasm-pack (0.15.1) are the ones
+  that commit's own CI pins, unchanged. The app and its tests are unchanged.
+
 ## [0.1.4] - 2026-11-26
 
 A local key can be created in the desktop app at last, stats for nerds in every player, free

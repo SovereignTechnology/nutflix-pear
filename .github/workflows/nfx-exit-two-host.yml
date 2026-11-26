@@ -69,8 +69,8 @@ concurrency:
 
 env:
   RUST_VERSION: '1.98.0'
-  # nfx v0.1.2's release commit (#92): the nfxd code that release ships.
-  NFX_SHA: '491d35ec3c70e5bdd7b8871bb6a64946d4ed3761'
+  # nfx 0.1.4's release commit (#120): the nfxd code that release ships.
+  NFX_SHA: '226fd79ac1a83fa42a4f0dae2ea089126030105e'
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: '0'
   NFX_SCOPED_RELAYS: ${{ inputs.scoped_relays }}
@@ -115,7 +115,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: SovereignTechnology/nfx
+          repository: SovereignTechnology/nutflix
           ref: ${{ env.NFX_SHA }}
           path: nfx
           persist-credentials: false

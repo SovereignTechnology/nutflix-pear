@@ -41,9 +41,9 @@ concurrency:
 
 env:
   RUST_VERSION: '1.98.0'
-  # The nfx commit whose nfxd and nfx-package this app is judged against: nfx v0.1.2's release
-  # commit (#92), the nfxd booty and the public testnet run.
-  NFX_SHA: '491d35ec3c70e5bdd7b8871bb6a64946d4ed3761'
+  # The nfx commit whose nfxd and nfx-package this app is judged against: nfx 0.1.4's release
+  # commit (#120). (The repository is SovereignTechnology/nutflix since the 2026-11-26 rename.)
+  NFX_SHA: '226fd79ac1a83fa42a4f0dae2ea089126030105e'
   IROH_RELAY_VERSION: '1.2.0'
   # strfry 1.1.3 (released 2026-09-04), as web-site.yml pins it: the commit its tag names.
   STRFRY_SHA: '16c00df04e264f4d68db5e10a48127f015c7824b'
@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: SovereignTechnology/nfx
+          repository: SovereignTechnology/nutflix
           ref: ${{ env.NFX_SHA }}
           path: nfx
           persist-credentials: false
