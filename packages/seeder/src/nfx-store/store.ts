@@ -433,6 +433,11 @@ export class NfxStore {
   private keptWritable = true;
   private readonly fillIds = new WeakMap<NonNullable<NfxKeptRecord['filling']>, symbol>();
   private readonly keepCleanup = new Set<string>();
+  /**
+   * Bytes of journaled cleanup files that may still be on disk: charged to the cap until their
+   * deletion succeeds, or a record names the hash again and its charge becomes that record's.
+   */
+  private readonly cleanupBytes = new Map<string, number>();
   private readonly root: string;
   private readonly now: () => number;
   private cap: DiskCap | null = null;
@@ -581,6 +586,12 @@ export class NfxStore {
       if (!this.sizes.has(sha)) await this.unlinkQuietly(this.filePath(sha));
     }
     await this.cleanParts();
+    // A journaled file still on disk takes space: charged (in `totalBytes`) until it is gone.
+    for (const sha of this.keepCleanup) {
+      if (this.sizes.has(sha)) continue;
+      const st = await fs.stat(this.filePath(sha));
+      if (st?.isFile) this.cleanupBytes.set(sha, st.size);
+    }
     const cleaned = await this.cleanAbandonedFiles();
     if (this.droppedOnLoad > 0 || interrupted.length > 0 || corrupt) await this.persist();
     if (keptDropped > 0 || keptLoad.corrupt || cleaned) {
@@ -597,10 +608,14 @@ export class NfxStore {
     this.cap = cap;
   }
 
-  /** Bytes of every stored file, each once however many videos list it. */
+  /**
+   * Bytes of every stored file, each once however many videos list it, and of cleanup files
+   * not deleted yet.
+   */
   totalBytes(): number {
     let n = 0;
     for (const size of this.sizes.values()) n += size;
+    for (const [sha, size] of this.cleanupBytes) if (!this.sizes.has(sha)) n += size;
     return n;
   }
 
@@ -766,10 +781,11 @@ export class NfxStore {
       await this.persistKept(videos, cleanup);
       if (next === null) this.deleteKept(key);
       else this.setKept({ ...next, usedAt: this.kept.get(key)?.usedAt ?? next.usedAt });
+      // Still charged: freed once each file is gone (`cleanAbandonedFiles`).
       for (const { sha256, size } of removed) {
         this.keepCleanup.add(sha256);
         this.present.delete(sha256);
-        this.cap?.free(size);
+        this.cleanupBytes.set(sha256, size);
       }
       this.recount();
       if (await this.cleanAbandonedFiles()) this.keptDirty = true;
@@ -940,7 +956,8 @@ export class NfxStore {
         own.push({ sha256: f.sha256, size: Number(f.size) });
     }
     let newBytes = 0;
-    for (const [sha, size] of sizes) if (!this.sizes.has(sha)) newBytes += size;
+    for (const [sha, size] of sizes)
+      if (!this.sizes.has(sha) && !this.cleanupBytes.has(sha)) newBytes += size;
     const reservation = this.cap === null ? null : this.cap.reserve(newBytes);
     if (this.cap !== null && reservation === null)
       return fail('disk-cap', 'keeping the rendition would exceed the disk cap');
@@ -1061,6 +1078,7 @@ export class NfxStore {
       await this.unlinkQuietly(this.filePath(sha));
       await this.unlinkQuietly(this.partPath(sha));
       this.present.delete(sha);
+      this.cleanupBytes.delete(sha); // one charge, freed here
       this.cap?.free(size);
     }
     await this.persistKept().catch(() => undefined);
@@ -1112,6 +1130,9 @@ export class NfxStore {
       message,
     });
     if (this.loadError !== null) return fail('unavailable', 'the NFX store did not load');
+    // A put that fails deletes what it wrote, and with the kept records unknown that may be
+    // a file one of them names: nothing on disk changes until they load.
+    if (!this.keptWritable) return fail('unavailable', 'the kept store did not load');
     const key = input.video.toString();
     if (!SHA.test(input.root)) return fail('invalid', 'root is not 64 lowercase hex');
     if (input.hashListBytes.byteLength > nfx.MAX_HASH_LIST_BYTES)
@@ -1144,7 +1165,8 @@ export class NfxStore {
         return fail('invalid', `${f.name} is listed at another size than its hash has`);
     }
     let newBytes = 0;
-    for (const [sha, { size }] of listed) if (!this.sizes.has(sha)) newBytes += size;
+    for (const [sha, { size }] of listed)
+      if (!this.sizes.has(sha) && !this.cleanupBytes.has(sha)) newBytes += size;
     const reservation = this.cap === null ? null : this.cap.reserve(newBytes);
     if (this.cap !== null && reservation === null) {
       return fail('disk-cap', 'storing the video would exceed the disk cap');
@@ -1216,6 +1238,9 @@ export class NfxStore {
 
   private async remove(video: nfx.VideoAddr): Promise<boolean> {
     this.assertLoaded();
+    // With the kept records unknown, a file no whole video names may still be a kept one's.
+    if (!this.keptWritable)
+      throw new Error('unavailable: the kept store did not load, so nothing is removed');
     const key = video.toString();
     const record = this.records.get(key);
     if (record === undefined) return false;
@@ -1228,6 +1253,7 @@ export class NfxStore {
       if (this.sizes.has(sha)) continue;
       await this.unlinkQuietly(this.filePath(sha));
       this.present.delete(sha);
+      this.cleanupBytes.delete(sha); // one charge, freed here
       this.cap?.free(size);
     }
     // Not saved: the disk already agrees with memory, and the next load drops the record.
@@ -1353,7 +1379,11 @@ export class NfxStore {
         if (!this.sizes.has(sha)) {
           for (const path of [this.filePath(sha), this.partPath(sha)])
             if ((await fs.stat(path)) !== null) await fs.unlink(path);
+          const bytes = this.cleanupBytes.get(sha);
+          if (bytes !== undefined) this.cap?.free(bytes);
         }
+        // Gone, or named again (its charge is then that record's).
+        this.cleanupBytes.delete(sha);
         this.keepCleanup.delete(sha);
         changed = true;
       } catch {
