@@ -206,6 +206,17 @@ export function renditionMembers(
   return ok({ init, segments });
 }
 
+/**
+ * A partial seeder's beacon `chunks` (NFX-03 §4): how many of `list`'s entries it holds, an entry
+ * being held when its file (by sha256) is in `held`. Two entries with one hash both count, and
+ * the hash list itself is not an entry, as nfx-node's `seed.rs` counts it.
+ */
+export function heldEntryCount(list: HashList, held: ReadonlySet<string>): bigint {
+  let n = 0n;
+  for (const f of list.files) if (held.has(f.sha256)) n += 1n;
+  return n;
+}
+
 /** The Blossom rule (NFX-05 §4): `sha256(bytes) == expected`, checked before use or storage. */
 export function verifyFile(expectedSha256: string, bytes: Uint8Array): NfxResult<void> {
   if (!isLowerHex(expectedSha256, 64)) return bad('expected sha256 is not 64 lowercase hex');

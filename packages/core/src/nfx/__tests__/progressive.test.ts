@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { FileEntry, HashList } from '../hashlist.js';
-import { renditionMembers } from '../hashlist.js';
+import { heldEntryCount, renditionMembers } from '../hashlist.js';
 import { locate, progressiveLayout } from '../progressive.js';
 
 const A = 'aa'.repeat(32);
@@ -155,5 +155,20 @@ describe('file parts that start into the stored file (slice 5d)', () => {
         RangeError,
       );
     }
+  });
+});
+
+describe("heldEntryCount (a partial seeder's `chunks`, NFX-03 §4)", () => {
+  it('counts the entries whose file is held, each entry once, as nfx-node does', () => {
+    expect(heldEntryCount(list, new Set())).toBe(0n);
+    expect(heldEntryCount(list, new Set([P, I, S1, S2]))).toBe(4n);
+    // The hash list's own hash is not an entry; a hash nothing lists counts nothing.
+    expect(heldEntryCount(list, new Set([A, B, P]))).toBe(1n);
+    // Two entries naming one file both count.
+    const twice: HashList = {
+      ...list,
+      files: [...list.files, entry('copy.m4s', 'segment', S1, 5000n)],
+    };
+    expect(heldEntryCount(twice, new Set([S1]))).toBe(2n);
   });
 });

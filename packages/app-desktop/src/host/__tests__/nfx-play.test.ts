@@ -332,6 +332,27 @@ describe('openNfxSession (contracts v11)', () => {
     expect(new Map(held.named.$map as [string, number][])).toEqual(new Map([['1080p', 1]]));
   });
 
+  it('NFX-18: a hyperdht seeder that names renditions is a peer, counted for those only', async () => {
+    r = await rig({ nfx: { ...NFX_ON, irohRelays: [IROH_RELAY] } });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'free-video-kept');
+    const partial = await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-kept', {
+      endpoints: (hyperdht) => [{ ...hyperdht, renditions: ['720p'] } as nfx.Endpoint],
+    });
+    const whole = await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-kept');
+    await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-kept'));
+    const [open] = r.worker().calls('nfx.play.open');
+    expect(validateWorkerArgs['nfx.play.open'](open)).toBe(true);
+    const peers = (open as { peers: { peer: string }[] }).peers.map((p) => p.peer);
+    expect(new Set(peers)).toEqual(new Set([partial.peer, whole.peer]));
+    const held = (open as { held: { seeders: number; all: number; named: { $map: unknown[] } } })
+      .held;
+    expect(held.seeders).toBe(2);
+    expect(held.all).toBe(1);
+    expect(new Map(held.named.$map as [string, number][])).toEqual(new Map([['720p', 1]]));
+  });
+
   it('no live free beacon by a seeder for this manifest means no-seeders', async () => {
     r = await rig({ nfx: NFX_ON });
     await r.ready();

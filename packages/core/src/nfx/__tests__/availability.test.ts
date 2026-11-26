@@ -1,7 +1,7 @@
 /**
  * Pear #97: which renditions a video's live beacons say are held, by how many seeders, and the
  * order a player tries them in. Mixed holders (per-rendition iroh tickets, `webrtc` and `https`
- * lists, `hyperdht` whole videos), absent = all, an `https` list empty or repeating (the beacon is
+ * lists, `hyperdht` whole videos or lists), absent = all, an `https` list empty or repeating (the beacon is
  * invalid, pear #104), the newest beacon per seeder, stale and expired beacons, other videos,
  * transports a player cannot use, and the bounds.
  */
@@ -58,12 +58,18 @@ const webrtc = (renditions: readonly string[]): Endpoint => ({
   trackerUrls: ['wss://tracker.example'],
   renditions,
 });
-/** NFX-12 §2: a HyperDHT peer key bound to the seeder `sk` on this network (the bind verifies). */
-function hyperdht(sk: Uint8Array): Endpoint {
+/**
+ * NFX-12 §2: a HyperDHT peer key bound to the seeder `sk` on this network (the bind verifies),
+ * serving `renditions` (absent: every rendition).
+ */
+function hyperdht(sk: Uint8Array, renditions?: readonly string[]): Endpoint {
   const peerSk = ed25519.utils.randomSecretKey();
   const peer = bytesToHex(ed25519.getPublicKey(peerSk));
   const msg = new TextEncoder().encode(hyperdhtBindMessage(getPublicKey(sk), NS));
-  return { t: 'hyperdht', peer, bind: bytesToHex(ed25519.sign(msg, peerSk)) };
+  const bind = bytesToHex(ed25519.sign(msg, peerSk));
+  return renditions === undefined
+    ? { t: 'hyperdht', peer, bind }
+    : { t: 'hyperdht', peer, bind, renditions };
 }
 
 function beacon(
@@ -158,6 +164,46 @@ describe('beacon `https` endpoints: optional renditions (pear #97, nfx `--rendit
   });
 });
 
+describe('beacon `hyperdht` endpoints: optional renditions (NFX-12 §2, NFX-18)', () => {
+  const sk = generateSecretKey();
+  const seeder = getPublicKey(sk);
+  const raw = (e: Endpoint, renditions?: string): string => {
+    if (e.t !== 'hyperdht') throw new Error('not hyperdht');
+    return `{"t":"hyperdht","peer":"${e.peer}","bind":"${e.bind}"${renditions === undefined ? '' : `,"renditions":${renditions}`}}`;
+  };
+
+  it('parses a list after `bind`, keeps it on the way out, and treats a missing one as absent', () => {
+    const one = hyperdht(sk, ['720p']);
+    const all = hyperdht(sk);
+    const text = rawContent(`${raw(one, '["720p"]')},${raw(all)}`);
+    const parsed = parseBeaconContent(text, seeder);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.endpoints).toEqual([one, all]);
+    expect(beaconContentText(parsed.value)).toBe(text);
+  });
+
+  it('refuses a list that is not one of distinct rendition ids, whatever else the beacon names', () => {
+    const e = hyperdht(sk);
+    for (const bad of [
+      '"720p"',
+      '[""]',
+      '["meta"]',
+      '[7]',
+      '{}',
+      'null',
+      '[]',
+      '["720p","720p"]',
+    ]) {
+      for (const endpoints of [raw(e, bad), `${RAW_IROH},${raw(e, bad)}`]) {
+        expect(parseBeaconContent(rawContent(endpoints), seeder).ok, endpoints).toBe(false);
+      }
+    }
+    const repeated = parseBeaconContent(rawContent(raw(e, '["720p","720p"]')), seeder);
+    if (!repeated.ok) expect(repeated.error.reason).toMatch(/^hyperdht `renditions` must /);
+  });
+});
+
 describe('beacon `webrtc` endpoints: a present but empty list (pear #104)', () => {
   it('reads it as absent, every rendition, as nfx-proto does (NFX-10 §2 is silent)', () => {
     for (const endpoints of [rawWebrtc('[]'), rawWebrtc()]) {
@@ -193,7 +239,7 @@ describe('renditionAvailability', () => {
     expect(availabilityVaries(a)).toBe(true);
   });
 
-  it('a `hyperdht` seeder holds every rendition (NFX-12 serves whole videos)', () => {
+  it('a `hyperdht` seeder with no list holds every rendition', () => {
     const sk = generateSecretKey();
     const a = renditionAvailability(
       VIDEO,
@@ -209,6 +255,30 @@ describe('renditionAvailability', () => {
       { transports: ['iroh'] },
     );
     expect(named(irohOnly)).toEqual({ '720p': 1 });
+  });
+
+  it('a `hyperdht` seeder that names renditions holds those only (NFX-18 keeps some)', () => {
+    const sk = generateSecretKey();
+    const a = renditionAvailability(
+      VIDEO,
+      [beacon([hyperdht(sk, ['720p'])], { sk }), beacon([hyperdht(generateSecretKey())])],
+      NOW,
+    );
+    // The second beacon's bind is for another seeder: invalid whole, not counted.
+    expect(a).toEqual({ seeders: 1, all: 0, named: new Map([['720p', 1]]) });
+    const sk2 = generateSecretKey();
+    const b = renditionAvailability(
+      VIDEO,
+      [
+        beacon([hyperdht(sk, ['720p']), iroh('a', ['360p'])], { sk }),
+        beacon([hyperdht(sk2)], { sk: sk2 }),
+      ],
+      NOW,
+    );
+    expect(b.all).toBe(1);
+    expect(named(b)).toEqual({ '360p': 1, '720p': 1 });
+    expect(holders(b, '720p')).toBe(2);
+    expect(holders(b, '1080p')).toBe(1);
   });
 
   it('absent means every rendition; a `webrtc` list present but empty too, as nfx-proto reads it', () => {
