@@ -31,7 +31,7 @@ import type {
 import { parseATag } from '../nfx/beacon.js';
 import { Namespace } from '../nfx/namespace.js';
 import type { NostrClient } from './client.js';
-import { encodeTimeCursor } from './cursor.js';
+import { decodeTimeCursor, timeCursor } from './cursor.js';
 import { byNewest } from './event.js';
 import { MAX_PAGE } from './feeds.js';
 import { fetchSubscriptions } from './follows.js';
@@ -68,32 +68,44 @@ const pageSize = (n: number | undefined): number =>
 
 type SearchSupport = (relay: RelayUrl) => Promise<boolean>;
 
+/** One relay set's page of a query: `relays` (`undefined`: the read relays), from `cursor`. */
+type PageRead = (
+  relays: readonly RelayUrl[] | undefined,
+  cursor: string | undefined,
+  limit: number,
+) => Promise<Page<NfxVideo>>;
+
 /**
  * Pages of one query from different relay sets, as one page: one video per address, the newest
  * revision winning and, at the same `created_at`, the earlier page's copy (callers pass the scoped
- * relays' page first, so the network's own copy wins a tie); newest first, at most `limit`. There
- * is more when any page had more or the union ran past `limit` (the overflow is never dropped),
- * and the cursor is the merged page's own. `withdrawn` revisions are left out. A relay set whose
- * page was full (it has `next`) was read only down to its oldest video, so nothing older is listed
- * here: the cursor never passes a set's unread videos. Without a withdrawal that cuts nothing
- * (each full page alone fills `limit` above its own oldest video); with one, the page may come out
- * short, or empty with the frontier set's own cursor, and `dropped` counts what was left out.
+ * relays' page first, so the network's own copy wins a tie); newest first, at most `limit`;
+ * `withdrawn` revisions are left out, and `dropped` counts what was left out for them or for
+ * `floor`.
+ *
+ * **The cursor never passes a set's unread videos, and never repeats.** A page with `next` was read
+ * only down to its cursor's `until` (a full page's oldest video, or how far a search scan read,
+ * even with no match), so nothing older than the newest such floor is listed here. Without a
+ * withdrawal that cuts nothing (a full page alone fills `limit` above its own floor); with one, the
+ * page comes out short. A full page's cursor is its last video's second; a short one's is the
+ * floor, since everything above it was listed or withdrawn. Either way the cursor skips, at that
+ * second, every id the page accounts for: listed, withdrawn, or a revision a listed one replaced,
+ * plus the incoming `cursor`'s own at the same second and, on a short page (where `limit` cut
+ * nothing), the sets' own cursors' there. So the next page starts where this one ended, and an
+ * empty one still moves on.
  */
-function mergePages(
+export function mergeNfxPages(
   pages: readonly Page<NfxVideo>[],
   limit: number,
   withdrawn: ReadonlySet<string> = new Set(),
+  cursor?: string,
 ): { readonly page: Page<NfxVideo>; readonly dropped: number } {
-  let frontier: { readonly video: NfxVideo; readonly next: string } | undefined;
+  let floor: number | undefined;
   for (const p of pages) {
     if (p.next === undefined) continue;
-    const oldest = [...p.items].sort((a, b) => byNewest(a.event, b.event)).at(-1);
-    if (
-      oldest !== undefined &&
-      (frontier === undefined || byNewest(oldest.event, frontier.video.event) < 0)
-    ) {
-      frontier = { video: oldest, next: p.next };
-    }
+    const at =
+      decodeTimeCursor(p.next)?.until ??
+      (p.items.length === 0 ? undefined : Math.min(...p.items.map((v) => v.event.created_at)));
+    if (at !== undefined && (floor === undefined || at > floor)) floor = at;
   }
   const newest = new Map<string, NfxVideo>();
   let dropped = 0;
@@ -106,26 +118,58 @@ function mergePages(
     if (seen === undefined || v.event.created_at > seen.event.created_at) newest.set(v.id, v);
   }
   const unique = [...newest.values()].sort((a, b) => byNewest(a.event, b.event));
-  const all = unique.filter(
-    (v) => frontier === undefined || byNewest(v.event, frontier.video.event) <= 0,
-  );
+  const cut = floor;
+  const all = cut === undefined ? unique : unique.filter((v) => v.event.created_at >= cut);
   dropped += unique.length - all.length;
   const items = all.slice(0, limit);
-  const more = all.length > limit || pages.some((p) => p.next !== undefined);
-  const next = more
-    ? (encodeTimeCursor(items.map((v) => v.event)) ??
-      frontier?.next ??
-      pages.find((p) => p.next !== undefined)?.next)
-    : undefined;
-  return { page: next === undefined ? { items } : { items, next }, dropped };
+  if (all.length <= limit && pages.every((p) => p.next === undefined)) {
+    return { page: { items }, dropped };
+  }
+  const short = items.length < limit;
+  const until = short && floor !== undefined ? floor : items.at(-1)?.event.created_at;
+  if (until === undefined) {
+    // Only a set whose cursor is not a time cursor has more: carry on from it, as before.
+    const next = pages.find((p) => p.next !== undefined)?.next;
+    return { page: next === undefined ? { items } : { items, next }, dropped };
+  }
+  const listed = new Set(items.map((v) => v.id));
+  const skip = new Set<string>();
+  for (const v of pages.flatMap((p) => p.items)) {
+    if (v.event.created_at === until && (withdrawn.has(v.eventId) || listed.has(v.id))) {
+      skip.add(v.eventId);
+    }
+  }
+  for (const c of [cursor, ...(short ? pages.map((p) => p.next) : [])]) {
+    const t = decodeTimeCursor(c);
+    if (t?.until === until) for (const id of t.seen) skip.add(id);
+  }
+  return { page: { items, next: timeCursor(until, skip) }, dropped };
+}
+
+/** `work`'s answer, or `undefined` when it fails or is not in within `ms`. */
+async function within<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(undefined);
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, late]);
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
- * `page`, filled from the merged page after it when `mergePages` left it short (`dropped` > 0) and
- * there is more, while `rounds` last. The two are consecutive pages of one query, so the first
- * `limit` of both is a page too, and its cursor is that page's own. A read that fails, or is not in
- * within `waitMs` (what is left of the read's deadline), keeps `page`: short, but its cursor skips
- * nothing.
+ * `page`, filled from the merged page after it when `mergeNfxPages` left it short (`dropped` > 0)
+ * and there is more, while `rounds` last. `after` reads the next page for the room left, from
+ * `page`'s cursor, so the two are consecutive pages of one query and the second's cursor carries on
+ * from both. It answers `undefined` unless every relay set answered it: one set's page alone would
+ * move the cursor past the other's unread videos. That, a failure, or no answer within `waitMs`
+ * (what is left of the read's deadline) keeps `page`: short, but its cursor skips nothing.
  */
 async function toppedUp(
   page: Page<NfxVideo>,
@@ -133,34 +177,16 @@ async function toppedUp(
   limit: number,
   rounds: number,
   waitMs: number,
-  after: (cursor: string) => Promise<Page<NfxVideo>>,
+  after: (cursor: string, room: number) => Promise<Page<NfxVideo> | undefined>,
 ): Promise<Page<NfxVideo>> {
   if (dropped === 0 || rounds <= 0 || page.next === undefined || page.items.length >= limit) {
     return page;
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => {
-      resolve(undefined);
-    }, waitMs);
-  });
-  let more: Page<NfxVideo> | undefined;
-  try {
-    more = await Promise.race([after(page.next), late]);
-  } catch {
-    return page;
-  } finally {
-    clearTimeout(timer);
-  }
+  const more = await within(after(page.next, limit - page.items.length), waitMs);
   if (more === undefined) return page;
   const listed = new Set(page.items.map((v) => v.id));
-  const all = [...page.items, ...more.items.filter((v) => !listed.has(v.id))];
-  const items = all.slice(0, limit);
-  // `more` covers everything after `page.next`, so its cursor carries on from both, unless the two
-  // ran past `limit`: the page then ends at its own last video.
-  const next =
-    all.length > limit ? (encodeTimeCursor(items.map((v) => v.event)) ?? more.next) : more.next;
-  return next === undefined ? { items } : { items, next };
+  const items = [...page.items, ...more.items.filter((v) => !listed.has(v.id))];
+  return more.next === undefined ? { items } : { items, next: more.next };
 }
 
 /** `supports`, asked at most once per relay while one call lasts; a failure counts as no. */
@@ -311,45 +337,63 @@ export class NfxCatalog implements NfxSource {
 
   /**
    * `bothAtOnce` for a page of at most `limit` from `cursor`: a page is enough when it is full. The
-   * two pages are merged (`mergePages`: one video per address, the newest revision, the scoped copy
-   * on a tie, newest first, `limit`), so an empty or short scoped page never shrinks the catalog. A
-   * page that withdrawals left short is filled from the pages after it (`toppedUp`), by the same
-   * deadline as the deletion checks (the grace's, or one grace from the merge when no full answer
-   * started one), so neither holds the page past it. With
+   * two pages are merged (`mergeNfxPages`: one video per address, the newest revision, the scoped
+   * copy on a tie, newest first, `limit`, a cursor that skips nothing), so an empty or short scoped
+   * page never shrinks the catalog. A page that withdrawals left short is filled from the pages
+   * after it (`toppedUp`), by the same deadline as the deletion checks (the grace's, or one grace
+   * from the merge when no full answer started one), so neither holds the page past it. With
    * `emptyStands`, an empty scoped page beside a failed read is that empty page, not the error: the
    * read fails only when every relay set does (the Network feed).
    */
   private async bothAtOncePage(
-    read: (
-      relays: readonly RelayUrl[] | undefined,
-      cursor: string | undefined,
-    ) => Promise<Page<NfxVideo>>,
+    read: PageRead,
     limit: number,
     cursor: string | undefined,
     emptyStands = false,
-    rounds = NFX_TOP_UP_ROUNDS,
   ): Promise<Page<NfxVideo>> {
+    return (await this.mergedPage(read, limit, cursor, emptyStands, NFX_TOP_UP_ROUNDS)).page;
+  }
+
+  /** `bothAtOncePage`, and whether every relay set answered it (`whole`). */
+  private async mergedPage(
+    read: PageRead,
+    limit: number,
+    cursor: string | undefined,
+    emptyStands: boolean,
+    rounds: number,
+  ): Promise<{ readonly page: Page<NfxVideo>; readonly whole: boolean }> {
+    const alone = this.scopedRelays().length === 0;
     // One deadline for what the merge asks after the reads: the deletion checks, then a top-up.
-    const after: { by: number; dropped: number } = { by: 0, dropped: 0 };
+    const after = { by: 0, dropped: 0, merged: false };
     const page = await this.bothAtOnce(
-      (relays) => read(relays, cursor),
+      (relays) => read(relays, cursor, limit),
       (p) => p.items.length >= limit,
       (p) => emptyStands || p.items.length > 0,
       async (scoped, fallback, scopedRelays, deadline) => {
+        after.merged = true;
         after.by = deadline ?? Date.now() + this.mergeGraceMs;
-        const merged = mergePages(
+        const merged = mergeNfxPages(
           [scoped, fallback],
           limit,
           await this.withdrawnAcross(scoped.items, fallback.items, scopedRelays, after.by),
+          cursor,
         );
         after.dropped = merged.dropped;
         return merged.page;
       },
     );
-    const waitMs = Math.max(0, after.by - Date.now());
-    return toppedUp(page, after.dropped, limit, rounds, waitMs, (next) =>
-      this.bothAtOncePage(read, limit, next, emptyStands, rounds - 1),
+    const filled = await toppedUp(
+      page,
+      after.dropped,
+      limit,
+      rounds,
+      Math.max(0, after.by - Date.now()),
+      async (next, room) => {
+        const more = await this.mergedPage(read, room, next, emptyStands, rounds - 1);
+        return more.whole ? more.page : undefined;
+      },
     );
+    return { page: filled, whole: alone || after.merged };
   }
 
   /**
@@ -374,24 +418,11 @@ export class NfxCatalog implements NfxSource {
       const there = new Set(other.map((v) => v.id));
       return xs.filter((v) => !there.has(v.id));
     };
-    const inTime = (check: Promise<Set<string>>): Promise<Set<string>> => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const late = new Promise<Set<string>>((resolve) => {
-        timer = setTimeout(() => {
-          resolve(new Set());
-        }, wait);
-      });
-      return Promise.race([check, late]).finally(() => {
-        clearTimeout(timer);
-      });
-    };
-    const checks = await Promise.allSettled([
-      inTime(nfxWithdrawn(c, this.namespace, onlyIn(fallback, scoped), scopedRelays)),
-      inTime(nfxWithdrawn(c, this.namespace, onlyIn(scoped, fallback), undefined)),
+    const checks = await Promise.all([
+      within(nfxWithdrawn(c, this.namespace, onlyIn(fallback, scoped), scopedRelays), wait),
+      within(nfxWithdrawn(c, this.namespace, onlyIn(scoped, fallback), undefined), wait),
     ]);
-    const out = new Set<string>();
-    for (const r of checks) if (r.status === 'fulfilled') for (const id of r.value) out.add(id);
-    return out;
+    return new Set(checks.flatMap((ids) => [...(ids ?? [])]));
   }
 
   /**
@@ -417,38 +448,28 @@ export class NfxCatalog implements NfxSource {
   async feed(q: FeedQuery, viewer: NostrPubkey | null): Promise<Page<NfxVideo>> {
     const c = this.client();
     const limit = pageSize(q.limit);
-    const page = (
-      relays: readonly RelayUrl[] | undefined,
-      cursor: string | undefined,
-      authors: readonly NostrPubkey[],
-    ): Promise<Page<NfxVideo>> =>
-      nfxAuthorsFeed(c, this.namespace, authors, { limit, cursor, relays });
+    const page =
+      (authors: readonly NostrPubkey[]): PageRead =>
+      (relays, cursor, size) =>
+        nfxAuthorsFeed(c, this.namespace, authors, { limit: size, cursor, relays });
     switch (q.source) {
       case 'subscriptions': {
         if (viewer === null) return { items: [] };
         const { pubkeys } = await fetchSubscriptions(c, viewer);
         if (pubkeys.length === 0) return { items: [] };
-        return this.bothAtOncePage(
-          (relays, cursor) => page(relays, cursor, pubkeys),
-          limit,
-          q.cursor,
-        );
+        return this.bothAtOncePage(page(pubkeys), limit, q.cursor);
       }
       case 'tags':
         return this.bothAtOncePage(
-          (relays, cursor) =>
-            nfxTagsFeed(c, this.namespace, q.tags ?? [], { limit, cursor, relays }),
+          (relays, cursor, size) =>
+            nfxTagsFeed(c, this.namespace, q.tags ?? [], { limit: size, cursor, relays }),
           limit,
           q.cursor,
         );
       case 'author': {
         const author = q.author;
         if (author === undefined) return { items: [] };
-        return this.bothAtOncePage(
-          (relays, cursor) => page(relays, cursor, [author]),
-          limit,
-          q.cursor,
-        );
+        return this.bothAtOncePage(page([author]), limit, q.cursor);
       }
       case 'network':
         return this.networkFeed(c, { limit: q.limit ?? NFX_FEED_PAGE, cursor: q.cursor });
@@ -463,7 +484,7 @@ export class NfxCatalog implements NfxSource {
    * relays (which carry its mirrors) are both asked at once, with the feeds' grace
    * (`bothAtOncePage`), so a video listed on only one still shows and a stalled set never holds the
    * other's full page. One video is one address, whichever relays held it or how many revisions;
-   * the newest wins, and the scoped relays' copy a tie (`mergePages`), unless a deletion on the set
+   * the newest wins, and the scoped relays' copy a tie (`mergeNfxPages`), unless a deletion on the set
    * that lacks it withdraws it (`withdrawnAcross`). Fails only when every relay set does.
    */
   private networkFeed(
@@ -471,8 +492,8 @@ export class NfxCatalog implements NfxSource {
     opts: { readonly limit: number; readonly cursor: string | undefined },
   ): Promise<Page<NfxVideo>> {
     return this.bothAtOncePage(
-      (relays, cursor) =>
-        nfxVideoPage(c, this.namespace, {}, { limit: opts.limit, cursor, relays }),
+      (relays, cursor, size) =>
+        nfxVideoPage(c, this.namespace, {}, { limit: size, cursor, relays }),
       opts.limit,
       opts.cursor,
       true,
@@ -486,8 +507,9 @@ export class NfxCatalog implements NfxSource {
     const read = (
       relays: readonly RelayUrl[] | undefined,
       cursor: string | undefined = q.cursor,
+      size: number = NFX_FEED_PAGE,
     ): Promise<Page<NfxVideo>> => {
-      const opts = { cursor, limit: NFX_FEED_PAGE, relays };
+      const opts = { cursor, limit: size, relays };
       return supports === undefined
         ? searchNfxVideos(c, this.namespace, q.text, q.filters ?? {}, opts)
         : searchNfxVideosRouted(c, this.namespace, q.text, q.filters ?? {}, {
@@ -521,21 +543,22 @@ export class NfxCatalog implements NfxSource {
     return (await Promise.all(scoped.map((r) => supports(r)))).every((yes) => yes);
   }
 
-  twinsOf(
+  async twinsOf(
     legacy: readonly { readonly id: NostrEventId; readonly author: NostrPubkey }[],
   ): Promise<NfxVideo[]> {
-    if (legacy.length === 0) return Promise.resolve([]);
-    // The scoped relays only, which every feed page reads first, so a copy found here is one a
-    // feed lists. Not `bothAtOnce`: a copy only the read relays hold is missed by a feed whose
-    // scoped relays fill its pages, and then its NIP-71 video must stay (a duplicate, never a
-    // gap). Scoped relays down: this fails, and the merged catalogue lists both.
+    if (legacy.length === 0) return [];
+    // Copies on the scoped relays only: a copy only the read relays hold may sit past a page the
+    // scoped relays fill, and then its NIP-71 video must stay (a duplicate, never a gap). Scoped
+    // relays down: this fails, and the merged catalogue lists both. The feeds also take the read
+    // relays' deletions (ADR 0026, `withdrawnAcross`), so a copy one of those withdraws is no copy:
+    // it is asked about there, within the grace, and an unknown answer hides nothing.
+    const c = this.client();
     const scoped = this.scopedRelays();
-    return nfxTwinsOf(
-      this.client(),
-      this.namespace,
-      legacy,
-      scoped.length === 0 ? {} : { relays: scoped },
-    );
+    if (scoped.length === 0) return nfxTwinsOf(c, this.namespace, legacy, {});
+    const twins = await nfxTwinsOf(c, this.namespace, legacy, { relays: scoped });
+    if (twins.length === 0) return twins;
+    const gone = await within(nfxWithdrawn(c, this.namespace, twins, undefined), this.mergeGraceMs);
+    return gone === undefined ? [] : twins.filter((v) => !gone.has(v.eventId));
   }
 
   playable(): boolean {

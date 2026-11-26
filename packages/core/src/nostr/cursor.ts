@@ -17,7 +17,12 @@ export function encodeTimeCursor(page: readonly NostrEvent[]): string | undefine
   const last = page[page.length - 1];
   if (!last) return undefined;
   const seen = page.filter((e) => e.created_at === last.created_at).map((e) => e.id);
-  return `t:${last.created_at}:${seen.join(',')}`;
+  return timeCursor(last.created_at, seen);
+}
+
+/** A time cursor from its parts: read on from `until`, skipping `seen` at that second. */
+export function timeCursor(until: number, seen: Iterable<string>): string {
+  return `t:${until}:${[...seen].join(',')}`;
 }
 
 export function decodeTimeCursor(cursor: string | undefined): TimeCursor | undefined {
