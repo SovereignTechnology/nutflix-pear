@@ -96,9 +96,13 @@ export interface TestNfxVideo {
 
 /**
  * The video: renditions `720p` (2 Mbit/s, 1280x720) and `360p` (500 kbit/s, 640x360), whose
- * playlists list the same init and `segs` (default: three honest ones).
+ * playlists list the same init and `segs` (default: three honest ones), at `video` (default
+ * `NFX_TEST_VIDEO`).
  */
-export function testNfxVideo(segs: readonly Uint8Array[] = segments(3)): TestNfxVideo {
+export function testNfxVideo(
+  segs: readonly Uint8Array[] = segments(3),
+  video: string = NFX_TEST_VIDEO,
+): TestNfxVideo {
   const initSha = sha256(INIT);
   const segmentShas = segs.map(sha256);
   const playlist = (extra: readonly string[]): Uint8Array =>
@@ -118,7 +122,7 @@ export function testNfxVideo(segs: readonly Uint8Array[] = segments(3)): TestNfx
   const low = playlist(['#EXT-X-INDEPENDENT-SEGMENTS']);
   const list: nfx.HashList = {
     v: 1,
-    video: NFX_TEST_VIDEO,
+    video,
     files: [
       {
         name: 'playlist-720p.m3u8',
@@ -198,7 +202,7 @@ export function testNfxVideo(segs: readonly Uint8Array[] = segments(3)): TestNfx
     at += s.length;
   }
   return {
-    video: NFX_TEST_VIDEO,
+    video,
     root,
     segs: list.files.length,
     files,

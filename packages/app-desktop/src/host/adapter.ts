@@ -1411,6 +1411,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       case 'nfx.rtc.reset':
         this.mesh.reset();
         return;
+      // NFX-18: the host keeps no view of kept videos yet.
+      case 'nfx.keep.changed':
       case 'ready':
       case 'log':
         return;

@@ -64,6 +64,8 @@ import type {
   HostToWorker,
   NfxHeldWire,
   NfxIrohEndpointWire,
+  NfxKeepResumeArgs,
+  NfxKeptVideoWire,
   NfxPlayOpenArgs,
   PublishDraft,
   WorkerEvent,
@@ -76,11 +78,14 @@ import {
   MAX_NFX_HELD_RENDITIONS,
   MAX_NFX_HELD_SEEDERS,
   MAX_NFX_IROH_ADDRS,
+  MAX_NFX_KEPT_VIDEOS,
   MAX_NFX_PLAY_IROH,
   MAX_NFX_PLAY_PEERS,
   MAX_NFX_RENDITIONS,
   MAX_NFX_RTC_SWARMS,
   MAX_NFX_SDP,
+  NFX_KEEP_FAILURES,
+  NFX_KEEP_REASONS,
   NFX_RESOLUTION,
   NFX_UPLOAD_FAILURES,
   WORKER_V,
@@ -299,6 +304,26 @@ const isNfxPlayOpen = safe(
     (x.held === undefined || heldAddsUp(x.held)),
 );
 
+/** NFX-18: why a video is kept. */
+const isNfxKeepReason = oneOf(NFX_KEEP_REASONS);
+
+/** NFX-18: a filling rendition's sources, as `nfx.play.open` names them. */
+const isNfxKeepResumeShape = obj({
+  video: isNfxVideoAddr,
+  root: isSha256,
+  segs: int(1, Number.MAX_SAFE_INTEGER),
+  rendition: isLabel,
+  peers: arrayOf(isNfxHyperdhtEndpoint, MAX_NFX_PLAY_PEERS),
+  iroh: arrayOf(isNfxIrohEndpointWire, MAX_NFX_PLAY_IROH),
+});
+/** At least one source, and each iroh node once (as `nfx.play.open`). */
+const isNfxKeepResume = safe(
+  (x: unknown): x is NfxKeepResumeArgs =>
+    isNfxKeepResumeShape(x) &&
+    x.peers.length + x.iroh.length > 0 &&
+    new Set(x.iroh.map((e) => e.node)).size === x.iroh.length,
+);
+
 /** Arguments of every host → worker request. */
 export const validateWorkerArgs: {
   readonly [M in WorkerMethod]: Guard<WorkerMethodTable[M][0]>;
@@ -321,6 +346,10 @@ export const validateWorkerArgs: {
   'nfx.play.close': safe(isSid),
   'nfx.play.stats': safe(isSid),
   'nfx.play.addresses': safe(isSid),
+  'nfx.play.keep': safe(obj({ sid: isSessionId, reason: isNfxKeepReason })),
+  'nfx.keep.resume': isNfxKeepResume,
+  'nfx.keep.list': safe(obj({}) as Guard<Record<string, never>>),
+  'nfx.keep.drop': safe(obj({ video: isNfxVideoAddr, reason: isNfxKeepReason })),
   'nfx.rtc.answer': safe(obj({ swarm: isNfxWebSwarm, offer: isNfxSdp })),
   'nfx.rtc.offer': safe(obj({ swarm: isNfxWebSwarm })),
   'nfx.rtc.accept': safe(obj({ peer: isNfxRtcPeer, answer: isNfxSdp })),
@@ -413,6 +442,42 @@ const isPaidAddressesResult = safe(
     x.addresses.every((a) => a.kind === 'hypercore' && HEX64.test(a.id)),
 );
 
+/** NFX-18: a keep job's state, and why one failed. */
+const isNfxKeepJob = union(
+  obj({ state: oneOf(['fetching', 'waiting', 'held'] as const) }),
+  obj({ state: literal('failed'), error: oneOf(NFX_KEEP_FAILURES) }),
+);
+const isNfxKeptVideoShape = obj({
+  video: isNfxVideoAddr,
+  root: isSha256,
+  segs: int(1, Number.MAX_SAFE_INTEGER),
+  held: arrayOf(isLabel, MAX_NFX_HELD_RENDITIONS),
+  filling: nullable(
+    obj({ rendition: isLabel, done: isCount, total: int(1, Number.MAX_SAFE_INTEGER) }),
+  ),
+  reasons: arrayOf(isNfxKeepReason, NFX_KEEP_REASONS.length, 1),
+  job: nullable(isNfxKeepJob),
+});
+/**
+ * A kept video holds or fills something, never fills a rendition it holds, counts no more files
+ * done than it needs, and names each rendition and reason once.
+ */
+const isNfxKeptVideo = safe(
+  (x: unknown): x is NfxKeptVideoWire =>
+    isNfxKeptVideoShape(x) &&
+    new Set(x.held).size === x.held.length &&
+    new Set(x.reasons).size === x.reasons.length &&
+    (x.filling === null
+      ? x.held.length > 0
+      : x.filling.done <= x.filling.total && !x.held.includes(x.filling.rendition)),
+);
+const isNfxKeepListShape = obj({ videos: arrayOf(isNfxKeptVideo, MAX_NFX_KEPT_VIDEOS) });
+/** At most `MAX_NFX_KEPT_VIDEOS`, each video once. */
+const isNfxKeepListResult = safe(
+  (x: unknown): x is WorkerMethodTable['nfx.keep.list'][1] =>
+    isNfxKeepListShape(x) && new Set(x.videos.map((v) => v.video)).size === x.videos.length,
+);
+
 /** Results of every host → worker request (checked by the host). */
 export const validateWorkerResult: {
   readonly [M in WorkerMethod]: Guard<WorkerMethodTable[M][1]>;
@@ -442,6 +507,10 @@ export const validateWorkerResult: {
   'nfx.play.close': isVoid,
   'nfx.play.stats': isNfxPlayStatsResult,
   'nfx.play.addresses': isNfxAddressesResult,
+  'nfx.play.keep': safe(obj({ state: oneOf(['whole', 'held', 'filling'] as const) })),
+  'nfx.keep.resume': isVoid,
+  'nfx.keep.list': isNfxKeepListResult,
+  'nfx.keep.drop': safe(obj({ dropped: bool })),
   'nfx.rtc.answer': safe(obj({ peer: isNfxRtcPeer, sdp: isNfxSdp })),
   'nfx.rtc.offer': safe(obj({ peer: isNfxRtcPeer, sdp: isNfxSdp })),
   'nfx.rtc.accept': isVoid,
@@ -667,6 +736,7 @@ export const validateWorkerEvent: {
     open: bool,
   }),
   'nfx.rtc.reset': ev('nfx.rtc.reset', {}),
+  'nfx.keep.changed': ev('nfx.keep.changed', { video: isNfxVideoAddr }),
   log: ev('log', {
     level: oneOf(['debug', 'info', 'warn', 'error'] as const),
     msg: text(0, LIMITS.maxString, { multiline: true }),

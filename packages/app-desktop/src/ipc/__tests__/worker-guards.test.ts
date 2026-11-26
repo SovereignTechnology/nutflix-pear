@@ -65,6 +65,33 @@ const IROH = {
     ] as const,
   },
 };
+/** NFX-18: a keep resumed from its sources, and kept videos as the worker lists them. */
+const NFX_RESUME = {
+  video: NFX_VIDEO,
+  root: SHA,
+  segs: 9,
+  rendition: '720p',
+  peers: [ENDPOINT],
+  iroh: [] as NfxIrohEndpointWire[],
+};
+const KEPT_FILLING = {
+  video: NFX_VIDEO,
+  root: SHA,
+  segs: 9,
+  held: [] as string[],
+  filling: { rendition: '720p', done: 2, total: 12 },
+  reasons: ['watched' as const],
+  job: { state: 'fetching' as const },
+};
+const KEPT_HELD = {
+  video: `nfx:testnet:1:nutflix-${'d'.repeat(32)}`,
+  root: SHA,
+  segs: 9,
+  held: ['360p', '720p'],
+  filling: null,
+  reasons: ['watched' as const, 'downloaded' as const],
+  job: null,
+};
 /** Pear #123: a free play's stats for nerds, and its addresses, as the worker answers them. */
 const NFX_STATS = {
   sources: [
@@ -235,6 +262,16 @@ const ARGS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][0][] }
   'nfx.play.close': [{ sid: SID }],
   'nfx.play.stats': [{ sid: SID }],
   'nfx.play.addresses': [{ sid: SID }],
+  'nfx.play.keep': [
+    { sid: SID, reason: 'watched' },
+    { sid: SID, reason: 'downloaded' },
+  ],
+  'nfx.keep.resume': [NFX_RESUME, { ...NFX_RESUME, peers: [], iroh: [IROH] }],
+  'nfx.keep.list': [{}],
+  'nfx.keep.drop': [
+    { video: NFX_VIDEO, reason: 'watched' },
+    { video: NFX_VIDEO, reason: 'downloaded' },
+  ],
   'nfx.rtc.answer': [{ swarm: RTC_SWARM, offer: SDP }],
   'nfx.rtc.offer': [{ swarm: RTC_SWARM }],
   'nfx.rtc.accept': [{ peer: 1, answer: SDP }],
@@ -315,6 +352,29 @@ const RESULTS: { readonly [M in WorkerMethod]: readonly WorkerMethodTable[M][1][
   'nfx.play.close': [undefined],
   'nfx.play.stats': [{ sources: [] }, NFX_STATS],
   'nfx.play.addresses': [{ addresses: [] }, { addresses: NFX_ADDRESSES }],
+  'nfx.play.keep': [{ state: 'filling' }, { state: 'held' }, { state: 'whole' }],
+  'nfx.keep.resume': [undefined],
+  'nfx.keep.list': [
+    { videos: [] },
+    { videos: [KEPT_FILLING, KEPT_HELD] },
+    {
+      videos: [
+        { ...KEPT_FILLING, job: { state: 'waiting' } },
+        {
+          ...KEPT_HELD,
+          held: ['720p'],
+          filling: { rendition: '360p', done: 0, total: 12 },
+          job: { state: 'held' },
+        },
+        {
+          ...KEPT_FILLING,
+          video: `nfx:testnet:1:nutflix-${'e'.repeat(32)}`,
+          job: { state: 'failed', error: 'fetch' },
+        },
+      ],
+    },
+  ],
+  'nfx.keep.drop': [{ dropped: true }, { dropped: false }],
   'nfx.rtc.answer': [{ peer: 2, sdp: SDP }],
   'nfx.rtc.offer': [{ peer: 3, sdp: SDP }],
   'nfx.rtc.accept': [undefined],
@@ -501,6 +561,7 @@ const EVENTS: { readonly [E in WorkerEventName]: readonly Extract<WorkerEvent, {
     { op: 'ev', e: 'nfx.rtc.peer', peer: 9, swarm: RTC_SWARM, dir: 'out', open: false },
   ],
   'nfx.rtc.reset': [{ op: 'ev', e: 'nfx.rtc.reset' }],
+  'nfx.keep.changed': [{ op: 'ev', e: 'nfx.keep.changed', video: NFX_VIDEO }],
   log: [{ op: 'ev', e: 'log', level: 'warn', msg: 'peer banned' }],
 };
 
@@ -1277,5 +1338,81 @@ describe('pear #123: stats for nerds on the worker hop', () => {
       { addresses: [{ kind: 'hypercore', id: PUBKEY, address: 'x', path: 'direct' }] },
     ])
       expect(paid(viaJson(bad)), JSON.stringify(bad)).toBe(false);
+  });
+});
+
+describe('NFX-18: keeping (nfx.play.keep, nfx.keep.*)', () => {
+  it('refuses malformed keep, resume, list and drop args', () => {
+    for (const [m, a] of [
+      ['nfx.play.keep', { sid: SID }],
+      ['nfx.play.keep', { sid: 'short', reason: 'watched' }],
+      ['nfx.play.keep', { sid: SID, reason: 'seeded' }],
+      ['nfx.play.keep', { sid: SID, reason: 'watched', extra: 1 }],
+      ['nfx.keep.resume', { ...NFX_RESUME, peers: [] }],
+      ['nfx.keep.resume', { ...NFX_RESUME, video: 'nutflix:testnet:1:abcdefg' }],
+      ['nfx.keep.resume', { ...NFX_RESUME, root: 'EF'.repeat(32) }],
+      ['nfx.keep.resume', { ...NFX_RESUME, segs: 0 }],
+      ['nfx.keep.resume', { ...NFX_RESUME, segs: 1.5 }],
+      ['nfx.keep.resume', { ...NFX_RESUME, rendition: '' }],
+      ['nfx.keep.resume', { ...NFX_RESUME, rendition: 'r'.repeat(257) }],
+      ['nfx.keep.resume', { ...NFX_RESUME, peers: Array.from({ length: 17 }, () => ENDPOINT) }],
+      ['nfx.keep.resume', { ...NFX_RESUME, peers: [], iroh: [IROH, IROH] }],
+      ['nfx.keep.resume', { ...NFX_RESUME, iroh: [ENDPOINT] }],
+      ['nfx.keep.resume', { ...NFX_RESUME, prefetchSeconds: 30 }],
+      ['nfx.keep.list', { video: NFX_VIDEO }],
+      ['nfx.keep.list', null],
+      ['nfx.keep.drop', { video: NFX_VIDEO }],
+      ['nfx.keep.drop', { video: 'nfx:testnet:1:x', reason: 'watched' }],
+      ['nfx.keep.drop', { video: NFX_VIDEO, reason: 'all' }],
+    ] as const)
+      expect((validateWorkerArgs[m] as Guard<unknown>)(viaJson(a)), JSON.stringify(a)).toBe(false);
+  });
+
+  it('refuses a kept-video list a screen should not take', () => {
+    const list = validateWorkerResult['nfx.keep.list'];
+    const one = (over: object): unknown => ({ videos: [{ ...KEPT_FILLING, ...over }] });
+    for (const bad of [
+      one({ held: [], filling: null }),
+      one({ held: ['720p'] }),
+      one({ held: ['360p', '360p'] }),
+      one({ held: Array.from({ length: MAX_NFX_HELD_RENDITIONS + 1 }, (_, i) => `r${i}`) }),
+      one({ filling: { rendition: '720p', done: 13, total: 12 } }),
+      one({ filling: { rendition: '720p', done: 0, total: 0 } }),
+      one({ filling: { rendition: '720p', done: -1, total: 1 } }),
+      one({ filling: { rendition: '', done: 0, total: 1 } }),
+      one({ reasons: [] }),
+      one({ reasons: ['watched', 'watched'] }),
+      one({ reasons: ['seeded'] }),
+      one({ job: { state: 'done' } }),
+      one({ job: { state: 'failed' } }),
+      one({ job: { state: 'failed', error: 'oops' } }),
+      one({ job: { state: 'fetching', error: 'fetch' } }),
+      one({ segs: 0 }),
+      one({ root: 'EF'.repeat(32) }),
+      one({ video: 'nfx:testnet:1:x' }),
+      one({ extra: 1 }),
+      { videos: [KEPT_FILLING, KEPT_FILLING] },
+      { videos: {} },
+      [],
+    ])
+      expect(list(viaJson(bad)), JSON.stringify(bad)).toBe(false);
+    for (const [m, bad] of [
+      ['nfx.play.keep', { state: 'gone' }],
+      ['nfx.play.keep', {}],
+      ['nfx.keep.drop', { dropped: 1 }],
+      ['nfx.keep.drop', {}],
+      ['nfx.keep.resume', { ok: true }],
+    ] as const)
+      expect((validateWorkerResult[m] as Guard<unknown>)(viaJson(bad)), m).toBe(false);
+  });
+
+  it('nfx.keep.changed names one NFX video, and nothing else', () => {
+    const changed = validateWorkerEvent['nfx.keep.changed'];
+    for (const bad of [
+      { op: 'ev', e: 'nfx.keep.changed' },
+      { op: 'ev', e: 'nfx.keep.changed', video: 'nfx:testnet:1:x' },
+      { op: 'ev', e: 'nfx.keep.changed', video: NFX_VIDEO, state: 'held' },
+    ])
+      expect(changed(bad), JSON.stringify(bad)).toBe(false);
   });
 });

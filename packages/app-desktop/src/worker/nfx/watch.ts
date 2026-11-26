@@ -17,6 +17,12 @@
  *
  * `close` refuses every waiting read, closes the fetcher (its fetches and connections) and
  * deletes the spool.
+ *
+ * Keeping what is watched (NFX-18, plan P3): the session keeps the verified hash list, the
+ * rendition it plays and that rendition's playlist (`keepable`), counts the media its player has
+ * read (`mediaReadMs`: each segment read once, by its duration), and, when a keep asks for it
+ * (`keepOnClose`), hands the files it spooled whole to that keep at `close`, before the spool is
+ * deleted. A hand-over that fails is logged and never stops the close.
  */
 import type { PlaySourceAddress, PlaySourceStat } from '@sovit/core';
 import { media, nfx } from '@sovit/core';
@@ -121,6 +127,23 @@ export interface NfxWatchOpened {
   readonly layout: nfx.ProgressiveLayout;
 }
 
+/** What a keep of the rendition played needs from the session (NFX-18), once `open` answered. */
+export interface NfxWatchKeepable {
+  /** The hash list, verified against the manifest `root`. */
+  readonly hashListBytes: Uint8Array;
+  /** The rendition served, its playlist's sha256 and its playlist (checked by the transport). */
+  readonly rendition: string;
+  readonly playlistSha: string;
+  readonly playlistBytes: Uint8Array;
+}
+
+/** The files a session spooled whole, as `close` hands them to a keep (NFX-18). */
+export interface NfxSpool {
+  readonly shas: readonly string[];
+  /** File `sha` as spooled; `null` when it cannot be read. Never checked here: the store does. */
+  read(sha: string): Promise<Uint8Array | null>;
+}
+
 type SegmentState = 'pending' | 'fetching' | 'ready';
 
 interface Waiter {
@@ -172,7 +195,16 @@ export class NfxWatchSession {
   private readonly fetching = new Map<string, Promise<Uint8Array>>();
   /** Spool writes by sha; `close` waits for them before deleting the directory. */
   private readonly spooled = new Map<string, Promise<void>>();
+  /** The spool writes that completed: the files a keep may take. */
+  private readonly written = new Set<string>();
   private dirReady: Promise<void> | null = null;
+  /** NFX-18: set once `open` answered. */
+  private kept: NfxWatchKeepable | null = null;
+  /** NFX-18: the segments the player has read, and their media time in all (ms). */
+  private readonly readSegments = new Set<number>();
+  private readMs = 0;
+  /** NFX-18: takes the spooled files at `close`, before the spool goes. */
+  private handOver: ((spool: NfxSpool) => Promise<void>) | null = null;
   private inFlight = 0;
   /** The segment the player read last. */
   private cursor = 0;
@@ -225,6 +257,33 @@ export class NfxWatchSession {
   addresses(): Promise<readonly PlaySourceAddress[]> {
     if (this.isClosed() || this.o.fetcher.addresses === undefined) return Promise.resolve([]);
     return this.o.fetcher.addresses();
+  }
+
+  /** NFX-18: what a keep of this play needs; `null` until `open` answered. */
+  get keepable(): NfxWatchKeepable | null {
+    return this.kept;
+  }
+
+  /** NFX-18: the media the player has read (ms): each segment read counted once, by duration. */
+  get mediaReadMs(): number {
+    return this.readMs;
+  }
+
+  /** NFX-18: file `sha` if this session spooled it whole and is still open; else `null`. */
+  spooledFile(sha: string): Promise<Uint8Array | null> {
+    if (this.closing !== null) return Promise.resolve(null);
+    return this.readSpooled(sha);
+  }
+
+  /**
+   * NFX-18: at `close`, hand the files spooled whole to `take` before the spool is deleted (a
+   * later call replaces an earlier one). `false` when the session is already closing: nothing
+   * will be handed over.
+   */
+  keepOnClose(take: (spool: NfxSpool) => Promise<void>): boolean {
+    if (this.closing !== null) return false;
+    this.handOver = take;
+    return true;
   }
 
   /** Fetch, verify, plan and spool up to segment 0. Throws `<code>: …` errors. */
@@ -320,6 +379,12 @@ export class NfxWatchSession {
       this.segmentOf.set(p.part, i);
     });
     this.state = 'open';
+    this.kept = {
+      hashListBytes: listBytes,
+      rendition: chosen.id,
+      playlistSha: playlist.sha256,
+      playlistBytes,
+    };
     this.pump();
     return { rendition: chosen.id, renditions: shown(renditions, chosen), layout: plan.layout };
   }
@@ -345,10 +410,14 @@ export class NfxWatchSession {
         ? (await this.o.fs.readFile(path)).subarray(offset, offset + piece.length)
         : await this.o.fs.readRange(path, offset, piece.length);
     if (bytes.byteLength !== piece.length) throw new Error('nfx: a short read from the spool');
+    if (i !== undefined) this.countRead(i);
     return bytes;
   }
 
-  /** Stop for good: waiting reads are refused, fetches abandoned, the spool deleted. */
+  /**
+   * Stop for good: waiting reads are refused, fetches abandoned, the spooled files handed to a
+   * keep that asked for them (NFX-18), the spool deleted.
+   */
   close(): Promise<void> {
     this.closing ??= (async () => {
       this.state = 'closed';
@@ -356,6 +425,7 @@ export class NfxWatchSession {
       await this.o.fetcher.close().catch(() => undefined);
       // A write that started before the close lands first, so nothing is left behind.
       await Promise.allSettled([...this.spooled.values()]);
+      await this.handSpoolOver();
       try {
         await this.o.rmTree(this.o.dir);
       } catch (err) {
@@ -363,6 +433,35 @@ export class NfxWatchSession {
       }
     })();
     return this.closing;
+  }
+
+  /** NFX-18: the spooled files to the keep that asked, if any. Never throws. */
+  private async handSpoolOver(): Promise<void> {
+    const take = this.handOver;
+    this.handOver = null;
+    if (take === null) return;
+    try {
+      await take({ shas: [...this.written], read: (sha) => this.readSpooled(sha) });
+    } catch (err) {
+      this.o.logger.warn('nfx: a play spool could not be handed to its keep', { error: err });
+    }
+  }
+
+  /** A file of the spool whose write completed; `null` when it cannot be read. */
+  private async readSpooled(sha: string): Promise<Uint8Array | null> {
+    if (!this.written.has(sha)) return null;
+    try {
+      return await this.o.fs.readFile(this.o.fs.join(this.o.dir, sha));
+    } catch {
+      return null;
+    }
+  }
+
+  /** NFX-18: the player read segment `i`; its media time counts once. */
+  private countRead(i: number): void {
+    if (this.readSegments.has(i)) return;
+    this.readSegments.add(i);
+    this.readMs += this.plan?.segments[i]?.durMs ?? 0;
   }
 
   // ------------------------------------------------------------------ fetching
@@ -472,7 +571,11 @@ export class NfxWatchSession {
     let p = this.spooled.get(sha);
     if (p === undefined) {
       this.dirReady ??= this.o.fs.mkdir(this.o.dir, { recursive: true });
-      p = this.dirReady.then(() => this.o.fs.writeFile(this.o.fs.join(this.o.dir, sha), bytes));
+      p = this.dirReady
+        .then(() => this.o.fs.writeFile(this.o.fs.join(this.o.dir, sha), bytes))
+        .then(() => {
+          this.written.add(sha);
+        });
       this.spooled.set(sha, p);
     }
     return p;
