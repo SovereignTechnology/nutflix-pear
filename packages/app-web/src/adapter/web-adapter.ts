@@ -236,12 +236,12 @@ export class WebNetworkAdapter implements NetworkAdapter {
 
   /** Every relay the catalog reads (scoped and read) failed its last connection attempt. */
   #noRelayReached(): boolean {
-    const unreachable = this.#o.pool.unreachable;
-    if (unreachable === undefined) return false;
+    const pool = this.#o.pool;
+    if (pool.unreachable === undefined) return false;
     const all = [
       ...new Set([...(this.#settings().nfx?.scopedRelays ?? []), ...this.#nostr().readRelays]),
     ];
-    return all.length > 0 && unreachable.call(this.#o.pool, all).length === all.length;
+    return all.length > 0 && pool.unreachable(all).length === all.length;
   }
 
   /** A relay read: `relay-down` when there is no relay to ask or none answered. */

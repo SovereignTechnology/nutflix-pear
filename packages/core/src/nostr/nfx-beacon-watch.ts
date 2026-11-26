@@ -201,7 +201,8 @@ export class NfxBeaconWatch {
     const start = (relay: RelayUrl, attempt: number): void => {
       if (stopped || this.closed) return;
       let heard = false;
-      let closed = false;
+      // An object, not a `let`: the close may be reported before `subscribe` returns.
+      const ended = { closed: false };
       const un = this.d.subscribe(
         filter,
         [relay],
@@ -210,8 +211,8 @@ export class NfxBeaconWatch {
           this.add(w, ev);
         },
         () => {
-          if (closed || stopped || this.closed) return;
-          closed = true;
+          if (ended.closed || stopped || this.closed) return;
+          ended.closed = true;
           // Release what is left of it (a no-op on a pool that already closed it).
           const own = subs.get(relay);
           subs.delete(relay);
@@ -229,7 +230,7 @@ export class NfxBeaconWatch {
           pending.add(h);
         },
       );
-      if (closed) un();
+      if (ended.closed) un();
       else subs.set(relay, un);
     };
     for (const relay of new Set(relays)) start(relay, 0);

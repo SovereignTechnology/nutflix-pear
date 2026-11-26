@@ -206,8 +206,9 @@ export class NfxCatalog implements NfxSource {
     const [scoped, fallback] = got;
     if (scoped?.ok === true && fallback?.ok === true) return merge(scoped.value, fallback.value);
     if (scoped?.ok === true) {
-      if (fallback === undefined || hasAny(scoped.value)) return scoped.value;
-      throw fallback.error;
+      // An empty scoped answer beside a failed read is the read relays' error, not "nothing".
+      if (fallback?.ok === false && !hasAny(scoped.value)) throw fallback.error;
+      return scoped.value;
     }
     if (fallback?.ok === true) return fallback.value;
     // Both failed (a side still pending here had to be the one that answered `enough`).

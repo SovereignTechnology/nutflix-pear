@@ -299,7 +299,7 @@ describe('search routed by NIP-50 support', () => {
     ).toBe(true);
   });
 
-  describe('a scoped relay that lists NIP-50 is searched first (ADR 0020, 2026-11-19)', () => {
+  describe('a scoped relay that lists NIP-50 is searched with the read relays at once (ADR 0026)', () => {
     const scopedFirst = (
       r: ReturnType<typeof relays>,
       supports: (relay: RelayUrl) => Promise<boolean>,
@@ -311,7 +311,7 @@ describe('search routed by NIP-50 support', () => {
         { searchSupport: supports },
       );
 
-    it('with `search`; a full page there asks no read relay, nor their NIP-11', async () => {
+    it('with `search`; a full scoped page still takes a newer match from the read relays', async () => {
       const r = relays([SEARCHING, STOCK, SCOPED]);
       const creator = new TestSigner();
       for (let i = 0; i < 20; i++)
@@ -325,10 +325,20 @@ describe('search routed by NIP-50 support', () => {
       const page = await scopedFirst(r, supports).search({ text: 'lagrange' });
       expect(page.items).toHaveLength(20);
       expect(page.next).toBeDefined();
-      expect(supports.mock.calls.map(([u]) => u)).toEqual([SCOPED]);
-      expect(r.asked.every((a) => a.relay === SCOPED)).toBe(true);
+      expect(page.items[0]?.title).toBe('Lagrange elsewhere');
+      expect(supports.mock.calls.map(([u]) => u)).toEqual(
+        expect.arrayContaining([SCOPED, SEARCHING]),
+      );
       const manifests = r.asked.filter((a) => a.filter.kinds?.includes(38504) === true);
-      expect(manifests.every((a) => a.filter.search === 'lagrange')).toBe(true);
+      expect(
+        manifests
+          .filter((a) => a.relay === SCOPED || a.relay === SEARCHING)
+          .every((a) => a.filter.search === 'lagrange'),
+      ).toBe(true);
+      expect(manifests.some((a) => a.relay === SEARCHING)).toBe(true);
+      expect(
+        manifests.filter((a) => a.relay === STOCK).every((a) => a.filter.search === undefined),
+      ).toBe(true);
     });
 
     it('a short page is merged with the read relays’ search: one per address, the newest revision, the scoped copy on a tie', async () => {

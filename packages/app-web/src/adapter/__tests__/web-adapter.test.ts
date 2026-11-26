@@ -698,8 +698,8 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     expect((await r.adapter.feed(q)).items).toEqual([]);
     // Unreachable, but a relay still answered with videos: they are shown.
     down.add(READ_A);
-    put(r.relays, [SCOPED], manifest(creator, 'kept'));
-    expect((await r.adapter.feed(q)).items.map((v) => v.title)).toEqual(['kept']);
+    put(r.relays, [SCOPED], manifest(creator, 'kept-video'));
+    expect((await r.adapter.feed(q)).items.map((v) => v.title)).toEqual(['kept-video']);
   });
 
   it('beacons are read from the read relays when there is no scoped relay', async () => {
