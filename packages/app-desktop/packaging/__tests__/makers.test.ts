@@ -21,11 +21,12 @@ import { join } from 'node:path';
 import type { MakerOptions } from '@electron-forge/maker-base';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { FreedesktopError } from '../freedesktop.ts';
 import {
   APPIMAGE_RUNTIMES,
   AppImageError,
   MakerAppImage,
-  desktopEntry,
+  appImageDesktopEntry,
   mksquashfsArgs,
   pinnedRuntime,
 } from '../maker-appimage.ts';
@@ -62,26 +63,19 @@ describe('pinnedRuntime', () => {
   });
 });
 
-describe('desktopEntry / mksquashfsArgs', () => {
-  const c = {
-    productName: 'Nutflix',
-    executableName: 'nutflix',
-    comment: 'P2P video',
-    categories: ['AudioVideo', 'Video'],
-    version: '0.1.0',
-    icon: false,
-  };
-  it('runs the binary itself: no wrapper, no sandbox switch', () => {
-    const d = desktopEntry(c);
+describe('appImageDesktopEntry / mksquashfsArgs', () => {
+  it('runs the binary itself: no wrapper, no sandbox switch; named and classed by the app id', () => {
+    const d = appImageDesktopEntry('0.1.0');
     expect(d).toContain('Exec=nutflix %U\n');
     expect(d).not.toMatch(/no-sandbox|disable-setuid|--/);
-    expect(d).not.toContain('Icon=');
-    expect(desktopEntry({ ...c, icon: true })).toContain('Icon=nutflix\n');
-    expect(d).toContain('Categories=AudioVideo;Video;\n');
+    expect(d).toContain('Icon=pro.sovtech.Nutflix\n');
+    expect(d).toContain('StartupWMClass=pro.sovtech.Nutflix\n');
+    expect(d).toContain('Categories=AudioVideo;Video;Network;\n');
+    expect(d.endsWith('X-AppImage-Version=0.1.0\n')).toBe(true);
   });
 
   it('refuses a value that would inject a line', () => {
-    expect(() => desktopEntry({ ...c, comment: 'x\nExec=evil' })).toThrow(AppImageError);
+    expect(() => appImageDesktopEntry('0.1.0\nExec=evil')).toThrow(FreedesktopError);
   });
 
   it('squashes root-owned, without xattrs, with fixed times when SOURCE_DATE_EPOCH is set', () => {
@@ -116,12 +110,13 @@ async function makeFixtureAppImage(): Promise<{ out: string; runtime: Buffer; ma
   chmodSync(join(app, 'nutflix'), 0o755);
   writeFileSync(join(app, 'resources', 'app.asar'), 'asar');
   writeFileSync(join(app, 'resources', 'app.asar.unpacked', 'worker', 'boot.mjs'), 'x');
+  writeFileSync(join(root, 'icon.png'), 'png');
+  chmodSync(join(root, 'icon.png'), 0o664);
   const maker = new MakerAppImage({
     runtimeDir: root,
     executableName: 'nutflix',
     productName: 'Nutflix',
-    comment: 'P2P video',
-    categories: ['AudioVideo'],
+    freedesktop: { metainfo: '<component/>\n', icon: join(root, 'icon.png') },
     runtimes: {
       x64: { asset: 'rt', sha256: createHash('sha256').update(runtime).digest('hex') },
     },
@@ -191,7 +186,20 @@ describe('MakerAppImage.make (fixture runtime, real mksquashfs)', () => {
       expect(list.stdout).toMatch(
         /-rwxr-xr-x root\/root .* squashfs-root\/usr\/lib\/nutflix\/nutflix\n/,
       );
-      expect(list.stdout).toContain('squashfs-root/nutflix.desktop');
+      // The desktop entry, the metainfo and the icon, named after the app id (freedesktop.ts),
+      // where the AppImage spec puts them and where integration tools look; files 0644.
+      for (const f of [
+        'pro.sovtech.Nutflix.desktop',
+        'pro.sovtech.Nutflix.png',
+        'usr/share/applications/pro.sovtech.Nutflix.desktop',
+        'usr/share/metainfo/pro.sovtech.Nutflix.metainfo.xml',
+        'usr/share/icons/hicolor/512x512/apps/pro.sovtech.Nutflix.png',
+      ])
+        expect(list.stdout).toMatch(new RegExp(`-rw-r--r-- root/root .* squashfs-root/${f}\n`));
+      expect(list.stdout).toMatch(
+        /lrwxrwxrwx root\/root .* squashfs-root\/\.DirIcon -> pro\.sovtech\.Nutflix\.png/,
+      );
+      expect(list.stdout).not.toContain('squashfs-root/nutflix.desktop');
       expect(list.stdout).toContain(
         'squashfs-root/usr/lib/nutflix/resources/app.asar.unpacked/worker/boot.mjs',
       );
@@ -205,8 +213,7 @@ describe('MakerAppImage.make (fixture runtime, real mksquashfs)', () => {
       runtimeDir: root,
       executableName: 'nutflix',
       productName: 'Nutflix',
-      comment: 'x',
-      categories: [],
+      freedesktop: { metainfo: '', icon: join(root, 'icon.png') },
     });
     await maker.prepareConfig('x64');
     await expect(

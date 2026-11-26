@@ -193,6 +193,7 @@ describe('stageApp', () => {
     expect(Object.keys(pj).sort()).toEqual([
       'author',
       'description',
+      'desktopName',
       'devDependencies',
       'license',
       'main',
@@ -206,6 +207,9 @@ describe('stageApp', () => {
       productName: 'Nutflix',
       main: 'main/main.js',
       type: 'module',
+      // The Wayland app_id and WM_CLASS Electron sets: the desktop-file id every Linux package
+      // installs (ADR 0017, amendment 2026-11-26).
+      desktopName: 'pro.sovtech.Nutflix.desktop',
     });
     expect(pj['devDependencies']).toEqual({ electron });
   });

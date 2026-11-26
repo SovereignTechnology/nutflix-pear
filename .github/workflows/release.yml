@@ -1,8 +1,11 @@
-# Desktop release (ADR 0017; Cameron, 2026-10-02): Linux only for 0.1.0 (`.deb` + AppImage),
-# not signed by the OS. Integrity rests on SHA256SUMS and the kind 30071 notice that Cameron
-# signs with the SovTech key (through Bunker46), outside this workflow. Ported from the
-# inactive packages/app-desktop/packaging/ci/release.gitlab-ci.yml, which keeps the Windows and
-# macOS jobs for later.
+# Desktop release (ADR 0017; Cameron, 2026-10-02): Linux only (`.deb` + AppImage since 0.1.0;
+# the `.rpm` and arm64 since the 2026-11-26 amendment), not signed by the OS. Integrity rests on
+# SHA256SUMS and the kind 30071 notice that Cameron signs with the SovTech key (through Bunker46),
+# outside this workflow. Ported from the inactive packages/app-desktop/packaging/ci/
+# release.gitlab-ci.yml, which keeps the Windows and macOS jobs for later.
+#
+# Each arch builds natively on its own runner (x64 on ubuntu-24.04, arm64 on ubuntu-24.04-arm):
+# the iroh helper is compiled for the runner's own arch, never cross-compiled.
 #
 #   push a `desktop-v<version>` tag   build, manifest, then a DRAFT GitHub release (not public:
 #                                      Cameron publishes it once the notice is signed)
@@ -34,13 +37,32 @@ permissions:
 
 jobs:
   desktop-linux:
-    runs-on: ubuntu-24.04
+    name: desktop-linux (${{ matrix.arch }})
+    strategy:
+      # One arch failing fails the release: the manifest needs both.
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            appimage-runtime: runtime-x86_64
+            appimage-runtime-sha256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            appimage-runtime: runtime-aarch64
+            appimage-runtime-sha256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
       # crates/iroh-helper/rust-toolchain.toml's channel, as ci.yml's iroh-helper job (checked).
       RUST_VERSION: '1.98.0'
       CARGO_TERM_COLOR: never
       CARGO_INCREMENTAL: '0'
+      # From the matrix above, read in the steps as environment variables, never expanded into
+      # a script.
+      ARCH: ${{ matrix.arch }}
+      APPIMAGE_RUNTIME: ${{ matrix.appimage-runtime }}
+      APPIMAGE_RUNTIME_SHA256: ${{ matrix.appimage-runtime-sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,8 +84,9 @@ jobs:
             exit 1
           fi
       # Slice 5e-5 (ADR 0021): the iroh helper the app ships, built here from this commit with
-      # the pinned toolchain and its Cargo.lock (never a cache: a release builds clean), and
-      # staged by `make --iroh-helper`, which checks it is an x64 ELF.
+      # the pinned toolchain and its Cargo.lock (never a cache: a release builds clean), natively
+      # for the runner's arch, and staged by `make --iroh-helper`, which checks it is an ELF for
+      # the arch being made (x86-64 or aarch64).
       - name: the iroh helper (pinned toolchain, release, --locked)
         run: |
           set -euo pipefail
@@ -75,33 +98,35 @@ jobs:
       # Not pinned (the runner's apt), so the build log records them: a dispatch build and the
       # tag's build of one commit must make the same bytes, and a tool that moved between them is
       # the first thing to compare.
-      - name: system packages (dpkg's fakeroot, mksquashfs for the AppImage)
+      - name: system packages (dpkg's fakeroot, rpmbuild, mksquashfs for the AppImage)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fakeroot squashfs-tools
-          dpkg-query -W fakeroot squashfs-tools dpkg
-          echo "runner image: ${ImageOS:-?} ${ImageVersion:-?}"
+          sudo apt-get install -y --no-install-recommends fakeroot rpm squashfs-tools
+          dpkg-query -W fakeroot rpm squashfs-tools dpkg
+          echo "runner image: ${ImageOS:-?} ${ImageVersion:-?} $(uname -m)"
       - run: npm ci --ignore-scripts
       - run: npm run build
       # Not an npm package: the pinned dated release. Checked here for a clear error; the maker
       # (packaging/maker-appimage.ts) refuses any other bytes as well.
       - name: the pinned AppImage runtime
         run: |
+          set -euo pipefail
           mkdir -p packages/app-desktop/out/appimage-runtime
-          curl -fsSLo packages/app-desktop/out/appimage-runtime/runtime-x86_64 \
-            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
-          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  packages/app-desktop/out/appimage-runtime/runtime-x86_64' \
+          curl -fsSLo "packages/app-desktop/out/appimage-runtime/$APPIMAGE_RUNTIME" \
+            "https://github.com/AppImage/type2-runtime/releases/download/20251108/$APPIMAGE_RUNTIME"
+          echo "$APPIMAGE_RUNTIME_SHA256  packages/app-desktop/out/appimage-runtime/$APPIMAGE_RUNTIME" \
             | sha256sum -c -
-      # Fixed timestamps (the .deb and the squashfs) from the commit. The release event's
+      # Fixed timestamps (the .deb, the .rpm and the squashfs) from the commit. The release event's
       # created_at does not come from here: it is when the manifest is made.
-      - name: make (.deb, AppImage)
+      - name: make (.deb, .rpm, AppImage)
         run: |
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
-          npm run -w packages/app-desktop make -- --platform linux --arch x64 --targets deb,appimage \
+          npm run -w packages/app-desktop make -- --platform linux --arch "$ARCH" --targets deb,rpm,appimage \
             --iroh-helper "$GITHUB_WORKSPACE/crates/iroh-helper/target/release/nutflix-iroh-helper"
+          find packages/app-desktop/out/make -path "*/$ARCH/*" -type f -exec sha256sum {} +
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-linux-x64
+          name: desktop-linux-${{ matrix.arch }}
           path: packages/app-desktop/out/make/
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'push' && 90 || 7 }}
@@ -124,21 +149,27 @@ jobs:
           # field added later cannot turn setup-node's automatic cache on.
           package-manager-cache: false
       - run: npm ci --ignore-scripts
+      # Both arches' out/make/ trees into one: their paths never overlap (`<maker>/<arch>/…` and
+      # `linux-<arch>.artifacts.json`).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: desktop-linux-x64
+          pattern: desktop-linux-*
+          merge-multiple: true
           path: packages/app-desktop/out/make/
       - name: SHA256SUMS, release-manifest.json, the unsigned event
         run: >-
           node scripts/release-manifest.mjs
           --made packages/app-desktop/out/make/linux-x64.artifacts.json
+          --made packages/app-desktop/out/make/linux-arm64.artifacts.json
           --commit "$GITHUB_SHA"
+      - run: cat packages/app-desktop/out/release/SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-release
           path: |
-            packages/app-desktop/out/make/deb/x64/*.deb
-            packages/app-desktop/out/make/appimage/x64/*.AppImage
+            packages/app-desktop/out/make/deb/*/*.deb
+            packages/app-desktop/out/make/rpm/*/*.rpm
+            packages/app-desktop/out/make/appimage/*/*.AppImage
             packages/app-desktop/out/release/
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'push' && 90 || 7 }}
@@ -170,8 +201,9 @@ jobs:
           sed "s/<version>/$v/g" packages/app-desktop/packaging/ci/release-notes.md > notes.md
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
             --title "Nutflix desktop $v" --notes-file notes.md \
-            release-files/make/deb/x64/*.deb \
-            release-files/make/appimage/x64/*.AppImage \
+            release-files/make/deb/*/*.deb \
+            release-files/make/rpm/*/*.rpm \
+            release-files/make/appimage/*/*.AppImage \
             release-files/release/SHA256SUMS \
             release-files/release/release-manifest.json \
             release-files/release/release-event.unsigned.json

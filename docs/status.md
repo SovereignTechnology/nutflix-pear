@@ -60,7 +60,8 @@ Lightning backend; they are opt-in and not part of CI.
 In no order of priority, and not scheduled:
 
 - The problems listed under the README's known limitations, starting with the playback gate.
-- Windows, macOS and arm64 builds, and a way to update the app.
+- Windows and macOS builds, and a way to update the app. Linux arm64 builds and an `.rpm` are
+  configured but not yet released ([ADR 0017](decisions/0017-packaging.md), amended 2026-11-26).
 - The web client for NFX videos at web.nutflix.xyz, in `packages/app-web` (see
   [ADR 0022](decisions/0022-a-web-client-for-nfx.md)).
 - Open issue: [free (zero-price) videos](https://github.com/SovereignTechnology/nutflix-pear/issues/15).

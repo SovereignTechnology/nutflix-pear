@@ -7,6 +7,27 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- **An `.rpm` and arm64 builds** (ADR 0017, amended 2026-11-26). Each release now carries the
+  `.deb`, an `.rpm` (`nutflix-<version>-1.x86_64.rpm`, for Fedora, openSUSE and other rpm-based
+  distributions) and the AppImage, for x86_64 and for 64-bit ARM (`arm64` / `aarch64`), all
+  covered by `SHA256SUMS` and the signed notice. The `.rpm` installs the same setuid sandbox
+  helper as the `.deb`, with no install scripts, and recommends ffmpeg.
+- **AppStream metadata.** Every Linux package installs `pro.sovtech.Nutflix.metainfo.xml`, so
+  software centres can list the app with its description, licence and releases.
+- **Studio finds ffmpeg in `/app/bin`** as well, after `PATH`: where a Flatpak build would ship it.
+
+### Changed
+
+- **The app id is `pro.sovtech.Nutflix`** (was `xyz.sovit.nutflix`), and the packages'
+  maintainer is `SovTech <git@sovtech.pro>` (was `git@sovit.xyz`). The desktop entry and icon are
+  now `pro.sovtech.Nutflix.desktop` and a hicolor icon of the same name, replacing
+  `nutflix.desktop` and `/usr/share/pixmaps/nutflix.png`: a launcher or dock pinned to the old
+  entry needs pinning again after the upgrade. The app's windows now carry the same id (Wayland
+  app_id and X11 `WM_CLASS`), so the desktop matches them to their entry. Your data stays where it
+  was (`~/.config/Nutflix`).
+
 ## [0.1.4] - 2026-11-26
 
 A local key can be created in the desktop app at last, stats for nerds in every player, free
