@@ -956,8 +956,7 @@ export class NfxStore {
         own.push({ sha256: f.sha256, size: Number(f.size) });
     }
     let newBytes = 0;
-    for (const [sha, size] of sizes)
-      if (!this.sizes.has(sha) && !this.cleanupBytes.has(sha)) newBytes += size;
+    for (const [sha, size] of sizes) newBytes += this.newCharge(sha, size);
     const reservation = this.cap === null ? null : this.cap.reserve(newBytes);
     if (this.cap !== null && reservation === null)
       return fail('disk-cap', 'keeping the rendition would exceed the disk cap');
@@ -1078,8 +1077,9 @@ export class NfxStore {
       await this.unlinkQuietly(this.filePath(sha));
       await this.unlinkQuietly(this.partPath(sha));
       this.present.delete(sha);
-      this.cleanupBytes.delete(sha); // one charge, freed here
-      this.cap?.free(size);
+      // One charge, freed here (evaluated even with no cap: it clears the cleanup entry).
+      const freed = size + this.endCleanupCharge(sha, size);
+      this.cap?.free(freed);
     }
     await this.persistKept().catch(() => undefined);
   }
@@ -1165,8 +1165,7 @@ export class NfxStore {
         return fail('invalid', `${f.name} is listed at another size than its hash has`);
     }
     let newBytes = 0;
-    for (const [sha, { size }] of listed)
-      if (!this.sizes.has(sha) && !this.cleanupBytes.has(sha)) newBytes += size;
+    for (const [sha, { size }] of listed) newBytes += this.newCharge(sha, size);
     const reservation = this.cap === null ? null : this.cap.reserve(newBytes);
     if (this.cap !== null && reservation === null) {
       return fail('disk-cap', 'storing the video would exceed the disk cap');
@@ -1253,8 +1252,9 @@ export class NfxStore {
       if (this.sizes.has(sha)) continue;
       await this.unlinkQuietly(this.filePath(sha));
       this.present.delete(sha);
-      this.cleanupBytes.delete(sha); // one charge, freed here
-      this.cap?.free(size);
+      // One charge, freed here (evaluated even with no cap: it clears the cleanup entry).
+      const freed = size + this.endCleanupCharge(sha, size);
+      this.cap?.free(freed);
     }
     // Not saved: the disk already agrees with memory, and the next load drops the record.
     await this.persist().catch(() => undefined);
@@ -1370,6 +1370,26 @@ export class NfxStore {
     }
   }
 
+  /**
+   * Bytes a file of `size` adds to the cap: none while a record names it; for a journaled
+   * cleanup file, what its charge lacks (restored from disk at load, it may be truncated).
+   */
+  private newCharge(sha: string, size: number): number {
+    if (this.sizes.has(sha)) return 0;
+    const charged = this.cleanupBytes.get(sha);
+    return charged === undefined ? size : Math.max(0, size - charged);
+  }
+
+  /**
+   * Ends `sha`'s cleanup charge, now carried by a record's `size` (with `newCharge`'s top-up).
+   * Returns what it held beyond `size`, which nothing else would free.
+   */
+  private endCleanupCharge(sha: string, size: number): number {
+    const charged = this.cleanupBytes.get(sha);
+    this.cleanupBytes.delete(sha);
+    return charged === undefined ? 0 : Math.max(0, charged - size);
+  }
+
   /** Keep failed deletions in the journal so a flush or restart can retry them. */
   private async cleanAbandonedFiles(): Promise<boolean> {
     const fs = this.o.fs;
@@ -1381,9 +1401,12 @@ export class NfxStore {
             if ((await fs.stat(path)) !== null) await fs.unlink(path);
           const bytes = this.cleanupBytes.get(sha);
           if (bytes !== undefined) this.cap?.free(bytes);
+          this.cleanupBytes.delete(sha);
+        } else {
+          // Named again: that record's charge carries it now; free only what it held beyond.
+          const excess = this.endCleanupCharge(sha, this.sizes.get(sha) ?? 0);
+          if (excess > 0) this.cap?.free(excess);
         }
-        // Gone, or named again (its charge is then that record's).
-        this.cleanupBytes.delete(sha);
         this.keepCleanup.delete(sha);
         changed = true;
       } catch {
