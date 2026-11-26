@@ -282,7 +282,15 @@ export class Host {
       const result = await handler(file === undefined ? { wc } : { wc, file }, msg.args);
       reply({ v: IPC_V, id: msg.id, ok: true, result: dehydrate(result) });
     } catch (e) {
-      reply({ v: IPC_V, id: msg.id, ok: false, error: toWireError(e) });
+      const error = toWireError(e);
+      // `internal` tells the renderer nothing, by design. The method and the error's code prefix
+      // or class name (never its message) go to the log, so the failure can be traced.
+      if (error.code === 'internal')
+        this.log.error('a call failed with an internal error', {
+          method: msg.method,
+          reason: reasonOf(e),
+        });
+      reply({ v: IPC_V, id: msg.id, ok: false, error });
     } finally {
       const left = (this.inflight.get(wc) ?? 1) - 1;
       if (left <= 0) this.inflight.delete(wc);
@@ -341,6 +349,16 @@ export class Host {
 }
 
 /**
+ * What an error may be called in a log line: its code prefix (`wallet-unreadable`, `relay-down`,
+ * …) or, without one, its class name (`TypeError`). Never the message: no key, proof or path.
+ */
+function reasonOf(e: unknown): string {
+  if (!(e instanceof Error)) return 'unknown';
+  const reason = /^[a-z-]+(?=:)/.exec(e.message)?.[0] ?? e.name;
+  return reason.length <= 40 ? reason : 'unknown';
+}
+
+/**
  * Builds and starts the host: settings + desktop config from userData, the relay pool, the
  * wallet provider, images, the adapter, and the supervised worker (spawned immediately).
  */
@@ -354,6 +372,9 @@ export async function createHost(o: HostOptions): Promise<Host> {
     throw new HostArgsError('--dev-bootstrap is refused without --dev-mocks');
   if (flags.devMocks)
     log.warn('DEV MOCKS ON: fake sats, fixture viewer identity (never in production)');
+  // Electron refuses libsodium's guarded allocator, so here this reads `false`: keys are then in
+  // ordinary process memory, wiped on lock (core `signer/secure.ts`, SECURITY.md T14).
+  log.info('key memory', { guarded: signerMod.hasSecureMemory() });
   const settings = new SettingsStore(o.userData, log);
   await settings.load();
   const desktop = await loadDesktopConfig(o.userData, log.child('desktop'));
@@ -517,9 +538,7 @@ export async function createHost(o: HostOptions): Promise<Host> {
     try {
       fixedMoney = await openMoney(injected, false);
     } catch (err) {
-      // The code prefix only (`wallet-unreadable`, `relay-down`, …): never a key or a proof.
-      const reason =
-        err instanceof Error ? (/^[a-z-]+(?=:)/.exec(err.message)?.[0] ?? err.name) : 'unknown';
+      const reason = reasonOf(err);
       fixedMoneyError = reason;
       log.error('the wallet could not be opened: payments stay unavailable', { reason });
     }
