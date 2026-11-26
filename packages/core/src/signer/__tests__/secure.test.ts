@@ -13,14 +13,19 @@
  * The fallback is Electron's alone: on Node a failing `sodium_malloc` stays an error.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getPublicKey } from 'nostr-tools/pure';
+import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import type sodium from 'sodium-universal';
 
 type Sodium = typeof sodium;
 
 const enc = new TextEncoder();
-const SK = new Uint8Array(32).fill(7);
+// Made at run time: no key or passphrase is committed, even a throwaway one.
+const SK = generateSecretKey();
+const SK_BYTES = Array.from(SK);
 const PUB = getPublicKey(SK);
+const phrase = (): string => Array.from(generateSecretKey(), (b) => b.toString(16)).join('');
+const RIGHT = phrase();
+const WRONG = `${phrase()}x`;
 
 function nameRuntimeElectron(): void {
   Object.defineProperty(process.versions, 'electron', {
@@ -120,11 +125,11 @@ describe.each(REFUSALS)('secure memory in Electron, where sodium_malloc %s', (_n
     expect(secureAlloc(0).length).toBe(0);
 
     const c = secureCopy(SK);
-    expect(Array.from(c)).toEqual(Array.from(SK));
+    expect(Array.from(c)).toEqual(SK_BYTES);
     expect(c.buffer).not.toBe(SK.buffer);
     wipe(c);
     expect(c.every((x) => x === 0)).toBe(true);
-    expect(SK.every((x) => x === 7)).toBe(true);
+    expect(Array.from(SK)).toEqual(SK_BYTES);
 
     for (let i = 0; i < 20; i++) secureAlloc(64);
     // Each failed sodium_malloc leaves its guarded pages allocated: the probe runs once.
@@ -138,14 +143,12 @@ describe.each(REFUSALS)('secure memory in Electron, where sodium_malloc %s', (_n
     const file = await sealKeyFile({
       secretKey: SK,
       pubkey: PUB,
-      passphrase: enc.encode('correct horse battery staple'),
+      passphrase: enc.encode(RIGHT),
       cost: minimumCost(),
     });
-    const opened = await openKeyFile(file, enc.encode('correct horse battery staple'));
-    expect(Array.from(opened.secretKey)).toEqual(Array.from(SK));
-    await expect(openKeyFile(file, enc.encode('wrong horse battery staple'))).rejects.toThrow(
-      /^bad-passphrase/,
-    );
+    const opened = await openKeyFile(file, enc.encode(RIGHT));
+    expect(Array.from(opened.secretKey)).toEqual(SK_BYTES);
+    await expect(openKeyFile(file, enc.encode(WRONG))).rejects.toThrow(/^bad-passphrase/);
   });
 
   it('creates a local signer from a new key and unlocks it again', async () => {
@@ -153,7 +156,7 @@ describe.each(REFUSALS)('secure memory in Electron, where sodium_malloc %s', (_n
     withAllocator(malloc);
     const { minimumCost } = await import('../keyfile.js');
     const { LocalSigner } = await import('../local.js');
-    const pw = (): Uint8Array => enc.encode('correct horse battery staple');
+    const pw = (): Uint8Array => enc.encode(RIGHT);
     const { signer, file } = await LocalSigner.create({ passphrase: pw(), cost: minimumCost() });
     const pubkey = await signer.getPublicKey();
     await signer.lock();

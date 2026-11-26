@@ -11,8 +11,11 @@
 'use strict';
 const process = require('node:process');
 const { TextEncoder } = require('node:util');
+const { randomBytes } = require('node:crypto');
 
-const PASSPHRASE = 'correct horse battery staple';
+// Made at run time: no passphrase is committed, even a throwaway one.
+const PASSPHRASE = randomBytes(24).toString('base64');
+const WRONG_PASSPHRASE = `${randomBytes(24).toString('base64')}x`;
 
 async function main() {
   const out = {
@@ -44,7 +47,7 @@ async function main() {
     out.step = 'wrong-passphrase';
     out.wrongRefused = await signer.LocalSigner.unlock(
       made.file,
-      new TextEncoder().encode('wrong horse battery staple'),
+      new TextEncoder().encode(WRONG_PASSPHRASE),
     ).then(
       () => false,
       (e) => /^bad-passphrase/.test(String(e && e.message)),
