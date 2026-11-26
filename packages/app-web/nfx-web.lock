@@ -7,6 +7,10 @@
 #   commit          SovereignTechnology/nfx, 40 lowercase hex
 #   source sha256   of GitHub's archive of that commit,
 #                   https://github.com/SovereignTechnology/nfx/archive/<commit>.tar.gz
+#                   The repository was renamed nfx -> nutflix on 2026-11-26. GitHub names the
+#                   archive's top folder after the repository, so every commit's archive got new
+#                   bytes that day (same files inside); the old address redirects and serves them.
+#                   A source sha256 pinned before the rename no longer matches.
 #   library sha256  of nfx-web-lib-<commit, 12 hex>.tar, which nfx's web/player/lib-tar.sh builds
 #                   from that source: api.d.ts, player.d.ts, player.js, wasm/nfx_wasm_bg.wasm
 #
@@ -39,10 +43,7 @@
 #               (the `mesh` event, `MeshStats.webrtc`); the events `waiting`, `resumed` and
 #               `rescue`; `MeshStats.source`, `rescues`, `waiting`, `startup`. This site passes
 #               `peers-then-https` since this pin, and its "No HTTPS" switch `peers-only` (ADR 0025).
-#   The source sha256 is that of GitHub's archive since the repository was renamed to
-#   SovereignTechnology/nutflix (2026-11-26): the archive's top directory is named after the
-#   repository, and nothing else in it changed. The old URL redirects; the library tar is the
-#   same bytes (d84dcffe…).
+#   Its source sha256 is the archive's since the rename (above); the library tar is d84dcffe….
 #
 # 4b6095c is nfx #119's squash merge on main (NFX-17 seeder lookup, and failover; after 0.1.4). Since 059364f the library:
 #   #117/#118  STUN from the creator's beacon and the relays a page signals through only (NFX-10 §1).
