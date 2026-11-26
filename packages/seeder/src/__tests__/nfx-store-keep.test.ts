@@ -397,6 +397,72 @@ describe('NfxStore kept videos', () => {
     },
   );
 
+  describe('a cleanup file recovered larger than its listed size', () => {
+    async function oversized(id: string) {
+      const p = pkg(id);
+      const { dir } = await open();
+      const root = filePath(dir, p.root);
+      const fail = { unlink: true, rename: false };
+      const fs: SeederFs = {
+        ...adapters.fs,
+        unlink: (file) =>
+          fail.unlink && file === root
+            ? Promise.reject(new Error('cannot unlink'))
+            : adapters.fs.unlink(file),
+        rename: (from, to) =>
+          fail.rename && to === root
+            ? Promise.reject(new Error('cannot rename'))
+            : adapters.fs.rename(from, to),
+      };
+      const first = await open(undefined, dir, undefined, fs);
+      await startFill(first.store, p);
+      expect(await first.store.abandonKeep(p.video)).toBe(true);
+      const over = p.hashListBytes.byteLength + 10;
+      await writeFile(root, new Uint8Array(over));
+      const { store, cap } = await open(undefined, dir, undefined, fs);
+      expect(cap.usedBytes).toBe(over);
+      return { p, dir, root, fail, store, cap, over };
+    }
+
+    it('stays charged in full when a fill that named it is abandoned', async () => {
+      const { p, dir, fail, store, cap } = await oversized('oversized-abandon');
+      await startFill(store, p);
+      expect(cap.usedBytes).toBe(store.totalBytes());
+      expect(await store.abandonKeep(p.video)).toBe(true);
+      expect(cap.usedBytes).toBe(store.totalBytes());
+      fail.unlink = false;
+      await store.flushKept();
+      expect(await onDisk(dir)).toEqual([]);
+      expect(cap.usedBytes).toBe(0);
+      expect(store.totalBytes()).toBe(0);
+    });
+
+    it('keeps its excess charged until a verified write shrinks it', async () => {
+      const { p, root, fail, store, cap, over } = await oversized('oversized-rewrite');
+      fail.rename = true; // the hash list's rewrite fails: the oversized file stays
+      const { fillId } = await startFill(store, p);
+      fail.unlink = false;
+      const before = cap.usedBytes;
+      await store.flushKept();
+      expect((await readFile(root)).byteLength).toBe(over);
+      expect(cap.usedBytes).toBe(before);
+      expect(cap.usedBytes).toBe(store.totalBytes());
+
+      fail.rename = false;
+      for (const { sha256: s } of store.keepMissing(p.video)) {
+        const bytes = s === p.root ? p.hashListBytes : p.files.get(s)!;
+        expect((await store.putKeptFile(p.video, fillId, s, bytes)).ok).toBe(true);
+      }
+      expect((await readFile(root)).byteLength).toBe(p.hashListBytes.byteLength);
+      await store.flushKept();
+      expect(cap.usedBytes).toBe(before - 10);
+      expect(cap.usedBytes).toBe(store.totalBytes());
+      expect(await store.completeKeep(p.video, fillId)).toMatchObject({ state: 'held' });
+      expect(await store.removeKept(p.video)).toBe(true);
+      expect(cap.usedBytes).toBe(0);
+    });
+  });
+
   it('rejects late writes and completion from an abandoned fill', async () => {
     const { store } = await open();
     const p = pkg('replacement-fill');
