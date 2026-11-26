@@ -86,6 +86,15 @@ These are known limits of the released app, not bugs awaiting a report:
   setuid-root sandbox helper; the app refuses to run without Chromium's sandbox (ADR 0017).
 - **The recovery phrase is not screen-capture protected on Linux.** The window that shows it says
   so (ADR 0016).
+- **Keys in the desktop app's memory are not in guarded memory.** While the signer is unlocked, the
+  app holds your key, the wallet's seed and its journal key in ordinary process memory: zeroed
+  when the signer is locked, but with no guard pages, not locked against swap and not kept out of
+  a core dump. Electron refuses the memory libsodium's guarded allocator returns
+  (holepunchto/sodium-native#185), so the app cannot use it. Another process running as you, or
+  whoever can read your swap or a core dump, can read those keys while the signer is unlocked.
+  The seeder and gateway daemons run on Node and do keep their keys in guarded memory (T14).
+  Releases 0.1.0 to 0.1.3 asked for guarded memory anyway and failed at once: they could not
+  create, import or unlock a local key (#150).
 - **No NIP-05 check.** The desktop app never looks up a creator's NIP-05 name, so it establishes
   only the signed event's public key (T9).
 - **Mint risk.** Funds held at a mint are the mint's to lose or withhold (T8).
@@ -119,7 +128,7 @@ original build plan (`docs/plan/build-plan.md`, now a historical document) and i
 | T11 | Internet | DoS seeder/gateway | Per-pubkey rate limits, max streams, OS hardening | Availability |
 | T12 | npm | Compromised dep | Lockfile, `npm ci --ignore-scripts`, exact pins, native module audit | Depends |
 | T13 | Portal operator | Malicious JS | Open source, reproducible build, hash in signed Nostr event, SRI, CSP. **Not fully fixable in a browser — say so in the UI.** | Web session |
-| T14 | Host | Keys read from disk/logs | Encrypted at rest, secure memory, log redaction | Keys on host |
+| T14 | Host | Keys read from disk/logs | Encrypted at rest; in memory only while unlocked and wiped on lock (guarded memory on Node, ordinary memory in the desktop app: see below); log redaction | Keys on host |
 | T15 | Content | XSS via titles/descriptions/comments | Render as text or sanitized markdown; CSP no-inline; Electron `contextIsolation`, no `nodeIntegration`, sandboxed renderer | 0 |
 | T16 | Content | Malicious thumbnail/blob | Thumbnails are Blossom blobs with `x` hash in imeta; verify before display; images decoded in renderer only | 0 |
 
@@ -192,7 +201,9 @@ call.
 ## No model writes crypto
 
 Hashing, signatures, blinding, DLEQ, key derivation and secure memory come from
-`@cashu/cashu-ts`, `sodium-native` / `sodium-universal`, `nostr-tools` and `hypercore`. The NFX
+`@cashu/cashu-ts`, `sodium-native` / `sodium-universal`, `nostr-tools` and `hypercore`
+(inside Electron libsodium's guarded allocator cannot be used, and key buffers are ordinary
+memory: `packages/core/src/signer/secure.ts`). The NFX
 code that the web client runs (`@sovit/core/nfx`, ADR 0022) takes SHA-256 and Ed25519 from
 `@noble/hashes` and `@noble/curves`, the libraries `nostr-tools` and `cashu-ts` are built on, so
 that no sodium reaches a page; tests hold them to libsodium's answers.
