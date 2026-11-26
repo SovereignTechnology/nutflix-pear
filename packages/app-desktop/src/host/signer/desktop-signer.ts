@@ -116,8 +116,19 @@ function prefix(e: unknown): string {
   return /^[a-z][a-z0-9-]*(?=:)/.exec(m)?.[0] ?? (e instanceof Error ? e.name : 'unknown');
 }
 
-/** Core signer errors → the codes the renderer understands (never a key, never a path). */
-function mapError(e: unknown): Error {
+/** `prefix(e)` for a log line: a code or a class name is short, so anything longer is not one. */
+function reasonOf(e: unknown): string {
+  const p = prefix(e);
+  return p.length <= 40 ? p : 'unknown';
+}
+
+/**
+ * Core signer errors → the codes the renderer understands (never a key, never a path).
+ * What is reduced to `internal`, and a runtime that cannot run the local signer, is logged with
+ * its reason (a code prefix or the error's class name, never its message): the renderer is told
+ * only "internal error", and without this line nothing says why.
+ */
+function mapError(e: unknown, log: Logger): Error {
   if (e instanceof IpcError) return e;
   switch (prefix(e)) {
     case 'cancelled':
@@ -136,7 +147,11 @@ function mapError(e: unknown): Error {
     case 'excessive-parameters':
     case 'bad-key':
       return hostError('forbidden', `the key file cannot be used (${prefix(e)})`);
+    case 'unsupported-runtime':
+      log.error('the local signer cannot run here', { reason: reasonOf(e) });
+      return hostError('forbidden', 'a local key cannot be used in this build of the app');
     default:
+      log.error('the signer failed', { reason: reasonOf(e) });
       return hostError('internal', 'the signer failed');
   }
 }
@@ -449,7 +464,7 @@ export class DesktopSigner implements IdentityProvider {
           await this.changed(interactive, false);
           return;
         } catch (e) {
-          if (prefix(e) !== 'bad-passphrase') throw mapError(e);
+          if (prefix(e) !== 'bad-passphrase') throw mapError(e, this.log);
           // The key file changed under the keychain's copy: drop it and ask the user.
           this.log.warn('the keychain passphrase no longer unlocks the key; asking instead');
           await this.forgetKeychain('passphrase');
@@ -482,7 +497,7 @@ export class DesktopSigner implements IdentityProvider {
           this.retry = true;
           continue;
         }
-        throw mapError(e);
+        throw mapError(e, this.log);
       }
     }
   }
@@ -534,7 +549,7 @@ export class DesktopSigner implements IdentityProvider {
       }
       await this.setMethod('nip46');
     } catch (e) {
-      throw mapError(e);
+      throw mapError(e, this.log);
     } finally {
       this.endFlow();
     }
@@ -557,7 +572,7 @@ export class DesktopSigner implements IdentityProvider {
         await this.forgetKeychain('nip46');
         this.rememberedValue = false;
       }
-      throw mapError(e);
+      throw mapError(e, this.log);
     } finally {
       this.endFlow();
     }

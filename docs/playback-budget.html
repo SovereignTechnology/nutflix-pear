@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Playback budget · Nutflix</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f5f3ec;
+        --ink: #182c32;
+        --muted: #405a60;
+        --line: #adbbb7;
+        --teal: #075a58;
+        --panel: #fffdf6;
+        --track: #bed0c6;
+        --focus: #c94f1a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          1rem/1.5 'Atkinson Hyperlegible Next',
+          system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 64rem;
+        margin: auto;
+        padding: clamp(1rem, 4vw, 3rem);
+      }
+      h1 {
+        font-size: clamp(2rem, 5vw, 3.7rem);
+        letter-spacing: -0.045em;
+        line-height: 1.05;
+        margin: 0 0 1rem;
+      }
+      h2 {
+        font-size: 1.2rem;
+        margin: 0 0 1rem;
+      }
+      p {
+        max-width: 68ch;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 1.25rem;
+        margin-block: 2rem;
+      }
+      section {
+        padding: clamp(1rem, 3vw, 2rem);
+        border: 1px solid var(--line);
+        border-radius: 0.6rem;
+        background: var(--panel);
+      }
+      label {
+        display: block;
+        margin: 0.9rem 0 0.3rem;
+        font-weight: 650;
+      }
+      input {
+        color: var(--ink);
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 0.25rem;
+        width: 100%;
+        padding: 0.5rem 0.75rem;
+        font: inherit;
+        font-variant-numeric: tabular-nums;
+      }
+      :focus-visible {
+        outline: 3px solid var(--focus);
+        outline-offset: 2px;
+      }
+      small {
+        color: var(--muted);
+      }
+      #price {
+        font-size: clamp(2rem, 5vw, 3.5rem);
+        font-weight: 700;
+        color: var(--teal);
+        overflow-wrap: anywhere;
+        font-variant-numeric: tabular-nums;
+      }
+      progress {
+        display: block;
+        width: 100%;
+        height: 0.8rem;
+        margin: 0.4rem 0 1.5rem;
+        accent-color: var(--teal);
+      }
+      dt {
+        color: var(--muted);
+      }
+      dl {
+        margin: 1.5rem 0 0;
+      }
+      dd {
+        margin: 0 0 0.8rem;
+        font-weight: 650;
+        overflow-wrap: anywhere;
+      }
+      a {
+        color: var(--teal);
+      }
+      [hidden] {
+        display: none;
+      }
+      @media (max-width: 42rem) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --paper: #182524;
+          --ink: #f7f4ea;
+          --muted: #bdceca;
+          --line: #61756f;
+          --teal: #83dfc6;
+          --panel: #20332f;
+          --focus: #efad79;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Playback budget</h1>
+      <p>
+        Nutflix prices a video rendition by the block. Try a file size and a price to see how far a
+        budget goes and how the payment is shared. All calculations happen in this browser.
+      </p>
+      <div class="layout">
+        <section aria-labelledby="settings">
+          <h2 id="settings">Rendition and budget</h2>
+          <label for="bytes">File size in bytes</label>
+          <input
+            id="bytes"
+            type="text"
+            inputmode="numeric"
+            value="1048577"
+            maxlength="16"
+            aria-describedby="bytes-note"
+          />
+          <small id="bytes-note">The example is 1 MiB plus one byte.</small>
+          <label for="size">Bytes per block</label>
+          <input
+            id="size"
+            type="text"
+            inputmode="numeric"
+            value="65536"
+            maxlength="16"
+            aria-describedby="size-note"
+          />
+          <small id="size-note">The default is 65,536 bytes (64 KiB).</small>
+          <label for="rate">Sats per block</label>
+          <input id="rate" type="text" inputmode="numeric" value="3" maxlength="16" />
+          <label for="budget">Viewer budget at the selected mint (sats)</label>
+          <input id="budget" type="text" inputmode="numeric" value="50" maxlength="16" />
+          <label for="share">Creator share in percent</label>
+          <input id="share" type="text" inputmode="numeric" value="50" maxlength="3" />
+        </section>
+        <section aria-labelledby="estimate">
+          <h2 id="estimate">Playback cost before mint fees</h2>
+          <noscript
+            >Enable JavaScript to calculate the estimate. You can also use the formulas
+            below.</noscript
+          >
+          <div id="results" aria-live="polite" aria-atomic="true">
+            <p id="error" hidden></p>
+            <div id="values" hidden>
+              <strong id="price"></strong>
+              <p id="blocks"></p>
+              <span id="coverage"></span>
+              <progress id="meter" max="100" aria-labelledby="coverage"></progress>
+              <dl>
+                <dt>Budget after those blocks</dt>
+                <dd id="left"></dd>
+                <dt>Creator share for affordable blocks</dt>
+                <dd id="creator"></dd>
+                <dt>Seeder share for affordable blocks</dt>
+                <dd id="seeder"></dd>
+              </dl>
+            </div>
+          </div>
+        </section>
+      </div>
+      <h2>Reading the estimate</h2>
+      <p>
+        Divide the file size by the block size and round up. Multiply by the price per block to get
+        the full price. The budget covers whole blocks only. With the example values, the last byte
+        starts block 17, raising the full price from 48 to 51 sats.
+      </p>
+      <p>
+        The split covers only the blocks within budget. For a fresh channel serving one core at the
+        entered price, the creator receives the amount paid × creator percentage, rounded down.
+        Nutflix carries fractional shares forward between accepted payments on that channel and
+        core. The seeder receives the remaining whole sats. Mint fees, cached blocks and payments to
+        other peers can change your actual wallet spend or the split.
+      </p>
+      <p>
+        <a
+          href="https://github.com/SovereignTechnology/nutflix-pear/blob/ebebba86a27fa0e4c8f9008c400f2217aa460184/packages/ui/src/components/shared/format.ts"
+          >Player price calculation</a
+        >
+        ·
+        <a
+          href="https://github.com/SovereignTechnology/nutflix-pear/blob/ebebba86a27fa0e4c8f9008c400f2217aa460184/packages/core/src/payment/split.ts"
+          >Payment split and carry</a
+        >
+      </p>
+    </main>
+    <script>
+      const field = (id) => document.getElementById(id);
+      const format = new Intl.NumberFormat('en');
+      const sats = (value) => format.format(value) + (value === 1n ? ' sat' : ' sats');
+      const fields = [
+        ['bytes', 0n],
+        ['size', 1n],
+        ['rate', 0n],
+        ['budget', 0n],
+        ['share', 0n, 100n],
+      ];
+
+      function update() {
+        const numbers = [];
+        let error = '';
+        for (const [id, min, max = BigInt(Number.MAX_SAFE_INTEGER)] of fields) {
+          const input = field(id);
+          const raw = input.value.trim();
+          const number = /^\d{1,16}$/.test(raw) ? BigInt(raw) : -1n;
+          const valid = number >= min && number <= max;
+          input.setAttribute('aria-invalid', String(!valid));
+          // Only the input whose message is shown points at it.
+          input.removeAttribute('aria-errormessage');
+          if (!valid && !error) {
+            input.setAttribute('aria-errormessage', 'error');
+            const label = input.labels[0].textContent;
+            error =
+              label +
+              ' must be a whole number from ' +
+              format.format(min) +
+              ' to ' +
+              format.format(max) +
+              '.';
+          }
+          numbers.push(number);
+        }
+        field('error').textContent = error;
+        field('error').hidden = !error;
+        field('values').hidden = Boolean(error);
+        if (error) return;
+
+        const [bytes, size, rate, budget, share] = numbers;
+        const count = (bytes + size - 1n) / size;
+        const total = count * rate;
+        const affordable = total <= budget ? count : budget / rate;
+        const payment = affordable * rate;
+        const creator = (payment * share) / 100n;
+        field('price').textContent = sats(total);
+        field('blocks').textContent =
+          format.format(count) +
+          (count === 1n ? ' block' : ' blocks') +
+          ' × ' +
+          sats(rate) +
+          ' per block';
+        field('coverage').textContent =
+          format.format(affordable) + ' of ' + format.format(count) + ' blocks within budget';
+        field('meter').value = count === 0n ? 0 : Number((affordable * 10000n) / count) / 100;
+        field('left').textContent = sats(budget - payment);
+        field('creator').textContent = sats(creator);
+        field('seeder').textContent = sats(payment - creator);
+      }
+
+      for (const [id] of fields) field(id).addEventListener('input', update);
+      update();
+    </script>
+  </body>
+</html>

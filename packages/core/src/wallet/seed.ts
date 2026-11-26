@@ -8,7 +8,7 @@
  *     typed phrase comes back through `fromWords` / `fromIndices`, whose error names the problem
  *     (`length`, `word`, `checksum`) and never a word.
  *   - **The seed** (`toSeed`): `mnemonicToSeed(words, '')` — the empty BIP-39 passphrase other
- *     Cashu wallets use — copied into `sodium_malloc` memory at once, the library's copy zeroed.
+ *     Cashu wallets use — copied into `secureAlloc` memory at once, the library's copy zeroed.
  *     `seedBytes` lends that buffer BY REFERENCE to the wallet (cashu-ts holds `bip39seed` so);
  *     after `wipe()` it is zero and `seedBytes` refuses it, and so does every derivation
  *     (`spend.ts` `seedGuardedOutputs`).
@@ -26,7 +26,8 @@
  * words typed into the prompt window are JS strings, which cannot be wiped; cashu-ts's own
  * derivation intermediates (noble's BIP-32 and HMAC state) are the library's to clear.
  *
- * No cryptography is implemented here: BIP-39 is `@scure/bip39`, secure memory is libsodium.
+ * No cryptography is implemented here: BIP-39 is `@scure/bip39`, secure memory is libsodium
+ * where the runtime allows it (`../signer/secure.ts`: not inside Electron).
  * Nothing here logs; errors carry a code, never a word, a seed or a counter's secret.
  */
 import {
@@ -38,6 +39,8 @@ import {
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import sodium from 'sodium-universal';
 
+import { secureAlloc, secureCopy } from '../signer/secure.js';
+
 import type {
   CounterState,
   CounterStore,
@@ -48,14 +51,8 @@ import type {
 } from './recovery-api.js';
 
 // ---------------------------------------------------------------------------------------
-// Secure memory
+// Secure memory (`secureAlloc`, `secureCopy`: ../signer/secure.ts)
 // ---------------------------------------------------------------------------------------
-
-function secureCopy(src: Uint8Array): Uint8Array {
-  const b = sodium.sodium_malloc(src.length);
-  b.set(src);
-  return b;
-}
 
 function zero(b: Uint8Array): void {
   if (b.length > 0) sodium.sodium_memzero(b);
@@ -236,7 +233,7 @@ const ENTROPY_HEX = /^[0-9a-f]{32}$/;
  */
 export function entropyFromHex(hex: string): RecoveryEntropy {
   if (typeof hex !== 'string' || !ENTROPY_HEX.test(hex)) throw new RecoveryPhraseError('length');
-  const b = sodium.sodium_malloc(ENTROPY_BYTES);
+  const b = secureAlloc(ENTROPY_BYTES);
   for (let i = 0; i < ENTROPY_BYTES; i++) b[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
   return b as RecoveryEntropy;
 }
