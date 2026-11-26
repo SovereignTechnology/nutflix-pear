@@ -63,6 +63,36 @@ function addressOf(event: NostrEvent, namespace: string): string | undefined {
   return `${KIND_MANIFEST}:${event.pubkey}:${d}`;
 }
 
+/**
+ * The event ids among `videos` that a deletion on `relays` withdraws (NFX-02 §6; `undefined`:
+ * the read relays), by one query for their addresses. A page read from one relay set was checked
+ * against that set's deletions only; a merge of two sets checks each side's videos on the other
+ * (ADR 0026).
+ */
+export async function nfxWithdrawn(
+  client: NostrClient,
+  namespace: string,
+  videos: readonly NfxVideo[],
+  relays: readonly RelayUrl[] | undefined,
+): Promise<Set<string>> {
+  if (videos.length === 0) return new Set();
+  const deletions = await deletionsFor(
+    client,
+    videos.map((v) => ({ event: v.event, address: v.id })),
+    relays,
+  );
+  if (deletions.length === 0) return new Set();
+  const live = new Set(
+    listNfxVideos(
+      namespace,
+      videos.map((v) => v.event),
+      deletions,
+      client.now(),
+    ).map((v) => v.eventId),
+  );
+  return new Set(videos.filter((v) => !live.has(v.eventId)).map((v) => v.eventId));
+}
+
 /** Events → the listed videos, after one deletion query for their addresses. */
 async function listed(
   client: NostrClient,

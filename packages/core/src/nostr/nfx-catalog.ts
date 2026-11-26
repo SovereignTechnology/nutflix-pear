@@ -41,6 +41,7 @@ import {
   nfxTagsFeed,
   nfxTwinsOf,
   nfxVideoPage,
+  nfxWithdrawn,
   searchNfxVideos,
   searchNfxVideosRouted,
 } from './nfx-feeds.js';
@@ -68,9 +69,14 @@ type SearchSupport = (relay: RelayUrl) => Promise<boolean>;
  * is more when any page had more or the union ran past `limit` (the overflow is never dropped),
  * and the cursor is the merged page's own.
  */
-function mergePages(pages: readonly Page<NfxVideo>[], limit: number): Page<NfxVideo> {
+function mergePages(
+  pages: readonly Page<NfxVideo>[],
+  limit: number,
+  withdrawn: ReadonlySet<string> = new Set(),
+): Page<NfxVideo> {
   const newest = new Map<string, NfxVideo>();
   for (const v of pages.flatMap((p) => p.items)) {
+    if (withdrawn.has(v.eventId)) continue;
     const seen = newest.get(v.id);
     if (seen === undefined || v.event.created_at > seen.event.created_at) newest.set(v.id, v);
   }
@@ -181,7 +187,7 @@ export class NfxCatalog implements NfxSource {
     read: (relays: readonly RelayUrl[] | undefined) => Promise<T>,
     enough: (t: T) => boolean,
     hasAny: (t: T) => boolean,
-    merge: (scoped: T, fallback: T) => T,
+    merge: (scoped: T, fallback: T, scopedRelays: readonly RelayUrl[]) => T | Promise<T>,
   ): Promise<T> {
     const scopedRelays = this.scopedRelays();
     if (scopedRelays.length === 0) return read(undefined);
@@ -204,7 +210,9 @@ export class NfxCatalog implements NfxSource {
       await Promise.all(sides);
     }
     const [scoped, fallback] = got;
-    if (scoped?.ok === true && fallback?.ok === true) return merge(scoped.value, fallback.value);
+    if (scoped?.ok === true && fallback?.ok === true) {
+      return merge(scoped.value, fallback.value, scopedRelays);
+    }
     if (scoped?.ok === true) {
       // An empty scoped answer beside a failed read is the read relays' error, not "nothing".
       if (fallback?.ok === false && !hasAny(scoped.value)) throw fallback.error;
@@ -232,8 +240,40 @@ export class NfxCatalog implements NfxSource {
       read,
       (p) => p.items.length >= limit,
       (p) => p.items.length > 0,
-      (scoped, fallback) => mergePages([scoped, fallback], limit),
+      async (scoped, fallback, scopedRelays) =>
+        mergePages(
+          [scoped, fallback],
+          limit,
+          await this.withdrawnAcross(scoped.items, fallback.items, scopedRelays),
+        ),
     );
+  }
+
+  /**
+   * The event ids a deletion on the other relay set withdraws (ADR 0026). Each side's page was
+   * checked against its own set's deletions only, so a video one side lists and the other does not
+   * is asked about on the other set: an author's deletion that reached only the scoped relays (which
+   * may then drop the manifest itself) still withdraws the copy a read relay kept. A video both sides
+   * list needs no check: the newer revision wins, and each side's deletions are older than its own.
+   * Both sets have just answered; a check that fails withdraws nothing.
+   */
+  private async withdrawnAcross(
+    scoped: readonly NfxVideo[],
+    fallback: readonly NfxVideo[],
+    scopedRelays: readonly RelayUrl[],
+  ): Promise<ReadonlySet<string>> {
+    const c = this.client();
+    const onlyIn = (xs: readonly NfxVideo[], other: readonly NfxVideo[]): NfxVideo[] => {
+      const there = new Set(other.map((v) => v.id));
+      return xs.filter((v) => !there.has(v.id));
+    };
+    const checks = await Promise.allSettled([
+      nfxWithdrawn(c, this.namespace, onlyIn(fallback, scoped), scopedRelays),
+      nfxWithdrawn(c, this.namespace, onlyIn(scoped, fallback), undefined),
+    ]);
+    const out = new Set<string>();
+    for (const r of checks) if (r.status === 'fulfilled') for (const id of r.value) out.add(id);
+    return out;
   }
 
   /**
@@ -374,16 +414,26 @@ export class NfxCatalog implements NfxSource {
       return Promise.resolve(null);
     }
     const c = this.client();
-    // The newest revision either side holds; the scoped copy on a tie.
+    // The newest revision either side holds, the scoped copy on a tie, unless a deletion on the
+    // side that lacks it withdraws it.
     return this.bothAtOnce(
       (relays) => fetchNfxVideo(c, addr, { relays }),
       (v) => v !== null,
       (v) => v !== null,
-      (scoped, fallback) =>
-        scoped === null ||
-        (fallback !== null && fallback.event.created_at > scoped.event.created_at)
-          ? fallback
-          : scoped,
+      async (scoped, fallback, scopedRelays) => {
+        const pick =
+          scoped === null ||
+          (fallback !== null && fallback.event.created_at > scoped.event.created_at)
+            ? fallback
+            : scoped;
+        if (pick === null) return null;
+        const gone = await this.withdrawnAcross(
+          scoped === null ? [] : [scoped],
+          fallback === null ? [] : [fallback],
+          scopedRelays,
+        );
+        return gone.has(pick.eventId) ? null : pick;
+      },
     );
   }
 }

@@ -358,10 +358,11 @@ function proxy(
 
 const SEGMENT = /\/([0-9a-f]{64})\.m4s$/;
 
-/** The honest origin behind a switch: once blocked, every segment is refused. Records what it served. */
+/** The honest origin behind a switch: while blocked, every segment is refused. Records what it served. */
 async function gate(upstream: string): Promise<{
   port: number;
   block: () => void;
+  unblock: () => void;
   served: Set<string>;
   refused: () => number;
 }> {
@@ -386,6 +387,9 @@ async function gate(upstream: string): Promise<{
     port,
     block: () => {
       blocked = true;
+    },
+    unblock: () => {
+      blocked = false;
     },
     served,
     refused: () => refused,
@@ -1246,6 +1250,9 @@ async function main(): Promise<void> {
     results['settings'] = { ipNotice: true, source: href };
 
     // 9b. ADR 0026: the scoped relay never answers. The feed and a play go on through strfry.
+    // The origin serves again (step 4 blocked it): the start of a play comes over HTTPS until
+    // peers can start one (nfx #126), and this step is about relays, not delivery.
+    g.unblock();
     const tarpit = await tarpitServer();
     try {
       const dead = `wss://dead.e2e.test:${String(tarpit.port)}`;

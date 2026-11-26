@@ -384,6 +384,37 @@ describe('NfxCatalog: the scoped and public relays at once (ADR 0026, 2026-11-26
     expect(askedPublic(t)).toBe(true);
   });
 
+  it('a deletion on one relay set withdraws the copy the other set kept (CodeRabbit, #157)', async () => {
+    const t = twoPools();
+    const creator = new kit.TestSigner();
+    // The author deleted `gone-video` on the scoped relay, which then dropped the manifest too; a
+    // public relay never got the deletion and still has it, newer than everything else listed.
+    t.scoped.store(await kit.sign(creator, nfxDraft('live-video', 2)));
+    t.pub.store(await kit.sign(creator, nfxDraft('gone-video', 1)));
+    t.scoped.store(
+      await kit.sign(creator, {
+        kind: 5,
+        created_at: mocks.FIXTURE_NOW - 0.5 * HOUR,
+        content: '',
+        tags: [['a', addr(creator.pubkey, 'gone-video')]],
+      }),
+    );
+    const cat = scopedCatalog(t);
+    const one = await cat.feed({ source: 'author', author: creator.pubkey, limit: 1 }, null);
+    expect(titles(one)).toEqual(['NFX live-video']);
+    expect(titles(await cat.feed({ source: 'tags', tags: ['space'] }, null))).toEqual([
+      'NFX live-video',
+    ]);
+    expect(await cat.video(addr(creator.pubkey, 'gone-video'))).toBeNull();
+    // A revision newer than the deletion republishes the video, wherever it was read.
+    t.pub.store(await kit.sign(creator, nfxDraft('gone-video', 0.25, [['t', 'recut']])));
+    expect((await cat.video(addr(creator.pubkey, 'gone-video')))?.title).toBe('NFX gone-video');
+    expect(titles(await cat.feed({ source: 'author', author: creator.pubkey }, null))).toEqual([
+      'NFX gone-video',
+      'NFX live-video',
+    ]);
+  });
+
   it('a relay set that never answers does not hold a read the other already answered in full (the grace)', async () => {
     const hang = (): Promise<never> => new Promise<never>(() => undefined);
     // The public relays hang (an unreachable relay before its connect timeout): a full scoped page answers.
