@@ -240,7 +240,8 @@ export class NfxCatalog implements NfxSource {
    * `read` on the scoped relays, the network's own, and on the read relays at once (ADR 0026), and
    * the two answers `merge`d (scoped first). When the first answer is `enough` (a full page, the
    * video), the other gets `mergeGraceMs` more and is left out if it is still not in: a relay that
-   * is down never holds a read that already has its answer. Otherwise both are awaited. When one
+   * is down never holds a read that already has its answer. That deadline is handed to `merge`, so
+   * whatever it still asks (`withdrawnAcross`) ends by it too. Otherwise both are awaited. When one
    * side fails, the other's answer stands, except an empty scoped answer beside a failed read: the
    * read relays' error is then reported, as is any error when both fail. Without scoped relays, the
    * read relays alone, as before.
@@ -249,7 +250,12 @@ export class NfxCatalog implements NfxSource {
     read: (relays: readonly RelayUrl[] | undefined) => Promise<T>,
     enough: (t: T) => boolean,
     hasAny: (t: T) => boolean,
-    merge: (scoped: T, fallback: T, scopedRelays: readonly RelayUrl[]) => T | Promise<T>,
+    merge: (
+      scoped: T,
+      fallback: T,
+      scopedRelays: readonly RelayUrl[],
+      deadline: number | undefined,
+    ) => T | Promise<T>,
   ): Promise<T> {
     const scopedRelays = this.scopedRelays();
     if (scopedRelays.length === 0) return read(undefined);
@@ -261,7 +267,9 @@ export class NfxCatalog implements NfxSource {
       }),
     );
     const first = await Promise.race(sides);
+    let deadline: number | undefined;
     if (first.ok && enough(first.value)) {
+      deadline = Date.now() + this.mergeGraceMs;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const grace = new Promise<void>((resolve) => {
         timer = setTimeout(resolve, this.mergeGraceMs);
@@ -273,7 +281,7 @@ export class NfxCatalog implements NfxSource {
     }
     const [scoped, fallback] = got;
     if (scoped?.ok === true && fallback?.ok === true) {
-      return merge(scoped.value, fallback.value, scopedRelays);
+      return merge(scoped.value, fallback.value, scopedRelays, deadline);
     }
     if (scoped?.ok === true) {
       // An empty scoped answer beside a failed read is the read relays' error, not "nothing".
@@ -293,7 +301,9 @@ export class NfxCatalog implements NfxSource {
    * `bothAtOnce` for a page of at most `limit` from `cursor`: a page is enough when it is full. The
    * two pages are merged (`mergePages`: one video per address, the newest revision, the scoped copy
    * on a tie, newest first, `limit`), so an empty or short scoped page never shrinks the catalog. A
-   * page that withdrawals left short is filled from the pages after it (`toppedUp`).
+   * page that withdrawals left short is filled from the pages after it (`toppedUp`). With
+   * `emptyStands`, an empty scoped page beside a failed read is that empty page, not the error: the
+   * read fails only when every relay set does (the Network feed).
    */
   private async bothAtOncePage(
     read: (
@@ -302,25 +312,26 @@ export class NfxCatalog implements NfxSource {
     ) => Promise<Page<NfxVideo>>,
     limit: number,
     cursor: string | undefined,
+    emptyStands = false,
     rounds = NFX_TOP_UP_ROUNDS,
   ): Promise<Page<NfxVideo>> {
     let dropped = 0;
     const page = await this.bothAtOnce(
       (relays) => read(relays, cursor),
       (p) => p.items.length >= limit,
-      (p) => p.items.length > 0,
-      async (scoped, fallback, scopedRelays) => {
+      (p) => emptyStands || p.items.length > 0,
+      async (scoped, fallback, scopedRelays, deadline) => {
         const merged = mergePages(
           [scoped, fallback],
           limit,
-          await this.withdrawnAcross(scoped.items, fallback.items, scopedRelays),
+          await this.withdrawnAcross(scoped.items, fallback.items, scopedRelays, deadline),
         );
         dropped = merged.dropped;
         return merged.page;
       },
     );
     return toppedUp(page, dropped, limit, rounds, (next) =>
-      this.bothAtOncePage(read, limit, next, rounds - 1),
+      this.bothAtOncePage(read, limit, next, emptyStands, rounds - 1),
     );
   }
 
@@ -330,16 +341,18 @@ export class NfxCatalog implements NfxSource {
    * is asked about on the other set: an author's deletion that reached only the scoped relays (which
    * may then drop the manifest itself) still withdraws the copy a read relay kept. A video both sides
    * list needs no check: the newer revision wins, and each side's deletions are older than its own.
-   * Both sets have just answered, but a relay can still stall: a check not done within
-   * `mergeGraceMs`, or one that fails, withdraws nothing, so an unknown deletion never holds a
-   * result past the grace.
+   * Both sets have just answered, but a relay can still stall: a check not done by `deadline` (the
+   * read's own, when one set's full answer started the grace; else `mergeGraceMs` from now), or one
+   * that fails, withdraws nothing, so an unknown deletion never holds a result past the grace.
    */
   private async withdrawnAcross(
     scoped: readonly NfxVideo[],
     fallback: readonly NfxVideo[],
     scopedRelays: readonly RelayUrl[],
+    deadline: number | undefined,
   ): Promise<ReadonlySet<string>> {
     const c = this.client();
+    const wait = deadline === undefined ? this.mergeGraceMs : Math.max(0, deadline - Date.now());
     const onlyIn = (xs: readonly NfxVideo[], other: readonly NfxVideo[]): NfxVideo[] => {
       const there = new Set(other.map((v) => v.id));
       return xs.filter((v) => !there.has(v.id));
@@ -349,7 +362,7 @@ export class NfxCatalog implements NfxSource {
       const late = new Promise<Set<string>>((resolve) => {
         timer = setTimeout(() => {
           resolve(new Set());
-        }, this.mergeGraceMs);
+        }, wait);
       });
       return Promise.race([check, late]).finally(() => {
         clearTimeout(timer);
@@ -430,37 +443,22 @@ export class NfxCatalog implements NfxSource {
 
   /**
    * Every video on the network, newest first: the scoped relays (the network's own) and the read
-   * relays (which carry its mirrors) are both asked, so a video listed on only one still shows.
-   * One video is one address, whichever relays held it or how many revisions; the newest wins, and
-   * the scoped relays' copy a tie (`mergePages`), unless a deletion on the set that lacks it
-   * withdraws it (`withdrawnAcross`). Fails only when every relay set does.
+   * relays (which carry its mirrors) are both asked at once, with the feeds' grace
+   * (`bothAtOncePage`), so a video listed on only one still shows and a stalled set never holds the
+   * other's full page. One video is one address, whichever relays held it or how many revisions;
+   * the newest wins, and the scoped relays' copy a tie (`mergePages`), unless a deletion on the set
+   * that lacks it withdraws it (`withdrawnAcross`). Fails only when every relay set does.
    */
-  private async networkFeed(
+  private networkFeed(
     c: NostrClient,
     opts: { readonly limit: number; readonly cursor: string | undefined },
-    rounds = NFX_TOP_UP_ROUNDS,
   ): Promise<Page<NfxVideo>> {
-    const scoped = this.scopedRelays();
-    const read = (relays: readonly RelayUrl[] | undefined): Promise<Page<NfxVideo>> =>
-      nfxVideoPage(c, this.namespace, {}, { ...opts, relays });
-    const settled = await Promise.allSettled(
-      scoped.length === 0 ? [read(undefined)] : [read(scoped), read(undefined)],
-    );
-    const pages = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
-    const first = settled.find((s) => s.status === 'rejected');
-    if (pages.length === 0 && first !== undefined) throw first.reason;
-    // Both sets answered: each side's videos are checked on the other's deletions, as in
-    // `bothAtOncePage` (ADR 0026).
-    let withdrawn: ReadonlySet<string> = new Set();
-    if (settled.length === 2) {
-      const [ofScoped, ofRead] = settled;
-      if (ofScoped.status === 'fulfilled' && ofRead.status === 'fulfilled') {
-        withdrawn = await this.withdrawnAcross(ofScoped.value.items, ofRead.value.items, scoped);
-      }
-    }
-    const merged = mergePages(pages, opts.limit, withdrawn);
-    return toppedUp(merged.page, merged.dropped, opts.limit, rounds, (next) =>
-      this.networkFeed(c, { ...opts, cursor: next }, rounds - 1),
+    return this.bothAtOncePage(
+      (relays, cursor) =>
+        nfxVideoPage(c, this.namespace, {}, { limit: opts.limit, cursor, relays }),
+      opts.limit,
+      opts.cursor,
+      true,
     );
   }
 
@@ -539,7 +537,7 @@ export class NfxCatalog implements NfxSource {
       (relays) => fetchNfxVideo(c, addr, { relays }),
       (v) => v !== null,
       (v) => v !== null,
-      async (scoped, fallback, scopedRelays) => {
+      async (scoped, fallback, scopedRelays, deadline) => {
         const pick =
           scoped === null ||
           (fallback !== null && fallback.event.created_at > scoped.event.created_at)
@@ -550,6 +548,7 @@ export class NfxCatalog implements NfxSource {
           scoped === null ? [] : [scoped],
           fallback === null ? [] : [fallback],
           scopedRelays,
+          deadline,
         );
         return gone.has(pick.eventId) ? null : pick;
       },

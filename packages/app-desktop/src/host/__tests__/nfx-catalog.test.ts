@@ -485,6 +485,49 @@ describe('NfxCatalog: the scoped and public relays at once (ADR 0026, 2026-11-26
     expect((await cat.video(addr(a.pubkey, 'public-clip')))?.title).toBe('NFX public-clip');
   });
 
+  it('one deadline: a second read late in the grace leaves the deletion checks only what is left of it (CodeRabbit, #157)', async () => {
+    const GRACE = 600;
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    t.scoped.store(await kit.sign(a, nfxDraft('scoped-clip', 2)));
+    t.pub.store(await kit.sign(a, nfxDraft('public-clip', 1)));
+    // The public relays list manifests 500 ms in; the scoped relay never answers the check for
+    // their video.
+    const pubQuery = t.pub.query.bind(t.pub);
+    vi.spyOn(t.pub, 'query').mockImplementation(async (relays, filter) => {
+      if (filter.kinds?.includes(38504) === true) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      return pubQuery(relays, filter);
+    });
+    const scopedQuery = t.scoped.query.bind(t.scoped);
+    vi.spyOn(t.scoped, 'query').mockImplementation((relays, filter) =>
+      (filter as { readonly '#a'?: readonly string[] })['#a']?.includes(
+        addr(a.pubkey, 'public-clip'),
+      ) === true
+        ? new Promise<never>(() => undefined)
+        : scopedQuery(relays, filter),
+    );
+    const cat = scopedCatalog(t, GRACE);
+    const timed = async <T>(run: () => Promise<T>): Promise<{ value: T; ms: number }> => {
+      const t0 = Date.now();
+      const value = await run();
+      return { value, ms: Date.now() - t0 };
+    };
+    // Each answers about GRACE after the scoped relays' full answer; two graces would be ~1100 ms.
+    const author = await timed(() =>
+      cat.feed({ source: 'author', author: a.pubkey, limit: 1 }, null),
+    );
+    expect(titles(author.value)).toEqual(['NFX public-clip']);
+    expect(author.ms).toBeLessThan(GRACE + 250);
+    const network = await timed(() => cat.feed({ source: 'network', limit: 1 }, null));
+    expect(titles(network.value)).toEqual(['NFX public-clip']);
+    expect(network.ms).toBeLessThan(GRACE + 250);
+    const video = await timed(() => cat.video(addr(a.pubkey, 'scoped-clip')));
+    expect(video.value?.title).toBe('NFX scoped-clip');
+    expect(video.ms).toBeLessThan(GRACE + 250);
+  });
+
   it('a relay set that never answers does not hold a read the other already answered in full (the grace)', async () => {
     const hang = (): Promise<never> => new Promise<never>(() => undefined);
     // The public relays hang (an unreachable relay before its connect timeout): a full scoped page answers.
@@ -497,6 +540,9 @@ describe('NfxCatalog: the scoped and public relays at once (ADR 0026, 2026-11-26
       'NFX scoped-clip',
     ]);
     expect((await cat.video(addr(a.pubkey, 'scoped-clip')))?.title).toBe('NFX scoped-clip');
+    expect(titles(await cat.feed({ source: 'network', limit: 1 }, null))).toEqual([
+      'NFX scoped-clip',
+    ]);
     // The scoped relay hangs (its host unreachable, 2026-11-26): the public relays answer alone.
     const u = twoPools();
     u.pub.store(await kit.sign(a, nfxDraft('public-clip', 1)));
@@ -506,6 +552,9 @@ describe('NfxCatalog: the scoped and public relays at once (ADR 0026, 2026-11-26
       ['NFX public-clip'],
     );
     expect((await cat2.video(addr(a.pubkey, 'public-clip')))?.title).toBe('NFX public-clip');
+    expect(titles(await cat2.feed({ source: 'network', limit: 1 }, null))).toEqual([
+      'NFX public-clip',
+    ]);
   });
 
   it('the scoped relays down or timing out with an error: the public relays answer alone', async () => {
