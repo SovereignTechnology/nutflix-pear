@@ -243,22 +243,101 @@ describe.skipIf(HELPER === '' && !IN_CI)('slice 5e-3: NFX seeding over iroh', ()
 });
 
 /**
- * `ip:port` or `[ip6]:port` outside global unicast, as the helper's rule (`rtc/candidates.rs`
- * `allowed`) sees it for the addresses a test host has: private, loopback, link-local, CGNAT,
- * unique-local and IPv4-mapped. Errs towards "not global" (the check is that none is named).
+ * IPv4 outside global unicast: `rtc/candidates.rs` `v4_global`, negated, range by range.
+ */
+function v4NotGlobal(host: string): boolean {
+  const [a = 0, b = 0, c = 0] = host.split('.').map(Number);
+  return (
+    a === 0 || // "this network"
+    a === 10 || // private
+    (a === 100 && b >= 64 && b < 128) || // shared address space (CGNAT, tailnets)
+    a === 127 || // loopback
+    (a === 169 && b === 254) || // link-local
+    (a === 172 && b >= 16 && b < 32) || // private
+    (a === 192 && b === 0 && c === 0) || // IETF protocol assignments
+    (a === 192 && b === 0 && c === 2) || // documentation
+    (a === 192 && b === 168) || // private
+    (a === 198 && (b === 18 || b === 19)) || // benchmarking
+    (a === 198 && b === 51 && c === 100) || // documentation
+    (a === 203 && b === 0 && c === 113) || // documentation
+    a >= 224 // multicast, reserved, broadcast
+  );
+}
+
+/** An IPv6 address's eight segments (any textual form, dotted tail included). */
+function v6Segments(host: string): number[] {
+  const n = new URL(`http://[${host}]`).hostname.slice(1, -1); // canonical: hex only
+  const [head = '', tail] = n.split('::');
+  const h = head === '' ? [] : head.split(':');
+  const t = tail === undefined || tail === '' ? [] : tail.split(':');
+  const fill = tail === undefined ? [] : Array<string>(8 - h.length - t.length).fill('0');
+  return [...h, ...fill, ...t].map((x) => parseInt(x, 16));
+}
+
+/**
+ * `ip:port` or `[ip6]:port` that the helper's rule (`rtc/candidates.rs` `allowed`, private
+ * addresses not allowed) rejects: outside IPv4 global unicast (an IPv4-mapped IPv6 address by
+ * the IPv4 rule, as `allowed` maps it) or outside 2000::/3 less its documentation prefixes.
  */
 function notGlobal(addr: string): boolean {
   const host = addr.startsWith('[') ? addr.slice(1, addr.indexOf(']')) : addr.split(':')[0]!;
-  if (host.includes(':')) return !/^[23][0-9a-f]{3}:/i.test(host) || /^2001:0?db8:/i.test(host);
-  const [a = 0, b = 0] = host.split('.').map(Number);
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    a >= 224 ||
-    (a === 100 && b >= 64 && b < 128) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b < 32) ||
-    (a === 192 && b === 168)
+  if (!host.includes(':')) return v4NotGlobal(host);
+  const s = v6Segments(host);
+  if (s.slice(0, 5).every((x) => x === 0) && s[5] === 0xffff)
+    return v4NotGlobal(`${s[6]! >> 8}.${s[6]! & 255}.${s[7]! >> 8}.${s[7]! & 255}`);
+  const s0 = s[0]!;
+  return !(
+    (s0 & 0xe000) === 0x2000 &&
+    !(s0 === 0x2001 && s[1] === 0x0db8) &&
+    (s0 & 0xfff0) !== 0x3ff0
   );
 }
+
+describe("notGlobal, the test's copy of candidates::allowed", () => {
+  it('rejects what the helper rejects and keeps what it keeps', () => {
+    const rejected = [
+      '0.1.2.3:1',
+      '10.0.0.1:1',
+      '100.64.0.3:1',
+      '127.0.0.1:1',
+      '169.254.169.254:1',
+      '172.16.0.1:1',
+      '192.0.0.1:1234',
+      '192.0.2.1:1',
+      '192.168.8.1:1',
+      '198.18.0.1:1234',
+      '198.19.255.255:1',
+      '198.51.100.7:1',
+      '203.0.113.9:1',
+      '224.0.0.1:1',
+      '255.255.255.255:1',
+      '[::1]:1',
+      '[::]:1',
+      '[fe80::1]:1',
+      '[fd00::1]:1',
+      '[2001:db8::1]:1',
+      '[3ff0::1]:1',
+      '[3fff:ffff::1]:1',
+      '[::ffff:192.168.1.1]:1',
+      '[::ffff:a00:1]:1',
+      '[ff02::1]:1',
+    ];
+    const kept = [
+      '1.1.1.1:1',
+      '8.8.8.8:443',
+      '100.63.255.255:1',
+      '100.128.0.1:1',
+      '172.32.0.1:1',
+      '192.0.1.1:1',
+      '198.20.0.1:1',
+      '203.0.114.1:1',
+      '223.255.255.255:1',
+      '[2606:4700::1111]:1',
+      '[2001:db9::1]:1',
+      '[3fef::1]:1',
+      '[::ffff:8.8.8.8]:1',
+    ];
+    expect(rejected.filter((a) => !notGlobal(a))).toEqual([]);
+    expect(kept.filter(notGlobal)).toEqual([]);
+  });
+});
