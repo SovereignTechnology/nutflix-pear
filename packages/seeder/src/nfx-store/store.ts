@@ -434,8 +434,10 @@ export class NfxStore {
   private readonly fillIds = new WeakMap<NonNullable<NfxKeptRecord['filling']>, symbol>();
   private readonly keepCleanup = new Set<string>();
   /**
-   * Bytes of journaled cleanup files that may still be on disk: charged to the cap until their
-   * deletion succeeds, or a record names the hash again and its charge becomes that record's.
+   * Bytes of journaled cleanup files that may still be on disk, charged to the cap until their
+   * deletion succeeds. For a hash a record names again, the record's size is charged and this
+   * holds only what the file takes beyond it, until a verified write shrinks it: the cap holds the
+   * larger of the two.
    */
   private readonly cleanupBytes = new Map<string, number>();
   private readonly root: string;
@@ -588,7 +590,6 @@ export class NfxStore {
     await this.cleanParts();
     // A journaled file still on disk takes space: charged (in `totalBytes`) until it is gone.
     for (const sha of this.keepCleanup) {
-      if (this.sizes.has(sha)) continue;
       const st = await fs.stat(this.filePath(sha));
       if (st?.isFile) this.cleanupBytes.set(sha, st.size);
     }
@@ -609,13 +610,14 @@ export class NfxStore {
   }
 
   /**
-   * Bytes of every stored file, each once however many videos list it, and of cleanup files
-   * not deleted yet.
+   * Bytes of every stored file, each once however many videos list it, and what cleanup files
+   * not deleted yet take beyond that.
    */
   totalBytes(): number {
     let n = 0;
     for (const size of this.sizes.values()) n += size;
-    for (const [sha, size] of this.cleanupBytes) if (!this.sizes.has(sha)) n += size;
+    for (const [sha, size] of this.cleanupBytes)
+      n += Math.max(0, size - (this.sizes.get(sha) ?? 0));
     return n;
   }
 
@@ -785,7 +787,8 @@ export class NfxStore {
       for (const { sha256, size } of removed) {
         this.keepCleanup.add(sha256);
         this.present.delete(sha256);
-        this.cleanupBytes.set(sha256, size);
+        // The larger charge stays: a recovered file may be bigger than its listed size.
+        this.cleanupBytes.set(sha256, Math.max(this.cleanupBytes.get(sha256) ?? 0, size));
       }
       this.recount();
       if (await this.cleanAbandonedFiles()) this.keptDirty = true;
@@ -1403,8 +1406,14 @@ export class NfxStore {
           if (bytes !== undefined) this.cap?.free(bytes);
           this.cleanupBytes.delete(sha);
         } else {
-          // Named again: that record's charge carries it now; free only what it held beyond.
-          const excess = this.endCleanupCharge(sha, this.sizes.get(sha) ?? 0);
+          // Named again: that record's charge carries its size. What the file takes beyond that
+          // stays charged until a verified write has shrunk it (retried at the next flush).
+          const size = this.sizes.get(sha) ?? 0;
+          if ((this.cleanupBytes.get(sha) ?? 0) > size) {
+            const st = await fs.stat(this.filePath(sha));
+            if (st !== null && st.size > size) continue;
+          }
+          const excess = this.endCleanupCharge(sha, size);
           if (excess > 0) this.cap?.free(excess);
         }
         this.keepCleanup.delete(sha);
