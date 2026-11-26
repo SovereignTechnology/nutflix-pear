@@ -1,7 +1,8 @@
 /**
  * The NFX seeder key (ADR 0020 slice 5c): a Nostr key of this node's own, per network and per
- * user, that signs its kind-20464 beacons and nothing else. NFX-03 names the seeder by its key,
- * not the creator's, and a NIP-46 user could not approve a signature every minute anyway.
+ * user, that signs its kind-20464 beacons, the NFX-17 tells that carry them, and nothing else.
+ * NFX-03 names the seeder by its key, not the creator's, and a NIP-46 user could not approve a
+ * signature every 30 s anyway.
  *
  * Custody follows the rules for every key here:
  * - **Held by core's `LocalSigner`**, the only code that holds a Nostr private key.
@@ -10,7 +11,9 @@
  * - **The passphrase is 32 random bytes**, sealed NIP-44-to-self by the user's own signer (the
  *   recovery-file pattern), so the key opens only for the user who made it. A NIP-46 user
  *   approves one decryption per launch.
- * - **It signs kind 20464 only.** It is never an `IdentityProvider` and never signs as the user.
+ * - **It signs beacons (kind 20464) and tells (kind 20465 with `t` `tell`, NFX-17) only.** A
+ *   tell is addressed to one key and carries a beacon this key signed. It is never an
+ *   `IdentityProvider` and never signs as the user.
  */
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -35,6 +38,9 @@ export interface BeaconDraft {
   readonly tags: readonly (readonly string[])[];
   readonly content: string;
 }
+
+/** A tell draft (NFX-17 §1.2), as core's `lookupTellTemplate` makes one; checked at run time. */
+export type TellDraft = BeaconDraft;
 
 export interface OpenSeederKey {
   /** `<userData>/nfx`. */
@@ -140,6 +146,23 @@ export class NfxSeederKey {
   async signBeacon(draft: BeaconDraft): Promise<NostrEvent> {
     if (draft.kind !== nfx.KIND_BEACON)
       throw new Error('invalid-argument: the seeder key signs beacons only');
+    return this.signer.signEvent({
+      kind: draft.kind,
+      created_at: draft.created_at,
+      tags: draft.tags,
+      content: draft.content,
+    });
+  }
+
+  /**
+   * Signs an NFX-17 tell (kind 20465, one `t` tag `tell` and one `p`) and refuses every other
+   * event, an ask included: this key answers, it never asks.
+   */
+  async signTell(draft: TellDraft): Promise<NostrEvent> {
+    const t = draft.tags.filter((x) => x[0] === 't');
+    const p = draft.tags.filter((x) => x[0] === 'p');
+    if (draft.kind !== nfx.KIND_LOOKUP || t.length !== 1 || t[0]?.[1] !== 'tell' || p.length !== 1)
+      throw new Error('invalid-argument: the seeder key signs tells only here');
     return this.signer.signEvent({
       kind: draft.kind,
       created_at: draft.created_at,

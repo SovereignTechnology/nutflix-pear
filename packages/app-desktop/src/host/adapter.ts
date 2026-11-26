@@ -90,6 +90,7 @@ import { MergedCatalog } from './catalog/merged-catalog.js';
 import { fail, hostError } from './errors.js';
 import type { IdentityProvider } from './identity.js';
 import { NfxBeacons } from './nfx/beacons.js';
+import { NfxLookupAnswers } from './nfx/lookup-answers.js';
 import { NfxMeshSignaler } from './nfx/mesh-signaler.js';
 import { NfxBeaconWatch } from './nfx/beacon-watch.js';
 import { NfxHostSession, beaconPeers, videoOf } from './nfx/play.js';
@@ -170,6 +171,8 @@ export interface DesktopAdapterOptions {
    * it no beacon is ever published.
    */
   readonly nfxDir?: string;
+  /** NFX-17: answer seeder lookups with this node's beacons (with `nfxDir`; default on). */
+  readonly nfxLookupAnswers?: boolean;
   /**
    * #89: the worker has an iroh helper, so it can run a WebRTC side (`host.ts` passes whether
    * `irohHelper` is set). Without one there is no WebRTC and no signaling.
@@ -236,6 +239,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly beaconWatch: NfxBeaconWatch;
   /** Slice 5c: the beacon publisher (with `nfxDir`). */
   private readonly beacons: NfxBeacons | null;
+  /** NFX-17: answers lookups with the beacons' newest (with `nfxDir`, unless turned off). */
+  private readonly lookupAnswers: NfxLookupAnswers | null;
   /** #89: signaling for the worker's WebRTC side, over Nostr (NFX-10 §6). */
   private readonly mesh: NfxMeshSignaler;
   /** Slice 5c: the seeder key of the current user and network, opened on first need. */
@@ -265,6 +270,18 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       opts.relayInfo === undefined ? null : new nostr.RelaySearchSupport(opts.relayInfo);
     const nfxDir = opts.nfxDir;
     this.seeded = nfxDir === undefined ? null : new SeededVideos(nfxDir, this.log);
+    this.lookupAnswers =
+      nfxDir === undefined || opts.nfxLookupAnswers === false
+        ? null
+        : new NfxLookupAnswers({
+            scopedRelays: () => this.beaconRelays(),
+            readRelays: () => this.client().readRelays,
+            subscribe: (relay, filters, onEvent, onClose) =>
+              this.o.pool.subscribe([relay], filters, { onevent: onEvent, onclose: onClose }),
+            publish: (event, relays) => this.o.pool.publish(relays, event),
+            now: () => this.now(),
+            log: this.log.child('nfx-lookup'),
+          });
     this.beacons =
       nfxDir === undefined
         ? null
@@ -279,6 +296,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
             send: async (event, relays) =>
               (await this.o.pool.publish(relays, event)).filter((r) => r.ok).length,
             now: () => this.now(),
+            onBeacon: (b) => this.lookupAnswers?.serve(b),
+            relayPaused: (r) => this.lookupAnswers?.paused(r) === true,
             log: this.log.child('nfx-beacons'),
           });
     this.mesh = new NfxMeshSignaler({
@@ -370,14 +389,16 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       ?.load()
       .catch(() => undefined)
       .then(() => {
+        this.lookupAnswers?.start();
         this.beacons?.start();
       });
     this.applyMesh();
   }
 
-  /** Slice 5c: stop publishing beacons (they expire on their own within 120 s). */
+  /** Slice 5c: stop publishing beacons (they expire on their own within 60 s) and answering. */
   stopNfx(): void {
     this.beacons?.stop();
+    this.lookupAnswers?.stop();
     this.mesh.stop();
   }
 

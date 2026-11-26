@@ -136,10 +136,14 @@ off means no NFX query, listing, seeding or beacon.
     key, in a `LocalSigner` key file under `<userData>/nfx/`.
   - The key file's random passphrase is sealed NIP-44-to-self by the user's signer, the recovery
     file's pattern. It works on every platform; a NIP-46 user approves one decryption per launch.
-  - It signs kind 20464 only, and is never the user's identity.
+  - It signs kind 20464 only, and is never the user's identity. *(Amended 2026-11-26: it also
+    signs the NFX-17 tells that answer a seeder lookup, kind 20465 with `t` `tell`, each carrying
+    one of its beacons; `host/nfx/lookup-answers.ts`.)*
   - A signer that is merely unavailable never causes the key to be replaced.
 - **Beacons** go to the scoped relays only, never to public ones (NFX-03 §7).
   - Each lives 120 s and is republished every 60 s, carrying `free: true` and `price_hint: 0`.
+    *(Amended 2026-11-26: 60 s, republished every 30 s, as NFX-17 §3 recommends; never twice to
+    one relay for one video within 20 s, NFX-04 §2.)*
   - A video is beaconed only while its current manifest by the recorded author names the
     verified root, and is not deleted (NFX-02 §6). This is rechecked every 10 minutes.
   - The author of each seeded video is recorded when it becomes known, because the store keeps
