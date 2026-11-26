@@ -349,6 +349,54 @@ describe('NfxStore kept videos', () => {
     expect(stuck.store.totalBytes()).toBe(0);
   });
 
+  it.each(['keep', 'put'] as const)(
+    'charges in full a truncated cleanup file that a %s names again',
+    async (how) => {
+      const p = pkg(`truncated-${how}`);
+      const { dir } = await open();
+      const root = filePath(dir, p.root);
+      let failUnlink = true;
+      const fs: SeederFs = {
+        ...adapters.fs,
+        unlink: (file) =>
+          failUnlink && file === root
+            ? Promise.reject(new Error('cannot unlink'))
+            : adapters.fs.unlink(file),
+      };
+      const first = await open(undefined, dir, undefined, fs);
+      await startFill(first.store, p);
+      expect(await first.store.abandonKeep(p.video)).toBe(true);
+      // Cut short before the next start, the stuck hash list comes back charged 1 byte.
+      await writeFile(root, new Uint8Array(1));
+      const { store, cap } = await open(undefined, dir, undefined, fs);
+      expect(cap.usedBytes).toBe(1);
+
+      if (how === 'keep') await keep(store, p);
+      else {
+        const put = await store.putVideo({
+          video: p.video,
+          root: p.root,
+          segs: p.segs,
+          hashListBytes: p.hashListBytes,
+          read: (e) => Promise.resolve(p.files.get(e.sha256)!),
+        });
+        expect(put.ok).toBe(true);
+      }
+      // The byte it held plus what it lacked: the whole file, rewritten.
+      expect(cap.usedBytes).toBe(store.totalBytes());
+      expect((await readFile(root)).byteLength).toBe(p.hashListBytes.byteLength);
+
+      failUnlink = false;
+      await store.flushKept();
+      expect(cap.usedBytes).toBe(store.totalBytes());
+      expect(await (how === 'keep' ? store.removeKept(p.video) : store.removeVideo(p.video))).toBe(
+        true,
+      );
+      expect(await onDisk(dir)).toEqual([]);
+      expect(cap.usedBytes).toBe(0);
+    },
+  );
+
   it('rejects late writes and completion from an abandoned fill', async () => {
     const { store } = await open();
     const p = pkg('replacement-fill');
