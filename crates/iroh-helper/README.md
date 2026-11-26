@@ -102,7 +102,7 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 
 | op | fields | reply |
 |---|---|---|
-| `init` | `secret?` (64 hex), `relays` (http(s) URLs), `relay_only?`, `portmapper?`, `relay_cas?` (≤ 4 DER CAs, hex) | `node`, `relay`, `addrs` |
+| `init` | `secret?` (64 hex), `relays` (http(s) URLs), `relay_only?`, `portmapper?`, `local_addrs?`, `relay_cas?` (≤ 4 DER CAs, hex) | `node`, `relay`, `addrs` |
 | `addr` | | `node`, `relay`, `addrs` |
 | `import` | `path` (absolute) | `hash` (BLAKE3, 64 hex), `size` |
 | `seq` | `members` (BLAKE3 hashes, each stored here), `tag` | `hash`, `ticket` (a HashSeq `BlobTicket` naming this node) |
@@ -116,7 +116,13 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 
 - `init` waits up to 10 s for the home relay when relays are given. Without `secret` the node has
   a fresh key, so its id changes at every start (as nfxd's does). Empty `relays` means no relay
-  at all, never n0's. The portmapper (UPnP, PCP, NAT-PMP) is off unless `portmapper` is true. A
+  at all, never n0's. The portmapper (UPnP, PCP, NAT-PMP) is off unless `portmapper` is true.
+  `addrs` and every ticket name the relays and only global direct addresses (the rule
+  `rtc/candidates.rs` shows the WebRTC side's own candidates by): a LAN, loopback, link-local or
+  CGNAT address is never handed out unless `local_addrs` is true (tests, same-LAN runs), so what a
+  seeder announces never maps its user's network (NFX-18). A peer behind the same NAT reaches it
+  through the relay, and hole punching finds the direct path once connected (iroh then tells
+  that one peer its addresses, as any direct connection would). A
   malformed `init` is answered "malformed init" and nothing more, so no field's value (the secret)
   comes back in an error. `relay_cas` adds trust anchors for the relays' TLS beside iroh's
   embedded (Mozilla) roots, for a network whose relays use a private CA; iroh never uses them for

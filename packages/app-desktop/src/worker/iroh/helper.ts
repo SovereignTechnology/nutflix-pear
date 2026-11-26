@@ -63,6 +63,12 @@ export interface HelperInit {
   /** Ask the local gateway (UPnP, PCP, NAT-PMP) for a port. Off unless the node seeds and asks. */
   readonly portmapper?: boolean;
   /**
+   * NFX-18: hand out this host's LAN, loopback and other non-global addresses too, in `reach`
+   * and in tickets. Tests and same-LAN runs only, as `HelperRtcInit.allowPrivate`; off, what a
+   * seeder announces never maps its user's network.
+   */
+  readonly localAddrs?: boolean;
+  /**
    * Extra CA certificates (DER, lowercase hex; at most 4) for the relays' TLS, added to iroh's
    * embedded roots: a network whose relays use a private CA. iroh never uses them for its own
    * connections, which its keys authenticate. From local network settings only, never from
@@ -859,6 +865,7 @@ export class IrohHelper {
     if (this.#secret !== undefined) init['secret'] = this.#secret;
     if (o.relayOnly === true) init['relay_only'] = true;
     if (o.portmapper === true) init['portmapper'] = true;
+    if (o.localAddrs === true) init['local_addrs'] = true;
     if (o.relayCas !== undefined && o.relayCas.length > 0) init['relay_cas'] = [...o.relayCas];
     return init;
   }
