@@ -528,6 +528,44 @@ describe('NfxCatalog: the scoped and public relays at once (ADR 0026, 2026-11-26
     expect(video.ms).toBeLessThan(GRACE + 250);
   });
 
+  it('a top-up that stalls leaves the short page by the same deadline; its cursor skips nothing (CodeRabbit, #157)', async () => {
+    const GRACE = 400;
+    const t = twoPools();
+    const creator = new kit.TestSigner();
+    // As in the cursor walk: X (read set) is withdrawn by the scoped set's deletion, and the read
+    // set's floor is X, so the first page is empty and asks for a top-up.
+    t.scoped.store(await kit.sign(creator, nfxDraft('w-video', 3)));
+    t.pub.store(await kit.sign(creator, nfxDraft('x-video', 1)));
+    t.pub.store(await kit.sign(creator, nfxDraft('z-video', 2)));
+    t.scoped.store(
+      await kit.sign(creator, {
+        kind: 5,
+        created_at: mocks.FIXTURE_NOW - 0.5 * HOUR,
+        content: '',
+        tags: [['a', addr(creator.pubkey, 'x-video')]],
+      }),
+    );
+    // Every later page (a query with `until`) never answers, on either set.
+    for (const pool of [t.scoped, t.pub]) {
+      const query = pool.query.bind(pool);
+      vi.spyOn(pool, 'query').mockImplementation((relays, filter) =>
+        filter.until === undefined ? query(relays, filter) : new Promise<never>(() => undefined),
+      );
+    }
+    const cat = scopedCatalog(t, GRACE);
+    for (const q of [
+      { source: 'network', limit: 1 },
+      { source: 'author', author: creator.pubkey, limit: 1 },
+    ] as const) {
+      const t0 = Date.now();
+      const page = await cat.feed(q, null);
+      expect(Date.now() - t0, q.source).toBeLessThan(GRACE + 250);
+      expect(titles(page), q.source).toEqual([]);
+      // The read set's own cursor: nothing newer than its floor (X) was left unread.
+      expect(page.next, q.source).toMatch(/^t:\d+:/);
+    }
+  });
+
   it('a relay set that never answers does not hold a read the other already answered in full (the grace)', async () => {
     const hang = (): Promise<never> => new Promise<never>(() => undefined);
     // The public relays hang (an unreachable relay before its connect timeout): a full scoped page answers.

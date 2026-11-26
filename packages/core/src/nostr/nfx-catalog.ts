@@ -123,24 +123,36 @@ function mergePages(
 /**
  * `page`, filled from the merged page after it when `mergePages` left it short (`dropped` > 0) and
  * there is more, while `rounds` last. The two are consecutive pages of one query, so the first
- * `limit` of both is a page too, and its cursor is that page's own. A read that fails keeps `page`.
+ * `limit` of both is a page too, and its cursor is that page's own. A read that fails, or is not in
+ * within `waitMs` (what is left of the read's deadline), keeps `page`: short, but its cursor skips
+ * nothing.
  */
 async function toppedUp(
   page: Page<NfxVideo>,
   dropped: number,
   limit: number,
   rounds: number,
+  waitMs: number,
   after: (cursor: string) => Promise<Page<NfxVideo>>,
 ): Promise<Page<NfxVideo>> {
   if (dropped === 0 || rounds <= 0 || page.next === undefined || page.items.length >= limit) {
     return page;
   }
-  let more: Page<NfxVideo>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(undefined);
+    }, waitMs);
+  });
+  let more: Page<NfxVideo> | undefined;
   try {
-    more = await after(page.next);
+    more = await Promise.race([after(page.next), late]);
   } catch {
     return page;
+  } finally {
+    clearTimeout(timer);
   }
+  if (more === undefined) return page;
   const listed = new Set(page.items.map((v) => v.id));
   const all = [...page.items, ...more.items.filter((v) => !listed.has(v.id))];
   const items = all.slice(0, limit);
@@ -301,7 +313,9 @@ export class NfxCatalog implements NfxSource {
    * `bothAtOnce` for a page of at most `limit` from `cursor`: a page is enough when it is full. The
    * two pages are merged (`mergePages`: one video per address, the newest revision, the scoped copy
    * on a tie, newest first, `limit`), so an empty or short scoped page never shrinks the catalog. A
-   * page that withdrawals left short is filled from the pages after it (`toppedUp`). With
+   * page that withdrawals left short is filled from the pages after it (`toppedUp`), by the same
+   * deadline as the deletion checks (the grace's, or one grace from the merge when no full answer
+   * started one), so neither holds the page past it. With
    * `emptyStands`, an empty scoped page beside a failed read is that empty page, not the error: the
    * read fails only when every relay set does (the Network feed).
    */
@@ -315,22 +329,25 @@ export class NfxCatalog implements NfxSource {
     emptyStands = false,
     rounds = NFX_TOP_UP_ROUNDS,
   ): Promise<Page<NfxVideo>> {
-    let dropped = 0;
+    // One deadline for what the merge asks after the reads: the deletion checks, then a top-up.
+    const after: { by: number; dropped: number } = { by: 0, dropped: 0 };
     const page = await this.bothAtOnce(
       (relays) => read(relays, cursor),
       (p) => p.items.length >= limit,
       (p) => emptyStands || p.items.length > 0,
       async (scoped, fallback, scopedRelays, deadline) => {
+        after.by = deadline ?? Date.now() + this.mergeGraceMs;
         const merged = mergePages(
           [scoped, fallback],
           limit,
-          await this.withdrawnAcross(scoped.items, fallback.items, scopedRelays, deadline),
+          await this.withdrawnAcross(scoped.items, fallback.items, scopedRelays, after.by),
         );
-        dropped = merged.dropped;
+        after.dropped = merged.dropped;
         return merged.page;
       },
     );
-    return toppedUp(page, dropped, limit, rounds, (next) =>
+    const waitMs = Math.max(0, after.by - Date.now());
+    return toppedUp(page, after.dropped, limit, rounds, waitMs, (next) =>
       this.bothAtOncePage(read, limit, next, emptyStands, rounds - 1),
     );
   }
