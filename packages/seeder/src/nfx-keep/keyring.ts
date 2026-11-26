@@ -53,10 +53,11 @@ function cached(
   closeStore: () => Promise<void>,
 ): Keyring {
   const cache = new Map<string, Promise<PeerKeyPair>>();
-  let closed = false;
+  let closing: Promise<void> | undefined;
   return {
     keyPair: (name) => {
-      if (closed) return Promise.reject(new Error('backend-down: the keyring is closed'));
+      if (closing !== undefined)
+        return Promise.reject(new Error('backend-down: the keyring is closed'));
       if (name.length === 0 || name.length > MAX_KEY_NAME)
         return Promise.reject(new Error('invalid-argument: not a key name'));
       let kp = cache.get(name);
@@ -69,11 +70,12 @@ function cached(
       }
       return kp;
     },
-    close: async () => {
-      if (closed) return;
-      closed = true;
-      cache.clear();
-      await closeStore();
+    close: () => {
+      if (closing === undefined) {
+        cache.clear();
+        closing = Promise.resolve().then(closeStore);
+      }
+      return closing;
     },
   };
 }

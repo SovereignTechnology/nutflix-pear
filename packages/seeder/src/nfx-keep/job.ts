@@ -15,13 +15,7 @@
  */
 import type { nfx } from '@sovit/core';
 
-import type {
-  NfxKeepBegin,
-  NfxKeepError,
-  NfxKeepResult,
-  NfxStore,
-  NfxStoredFile,
-} from '../nfx-store/index.js';
+import type { NfxKeepBegin, NfxKeepError, NfxStore, NfxStoredFile } from '../nfx-store/index.js';
 
 /**
  * What a job reads of the signal that stops it. An `AbortSignal` is one; so is a plain flag, for
@@ -54,7 +48,7 @@ export interface KeepJobInput extends NfxKeepBegin {
   readonly maxFileBytes: number;
   readonly onProgress?: (p: KeepProgress) => void;
   /** Bytes about to be fetched: `false` stops the job as `budget` (`./budget.ts`). */
-  readonly spend?: (bytes: number) => boolean;
+  readonly spend?: (bytes: number) => boolean | Promise<boolean>;
 }
 
 export type KeepJobResult =
@@ -95,7 +89,7 @@ export async function keepRendition(input: KeepJobInput): Promise<KeepJobResult>
     fetchedBytes,
   });
 
-  const begun: NfxKeepResult = await store.beginKeep(input);
+  const begun = await store.beginKeep(input);
   if (!begun.ok) return failed(begun.error, begun.message);
   if (begun.state !== 'filling') return { ok: true, state: begun.state, fetchedBytes };
 
@@ -115,22 +109,40 @@ export async function keepRendition(input: KeepJobInput): Promise<KeepJobResult>
     if (aborted()) return stopped('aborted');
     if (file.size > input.maxFileBytes)
       return failed('too-large', 'a file of this rendition is too large to keep');
-    let bytes = (await input.held?.(file.sha256).catch(() => null)) ?? null;
-    if (bytes === null) {
-      if (input.spend !== undefined && !input.spend(file.size)) return stopped('budget');
-      try {
-        bytes = await input.fetch(file, input.signal);
-      } catch (err) {
-        if (aborted()) return stopped('aborted');
-        return failed('fetch', err instanceof Error ? err.message : 'the fetch failed');
+    const held = (await input.held?.(file.sha256).catch(() => null)) ?? null;
+    if (aborted()) return stopped('aborted');
+    if (held !== null) {
+      const put = await store.putKeptFile(video, begun.fillId, file.sha256, held);
+      if (put.ok) {
+        report();
+        continue;
       }
-      fetchedBytes += bytes.byteLength;
+      if (put.error !== 'mismatch') return failed(put.error, put.message);
     }
-    const put = await store.putKeptFile(video, file.sha256, bytes);
+    if (aborted()) return stopped('aborted');
+    try {
+      if (input.spend !== undefined && !(await input.spend(file.size))) {
+        return stopped(aborted() ? 'aborted' : 'budget');
+      }
+    } catch (err) {
+      if (aborted()) return stopped('aborted');
+      return failed('io', err instanceof Error ? err.message : 'could not save the keep budget');
+    }
+    if (aborted()) return stopped('aborted');
+    let bytes: Uint8Array;
+    try {
+      bytes = await input.fetch(file, input.signal);
+    } catch (err) {
+      if (aborted()) return stopped('aborted');
+      return failed('fetch', err instanceof Error ? err.message : 'the fetch failed');
+    }
+    fetchedBytes += bytes.byteLength;
+    const put = await store.putKeptFile(video, begun.fillId, file.sha256, bytes);
     if (!put.ok) return failed(put.error, put.message);
     report();
   }
-  const done = await store.completeKeep(video);
+  if (aborted()) return stopped('aborted');
+  const done = await store.completeKeep(video, begun.fillId);
   if (!done.ok) return failed(done.error, done.message);
   if (done.state !== 'held') return failed('fetch', 'files went missing while keeping');
   return { ok: true, state: 'held', fetchedBytes };

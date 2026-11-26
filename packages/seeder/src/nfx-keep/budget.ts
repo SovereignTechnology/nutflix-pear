@@ -15,8 +15,6 @@ export const DEFAULT_KEEP_BYTES_PER_HOUR = 16 * 1024 * 1024 * 1024;
 
 const HOUR_MS = 3_600_000;
 const BUCKET_MS = 60_000;
-/** A save at most this often while fetching; `flush` saves at once. */
-const SAVE_EVERY_MS = 30_000;
 
 interface BudgetFile {
   readonly version: 1;
@@ -57,7 +55,6 @@ export class KeepBudget {
   private readonly bytesPerHour: number;
   private starts: number[] = [];
   private fetched: [number, number][] = [];
-  private savedAt = 0;
   private dirty = false;
   private saving: Promise<void> = Promise.resolve();
 
@@ -92,32 +89,37 @@ export class KeepBudget {
   /** Whether a new video may start keeping now. */
   canStart(): boolean {
     this.prune();
-    return this.starts.length < this.startsPerHour && this.usedBytes() < this.bytesPerHour;
+    return this.starts.length < this.startsPerHour && this.sumBytes() < this.bytesPerHour;
   }
 
   /** Count a new video's start. `false`, and nothing counted, when the hour has none left. */
-  start(): boolean {
+  async start(): Promise<boolean> {
     if (!this.canStart()) return false;
     this.starts.push(this.now());
-    this.changed();
+    await this.save();
     return true;
   }
 
   /** Spend `bytes` about to be fetched. `false`, and nothing spent, when it would pass the hour's. */
-  spend(bytes: number): boolean {
+  async spend(bytes: number): Promise<boolean> {
     this.prune();
     if (!Number.isSafeInteger(bytes) || bytes < 0) return false;
-    if (this.usedBytes() + bytes > this.bytesPerHour) return false;
+    if (this.sumBytes() + bytes > this.bytesPerHour) return false;
     const bucket = Math.floor(this.now() / BUCKET_MS) * BUCKET_MS;
     const last = this.fetched.at(-1);
     if (last?.[0] === bucket) last[1] += bytes;
     else this.fetched.push([bucket, bytes]);
-    this.changed();
+    await this.save();
     return true;
   }
 
   /** Bytes fetched within the last hour. */
   usedBytes(): number {
+    this.prune();
+    return this.sumBytes();
+  }
+
+  private sumBytes(): number {
     let n = 0;
     for (const [, b] of this.fetched) n += b;
     return n;
@@ -129,20 +131,23 @@ export class KeepBudget {
     return this.save();
   }
 
-  private changed(): void {
-    this.dirty = true;
-    if (this.now() - this.savedAt >= SAVE_EVERY_MS) void this.save().catch(() => undefined);
-  }
-
   private save(): Promise<void> {
     this.dirty = false;
-    this.savedAt = this.now();
     const value: BudgetFile = {
       version: 1,
       starts: [...this.starts],
       fetched: this.fetched.map(([t, b]) => [t, b] as const),
     };
-    this.saving = this.saving.catch(() => undefined).then(() => this.db.save(value));
+    this.saving = this.saving
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await this.db.save(value);
+        } catch (err) {
+          this.dirty = true;
+          throw err;
+        }
+      });
     return this.saving;
   }
 

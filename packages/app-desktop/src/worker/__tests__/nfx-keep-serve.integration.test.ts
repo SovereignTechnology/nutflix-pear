@@ -134,18 +134,20 @@ describe('NFX-18: a worker with no mint serves what it keeps', () => {
       reason: 'watched',
     });
     if (!begun.ok) throw new Error(begun.message);
-    expect(begun.state).toBe('filling');
+    if (begun.state !== 'filling') throw new Error(`not filling: ${begun.state}`);
+    const { fillId } = begun;
     const missing = store.keepMissing(addr());
     // All but one file on disk: still filling, so nothing is served, the hash list included.
     for (const f of missing.slice(0, -1)) {
-      const put = await store.putKeptFile(addr(), f.sha256, v.files.get(f.sha256)!);
+      const put = await store.putKeptFile(addr(), fillId, f.sha256, v.files.get(f.sha256)!);
       expect(put.ok).toBe(true);
     }
     expect(await fetchFrom(key, v.root)).toBeNull();
 
     const last = missing.at(-1)!;
-    expect((await store.putKeptFile(addr(), last.sha256, v.files.get(last.sha256)!)).ok).toBe(true);
-    const done = await store.completeKeep(addr());
+    const lastPut = await store.putKeptFile(addr(), fillId, last.sha256, v.files.get(last.sha256)!);
+    expect(lastPut.ok).toBe(true);
+    const done = await store.completeKeep(addr(), fillId);
     expect(done.ok && done.state).toBe('held');
     for (const sha of [v.root, entry.sha256, ...v.segmentShas]) {
       const got = await fetchFrom(key, sha);
