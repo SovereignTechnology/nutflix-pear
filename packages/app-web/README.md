@@ -1,10 +1,11 @@
 # @sovit/app-web
 
-The web client for NFX videos, to be served at web.nutflix.xyz. Its static site builds here and is
-tested end to end; it is not deployed yet. [ADR 0022](../../docs/decisions/0022-a-web-client-for-nfx.md)
-records the decision and its reasons; this file says what it is, what is here and how it is built.
+The web client for NFX videos, deployed at web.nutflix.xyz. Its static site builds here and is
+tested end to end; the deployment lives outside this repository.
+[ADR 0022](../../docs/decisions/0022-a-web-client-for-nfx.md) records the decision and its
+reasons; this file says what it is, what is here and how it is built.
 
-## What it will be
+## What it is
 
 The desktop app's interface in a browser, working like a Nostr client, for free NFX videos only:
 
@@ -16,10 +17,11 @@ The desktop app's interface in a browser, working like a Nostr client, for free 
   address; ADR 0020, 2026-11-19); the Network tab asks both at once. Beacons (kind 20464) from the
   scoped relay. Search uses NIP-50 only on relays whose NIP-11 document lists it, and matches a
   plain query in the page elsewhere; it asks the scoped relay first only when that one lists it.
-- **Video over WebRTC.** nfx's web player, as a library pinned by commit and sha256 in
-  `nfx-web.lock`, plays a video with hls.js and p2p-media-loader: segments come from other viewers
-  and from native peers (nfxd's mesh endpoint, the desktop app), signalled over ordinary Nostr
-  relays (NFX-10 §6, pear #89; no tracker), with SovTech's own STUN server.
+- **Video over WebRTC.** The web player of nutflix (formerly nfx), as a library pinned by commit
+  and sha256 in `nfx-web.lock`, plays a video with hls.js and p2p-media-loader: segments come from
+  other viewers and from native peers (nutflixd's mesh endpoint, the desktop app; nutflixd is
+  `nfxd` before its 0.1.5, and at the commits this repository's CI pins), signalled over ordinary
+  Nostr relays (NFX-10 §6, pear #89; no tracker), with SovTech's own STUN server.
   In the first version the hash list, playlists and init segments come over HTTPS, and so do
   segments no peer has.
 - **Checked in WebAssembly.** The manifest's signature, the hash list against the manifest, and
@@ -37,7 +39,7 @@ the same video. Whoever serves the page can change it; a browser cannot fully pr
 
 - **`src/adapter/`: the `NetworkAdapter`** (`platform: 'web'`). Feeds, search and the NFX watch page
   go through core's NFX catalogue, with search routed by each relay's NIP-11 document; plays wait
-  for seeders' live beacons (core's beacon watch) and hand nfx's player the origins they name,
+  for seeders' live beacons (core's beacon watch) and hand nutflix's player the origins they name,
   checked (`https:` only, no query or user-info, public hosts), then the fallback origin
   `https://web.nutflix.xyz/o`, and the signaling relays from Settings (by default
   `relay.nutflix.xyz`, `relay.primal.net` and `relay.ditto.pub`, the list the desktop app
@@ -47,8 +49,8 @@ the same video. Whoever serves the page can change it; a browser cannot fully pr
   asks an origin for a file it does not serve. Images load
   only when their publisher signed their sha256, and reach the screens as `blob:` URLs of bytes
   that match it. Calls that need a wallet, a signer, Hypercore or Studio reject `unsupported`.
-- **`src/nfx-lib.ts`: the part of nfx's player library the adapter calls** (`init`, `open`), so the
-  site build can wire in the pinned library and the tests a fake.
+- **`src/nfx-lib.ts`: the part of nutflix's player library the adapter calls** (`init`, `open`), so
+  the site build can wire in the pinned library and the tests a fake.
 - **`src/settings/`: settings in Web Storage** under `nutflix.web.settings.v1`, checked on every
   read and write like the desktop host's `settings.json`; an unreadable value means defaults, and a
   `storage` event keeps open tabs in step. NFX is always on. The only module here that may use
@@ -59,16 +61,16 @@ the same video. Whoever serves the page can change it; a browser cannot fully pr
 
 ## How it is built
 
-A static site, `dist/site/`, from `scripts/build-site.ts` (esbuild), with nfx's player library
+A static site, `dist/site/`, from `scripts/build-site.ts` (esbuild), with nutflix's player library
 pinned in [`nfx-web.lock`](nfx-web.lock):
 
-| File                                         | What                                                                                                                                                                    |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.html`                                 | `site/index.html` with a CSP `<meta>` and SRI on every script, module and stylesheet (`scripts/csp-sri.mjs`)                                                            |
-| `app.js`                                     | `site/entry.ts` bundled: `startWebClient` over nfx's library                                                                                                            |
-| `ui.css`, `shell.css`                        | `@sovit/ui`'s styles                                                                                                                                                    |
-| `nfx/player.js`, `nfx/wasm/nfx_wasm_bg.wasm` | nfx's library and its WASM verifier, byte for byte from the pinned tar; `index.html` preloads the library with its SRI hash, and `app.js` fetches the WASM with its own |
-| `source.json`                                | the pear and nfx commits, the lock, the CSP and the sha256 of every file (AGPL-3.0 §13), linked from Settings                                                           |
+| File                                         | What                                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.html`                                 | `site/index.html` with a CSP `<meta>` and SRI on every script, module and stylesheet (`scripts/csp-sri.mjs`)                                                                |
+| `app.js`                                     | `site/entry.ts` bundled: `startWebClient` over nutflix's library                                                                                                            |
+| `ui.css`, `shell.css`                        | `@sovit/ui`'s styles                                                                                                                                                        |
+| `nfx/player.js`, `nfx/wasm/nfx_wasm_bg.wasm` | nutflix's library and its WASM verifier, byte for byte from the pinned tar; `index.html` preloads the library with its SRI hash, and `app.js` fetches the WASM with its own |
+| `source.json`                                | the pear and nutflix commits, the lock, the CSP and the sha256 of every file (AGPL-3.0 §13), linked from Settings                                                           |
 
 Beside it, `dist/site-headers.txt` (the `Content-Security-Policy` and the other headers to serve the
 page with) and `dist/nutflix-web-site-<pear commit, 12 hex>.tar` (the site as a tar with fixed
@@ -91,10 +93,10 @@ built twice from the same commit, at any path, they are the same.
 The page's CSP: `default-src 'none'`; scripts, styles and fonts from the page's own origin only,
 plus `'wasm-unsafe-eval'` so that the WASM compiles (never `'unsafe-eval'`); `connect-src 'self'
 https: wss: blob:`, because relays and origins can be anywhere, and the verified WASM
-reaches nfx's `init` as a `blob:` URL; media and images from the page or `blob:`; no frames,
+reaches nutflix's `init` as a `blob:` URL; media and images from the page or `blob:`; no frames,
 objects, forms or base URI.
 
-Re-pinning nfx is one line of `nfx-web.lock`: `bash scripts/nfx-lib.sh pin <commit>` (or the
+Re-pinning nutflix is one line of `nfx-web.lock`: `bash scripts/nfx-lib.sh pin <commit>` (or the
 `web-site` workflow dispatched with `repin`) prints it.
 
 ## Tests
@@ -102,7 +104,7 @@ Re-pinning nfx is one line of `nfx-web.lock`: `bash scripts/nfx-lib.sh pin <comm
 - `npm test`: the adapter, settings and shell (jsdom), and the site build's rules
   (`scripts/__tests__`: the lock, the deny list, the tree hash, `source.json`).
 - `e2e/web.e2e.ts`: the built site in headless Chromium under its own headers, against nfxd built
-  from the lock's nfx commit (scoped relay, origin and its mesh endpoint) and a stock relay
+  from the lock's nutflix commit (scoped relay, origin and its mesh endpoint) and a stock relay
   without NIP-50 (strfry), which is also the only signaling path, all on loopback. It checks the feed, search on both relays, playback,
   playback from the bridge once the origin refuses every segment, a video seeded in 360p only
   (`nfxd --seed <a>#360p`) played without one request for its 720p files, a lying origin refused,

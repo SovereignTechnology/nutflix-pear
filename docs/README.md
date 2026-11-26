@@ -31,7 +31,9 @@ trying to do.
   and why it was made. Code comments cite them by number, so they are never renumbered.
 - [`plan/build-plan.md`](plan/build-plan.md): the original build plan. It is a historical input:
   where it disagrees with the ADRs or the code, those win.
-- [`spikes/`](spikes/): the three early research spikes that ADRs 0002 and 0003 rest on.
+- [`spikes/`](spikes/): the spike records. S-A to S-C are the three early research spikes that
+  ADRs 0002 and 0003 rest on; S-D is the iroh helper (ADR 0021) and S-E is NFX progressive
+  playback.
 - [`development.md`](development.md): running the Electron end-to-end suites.
 - [`native-modules.txt`](native-modules.txt): the reviewed list of native modules. CI fails if the
   installed set differs; `scripts/native-module-inventory.sh --check` runs the same test.

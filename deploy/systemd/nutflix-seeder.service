@@ -29,12 +29,12 @@ WorkingDirectory=/opt/nutflix
 # undici, which needs WebAssembly: an unhandled rejection kills the daemon one tick after
 # start. The flag removes that global (MDWE-RESULTS.md §6). Harmless on Node 24.
 # Entry point is the @sovit/seeder package main (cli/main.ts behind index.ts's main-module
-# guard); confirmed by lane Seeder-entry, see README "Assumptions".
+# guard); confirmed by lane Seeder-entry.
 ExecStart=/usr/bin/node --jitless --no-experimental-websocket /opt/nutflix/packages/seeder/dist/index.js --config /etc/nutflix/seeder.json
 # The key file's passphrase (build-plan §7 "never env vars"): an encrypted systemd credential.
 # PID 1 decrypts it before exec into a private ramfs only this service sees; the daemon reads
 # $CREDENTIALS_DIRECTORY/seeder-key-passphrase and refuses to start without it (exit 78).
-# Create it once, and the key file with --keygen: README "Key file and passphrase".
+# Create it once, and the key file with --keygen: README "Seeder key file and passphrase".
 LoadCredentialEncrypted=seeder-key-passphrase:/etc/credstore.encrypted/nutflix-seeder-key-passphrase
 Environment=NODE_ENV=production
 # T12: an injected NODE_OPTIONS (e.g. --require) is the classic way to hijack a Node service.
