@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NostrEvent, NostrFilter, RelayUrl, UnixSeconds } from '../../contracts/index.js';
 import { NostrClient } from '../client.js';
+import { timeCursor } from '../cursor.js';
 import { FakeRelayPool } from '../fake-relay.js';
 import { NfxCatalog } from '../nfx-catalog.js';
 import {
@@ -288,6 +289,38 @@ describe('search routed by NIP-50 support', () => {
       cursor = page.next;
     }
     expect(found).toEqual([near.id, old.id]);
+  });
+
+  it('a relay that caps answers at a scan page still continues a scan whose cursor skips ids (CodeRabbit, pear #157)', async () => {
+    const r = relays([STOCK]);
+    const creator = new TestSigner();
+    // The cursor already passed `top`, so the scan asks for NFX_SCAN_PAGE + 1 manifests.
+    const top = await store(r.of(STOCK), creator, manifest('video-top0', T0 - 1, 'Hohmann'));
+    for (let i = 0; i < NFX_SCAN_PAGE; i++) {
+      await store(
+        r.of(STOCK),
+        creator,
+        manifest(`video-${String(i).padStart(4, '0')}`, T0 - 10 - i, 'Hohmann'),
+      );
+    }
+    const match = await store(
+      r.of(STOCK),
+      creator,
+      manifest('video-deep', T0 - 60 - NFX_SCAN_PAGE, 'Lagrange'),
+    );
+    const capped: PoolLike = {
+      ...r.pool,
+      query: async (rs, filter) => (await r.pool.query(rs, filter)).slice(0, NFX_SCAN_PAGE),
+    };
+    const c = client(capped, [STOCK]);
+    const found: string[] = [];
+    let cursor: string | undefined = timeCursor(T0 - 1, [top.id]);
+    for (let i = 0; i < 5 && cursor !== undefined; i++) {
+      const page = await scanNfxVideos(c, NS, 'lagrange', {}, { limit: 1, cursor });
+      found.push(...page.items.map((v) => v.eventId));
+      cursor = page.next;
+    }
+    expect(found).toEqual([match.id]);
   });
 
   it("fails only when every relay set does; one that fails leaves the other's results", async () => {

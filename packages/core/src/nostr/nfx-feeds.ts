@@ -265,7 +265,9 @@ export async function scanNfxVideos(
           items.map((v) => v.event),
           cursor,
         )
-      : read.length >= want
+      : // A full scan page, compared with the page size and not with `want`: a relay that caps
+        // its answers at `NFX_SCAN_PAGE` still has more to read.
+        read.length >= NFX_SCAN_PAGE
         ? nextTimeCursor(events, cursor)
         : undefined;
   return next === undefined ? { items } : { items, next };
