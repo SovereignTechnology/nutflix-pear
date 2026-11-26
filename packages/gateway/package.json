@@ -31,7 +31,7 @@
     "compact-encoding": "3.6.0",
     "corestore": "7.16.1",
     "hyperblobs": "2.13.0",
-    "hypercore": "11.40.3",
+    "hypercore": "11.40.4",
     "hypercore-blob-server": "1.15.1",
     "protomux": "3.13.1",
     "streamx": "2.28.1",
@@ -40,6 +40,6 @@
   "devDependencies": {
     "@types/ws": "8.18.2",
     "hyperdht": "6.36.0",
-    "nostr-tools": "2.26.0"
+    "nostr-tools": "2.26.1"
   }
 }
