@@ -473,6 +473,24 @@ describe('IrohHelper options', () => {
     expect(child?.requests[0]).not.toHaveProperty('portmapper');
     await helper.close();
   });
+
+  it('asks for local addresses only when told to (NFX-18)', async () => {
+    const asked: Record<string, unknown>[] = [];
+    for (const localAddrs of [undefined, false, true]) {
+      let child: FakeChild | undefined;
+      const helper = new IrohHelper({
+        ...base,
+        spawn: () => (child = new FakeChild(responder())),
+        init: localAddrs === undefined ? { relays: [] } : { relays: [], localAddrs },
+      });
+      await helper.start();
+      asked.push(child?.requests[0] ?? {});
+      await helper.close();
+    }
+    expect(asked[0]).not.toHaveProperty('local_addrs');
+    expect(asked[1]).not.toHaveProperty('local_addrs');
+    expect(asked[2]).toMatchObject({ op: 'init', local_addrs: true });
+  });
 });
 
 describe('dialTarget', () => {

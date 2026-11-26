@@ -9,6 +9,8 @@
  *
  * Also: serving stops when NFX goes off, and a worker restarted over the same storage serves the
  * same collections from the same node id (its key is derived from the Corestore primary key).
+ * The direct dials need `testIrohLocalAddrs`: without it (a user's node, NFX-18) neither the
+ * beacon endpoint nor a ticket names a LAN or loopback address.
  *
  * Skipped where no helper is built (a developer's machine); FAILS in CI without one, so it can
  * never pass by being skipped.
@@ -72,15 +74,17 @@ describe.skipIf(HELPER === '' && !IN_CI)('slice 5e-3: NFX seeding over iroh', ()
 
   /**
    * A worker with (mock) payment providers, so with a seeder; seeding and NFX on, the helper
-   * given, and the test video in its NFX store (a put of a stored video is a no-op).
+   * given, and the test video in its NFX store (a put of a stored video is a no-op). Its tickets
+   * name this host's local addresses unless `localAddrs` is false (the client dials directly).
    */
-  async function start(): Promise<WorkerClient> {
+  async function start(localAddrs = true): Promise<WorkerClient> {
     await current?.close();
     const w = startWorker({
       hub,
       logLevel: 'info',
       testBootstrap: testnet.bootstrap,
       providers: () => devMockProviders({ hub, label }),
+      testIrohLocalAddrs: localAddrs,
     });
     current = w;
     await w.call('init', {
@@ -226,4 +230,35 @@ describe.skipIf(HELPER === '' && !IN_CI)('slice 5e-3: NFX seeding over iroh', ()
     };
     expect(await hashes(second)).toEqual(await hashes(first));
   });
+
+  it("NFX-18: a user's node names no LAN or loopback address in its endpoint or tickets", async () => {
+    expect(HELPER, MISSING).not.toBe('');
+    const ep = await irohEndpoint(await start(false));
+    const c = await client();
+    const named = [...ep.addrs];
+    for (const [, ticket] of ep.tickets.$map) named.push(...(await c.ticket(ticket)).addrs);
+    expect(named.filter(notGlobal)).toEqual([]);
+    // With the switch (every other test here) the direct dials above work.
+  });
 });
+
+/**
+ * `ip:port` or `[ip6]:port` outside global unicast, as the helper's rule (`rtc/candidates.rs`
+ * `allowed`) sees it for the addresses a test host has: private, loopback, link-local, CGNAT,
+ * unique-local and IPv4-mapped. Errs towards "not global" (the check is that none is named).
+ */
+function notGlobal(addr: string): boolean {
+  const host = addr.startsWith('[') ? addr.slice(1, addr.indexOf(']')) : addr.split(':')[0]!;
+  if (host.includes(':')) return !/^[23][0-9a-f]{3}:/i.test(host) || /^2001:0?db8:/i.test(host);
+  const [a = 0, b = 0] = host.split('.').map(Number);
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    a >= 224 ||
+    (a === 100 && b >= 64 && b < 128) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b < 32) ||
+    (a === 192 && b === 168)
+  );
+}
