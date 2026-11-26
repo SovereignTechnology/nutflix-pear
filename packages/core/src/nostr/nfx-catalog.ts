@@ -349,13 +349,15 @@ export class NfxCatalog implements NfxSource {
     const pages = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
     const first = settled.find((s) => s.status === 'rejected');
     if (pages.length === 0 && first !== undefined) throw first.reason;
-    const [ofScoped, ofRead] = settled;
     // Both sets answered: each side's videos are checked on the other's deletions, as in
     // `bothAtOncePage` (ADR 0026).
-    const withdrawn =
-      ofScoped?.status === 'fulfilled' && ofRead?.status === 'fulfilled'
-        ? await this.withdrawnAcross(ofScoped.value.items, ofRead.value.items, scoped)
-        : new Set<string>();
+    let withdrawn: ReadonlySet<string> = new Set();
+    if (settled.length === 2) {
+      const [ofScoped, ofRead] = settled;
+      if (ofScoped.status === 'fulfilled' && ofRead.status === 'fulfilled') {
+        withdrawn = await this.withdrawnAcross(ofScoped.value.items, ofRead.value.items, scoped);
+      }
+    }
     return mergePages(pages, opts.limit, withdrawn);
   }
 
