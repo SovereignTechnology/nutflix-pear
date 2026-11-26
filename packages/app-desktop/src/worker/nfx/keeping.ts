@@ -262,8 +262,12 @@ export class NfxKeeping {
     if (filling !== null && filling.rendition !== play.rendition)
       fail('rate-limited', 'another rendition of this video is being kept');
     // A video not kept yet is one of the hour's starts, counted before the keep begins.
-    if (record === undefined && store.get(video) === undefined && !this.d.budget.start())
-      fail('rate-limited', 'no more new videos may be kept within this hour');
+    if (record === undefined && store.get(video) === undefined) {
+      // Saved before it is granted (#158): a crash cannot hand the hour's starts out twice.
+      const started = await this.d.budget.start().catch(() => null);
+      if (started === null) fail('backend-down', 'could not save the keep budget');
+      if (!started) fail('rate-limited', 'no more new videos may be kept within this hour');
+    }
     const begun = await store.beginKeep({
       video,
       root: play.sources.root,
@@ -288,9 +292,10 @@ export class NfxKeeping {
     }
     // A job not started yet waits for this play too; one started takes its spool all the same.
     const waiting = job.state === 'play' ? job : null;
+    const { fillId } = begun;
     const handed = play.keepOnClose(async (spool) => {
       try {
-        await this.harvest(video, spool);
+        await this.harvest(video, fillId, spool);
       } finally {
         if (waiting !== null) this.playClosed(waiting, play.sid);
       }
@@ -447,15 +452,18 @@ export class NfxKeeping {
     this.enqueue(job);
   }
 
-  /** The files `spool` holds that the filling rendition of `video` still misses, to the store. */
-  private async harvest(video: nfx.VideoAddr, spool: NfxSpool): Promise<void> {
+  /**
+   * The files `spool` holds that the filling rendition of `video` still misses, to the store.
+   * `fillId` is the fill the play began: one dropped and begun again meanwhile takes nothing.
+   */
+  private async harvest(video: nfx.VideoAddr, fillId: symbol, spool: NfxSpool): Promise<void> {
     const want = new Set(this.d.store.keepMissing(video).map((f) => f.sha256));
     for (const sha of spool.shas) {
       if (!want.has(sha)) continue;
       const bytes = await spool.read(sha);
       if (bytes === null) continue;
-      const put = await this.d.store.putKeptFile(video, sha, bytes);
-      // No longer filling (dropped, or held meanwhile): nothing more to take.
+      const put = await this.d.store.putKeptFile(video, fillId, sha, bytes);
+      // No longer this fill (dropped, begun again, or held meanwhile): nothing more to take.
       if (!put.ok && put.error === 'unknown') return;
     }
   }
@@ -571,7 +579,7 @@ export class NfxKeeping {
         reason,
         held: (sha) => this.held(job, sha),
         fetch: (file, s) => fetchFile(fetcher, file, s),
-        spend: (bytes) => !signal.aborted && this.d.budget.spend(bytes),
+        spend: async (bytes) => !signal.aborted && (await this.d.budget.spend(bytes)),
         signal,
         maxFileBytes: this.maxFileBytes,
         onProgress: () => {
