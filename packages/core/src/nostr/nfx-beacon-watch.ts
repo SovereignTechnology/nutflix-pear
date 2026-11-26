@@ -17,6 +17,11 @@
  *   `MAX_BEACON_VIDEOS` videos and `MAX_BEACONS_PER_VIDEO` beacons each, the oldest dropped first.
  * - Events come verified (`NostrClient.subscribe`); a reader still parses each beacon (signature,
  *   TTL, the address) before anything is dialled.
+ * - **One subscription per relay, reopened when it closes** (ADR 0026, 2026-11-26): a relay that
+ *   cannot be reached, or drops the connection, is asked again after `NFX_BEACON_RETRY_MS`,
+ *   doubling up to `NFX_BEACON_RETRY_MAX_MS`, while the video is watched. Before, one subscription
+ *   covered every relay and was never reopened, so a relay that was down when the Watch page
+ *   opened stayed unheard for the whole watch, even after it came back.
  *
  * Moved from the desktop host into core (ADR 0022) so the web client watches beacons the same
  * way. Runtime-agnostic: the subscription is passed in, and so are timers where the runtime wants
@@ -39,13 +44,21 @@ export const NFX_BEACON_WARM_MS = 90_000;
 export const NFX_BEACON_KEEP_S = 120;
 export const MAX_BEACON_VIDEOS = 16;
 export const MAX_BEACONS_PER_VIDEO = 64;
+/** The first wait before a closed relay's subscription is opened again; it doubles each time. */
+export const NFX_BEACON_RETRY_MS = 1_000;
+export const NFX_BEACON_RETRY_MAX_MS = 30_000;
 
 export interface NfxBeaconWatchDeps {
-  /** A live subscription on `relays` (`NostrClient.subscribe`): verified events only. */
+  /**
+   * A live subscription on `relays` (`NostrClient.subscribe`): verified events only. The watcher
+   * passes one relay at a time. `onClose`, when the subscription supports it, is called once when
+   * the relay closes it or cannot be reached; the watcher then opens it again later.
+   */
   readonly subscribe: (
     filter: NostrFilter,
     relays: readonly RelayUrl[],
     onEvent: (ev: NostrEvent) => void,
+    onClose?: (reason: string) => void,
   ) => () => void;
   /** Unix seconds. */
   readonly now: () => number;
@@ -169,12 +182,64 @@ export class NfxBeaconWatch {
         ...beaconFilter(video),
         since: Math.max(0, this.d.now() - NFX_BEACON_KEEP_S) as UnixSeconds,
       };
-      watched.unsubscribe = this.d.subscribe(filter, relays, (ev) => {
-        this.add(watched, ev);
-      });
+      watched.unsubscribe = this.subscribeEach(watched, filter, relays);
     }
     this.keepOpen(watched, ms);
     return watched;
+  }
+
+  /**
+   * One subscription per relay. When one closes (the relay down, unreachable, or dropping the
+   * socket) it is opened again after a backoff, doubling from `NFX_BEACON_RETRY_MS` to
+   * `NFX_BEACON_RETRY_MAX_MS`, and back to the start once that relay has sent a beacon. The
+   * returned function closes them all and cancels any pending reopen.
+   */
+  private subscribeEach(w: Watched, filter: NostrFilter, relays: readonly RelayUrl[]): () => void {
+    let stopped = false;
+    const subs = new Map<RelayUrl, () => void>();
+    const pending = new Set<unknown>();
+    const start = (relay: RelayUrl, attempt: number): void => {
+      if (stopped || this.closed) return;
+      let heard = false;
+      let closed = false;
+      const un = this.d.subscribe(
+        filter,
+        [relay],
+        (ev) => {
+          heard = true;
+          this.add(w, ev);
+        },
+        () => {
+          if (closed || stopped || this.closed) return;
+          closed = true;
+          // Release what is left of it (a no-op on a pool that already closed it).
+          const own = subs.get(relay);
+          subs.delete(relay);
+          own?.();
+          // The first wait after a relay that sent beacons, else doubling per close in a row.
+          const next = heard ? 0 : attempt + 1;
+          const delay = Math.min(
+            NFX_BEACON_RETRY_MAX_MS,
+            NFX_BEACON_RETRY_MS * 2 ** Math.max(0, next - 1),
+          );
+          const h = this.timers.setTimeout(() => {
+            pending.delete(h);
+            start(relay, next);
+          }, delay);
+          pending.add(h);
+        },
+      );
+      if (closed) un();
+      else subs.set(relay, un);
+    };
+    for (const relay of new Set(relays)) start(relay, 0);
+    return () => {
+      stopped = true;
+      for (const h of pending) this.timers.clearTimeout(h);
+      pending.clear();
+      for (const un of subs.values()) un();
+      subs.clear();
+    };
   }
 
   private add(w: Watched, ev: NostrEvent): void {

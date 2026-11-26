@@ -29,15 +29,16 @@ supersedes it.
 | [0017](0017-packaging.md)                            | Packaging: Electron Forge, fuses, asar and Nostr-signed releases          | Accepted; shipped as desktop 0.1.0 (.deb and AppImage)    |
 | [0018](0018-one-peer-routing.md)                     | One seeder per block, credit per seeder window                            | Accepted                                                  |
 | [0019](0019-scope-pear-desktop-only.md)              | Scope: Pear/desktop only; the web portal is out                           | Accepted; scope amended by 0020; web ruling reversed in part by 0022 |
-| [0020](0020-speak-nfx.md)                            | Speak NFX beside the legacy protocol                                      | Accepted; "does not speak iroh" amended by 0021; "no web portal" by 0022 |
+| [0020](0020-speak-nfx.md)                            | Speak NFX beside the legacy protocol                                      | Accepted; "does not speak iroh" amended by 0021; "no web portal" by 0022; "scoped first" by 0026 |
 | [0021](0021-speak-iroh-through-a-helper.md)          | Speak iroh as well, through a thin helper process                         | Accepted; 0023 (proposed) would amend "no other socket"   |
 | [0022](0022-a-web-client-for-nfx.md)                 | A web client for NFX videos at web.nutflix.xyz                            | Accepted                                                  |
 | [0023](0023-webrtc-in-the-helper.md)                 | Trade segments with browsers over WebRTC, through the helper              | Proposed                                                  |
 | [0024](0024-stats-for-nerds.md)                      | Stats for nerds: show where a play's bytes come from                      | Accepted                                                  |
+| [0026](0026-no-single-relay.md)                      | No single relay: read the network's relay and the read relays together    | Accepted; amends 0020                                     |
 
 ## Numbering
 
-The next free number is **0024**. Numbers **0006** and **0008** are not
+The next free number is **0027** (0025 is held by an open change, the web client taking segments from peers first). Numbers **0006** and **0008** are not
 missing: the sibling [nfx](https://github.com/SovereignTechnology/nfx) repository uses them
 ([0006, the standardisation suite](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0006-standardization-suite-nfx.md)
 and

@@ -6,9 +6,9 @@
  * - Merged feeds: newest first under one time cursor, nothing lost or repeated across pages.
  * - Twins: a same-author NFX copy of a NIP-71 video is dropped, also across pages; slice 5d-4,
  *   when the network can play (scoped relays): a free NIP-71 video gives way to its copy instead.
- * - ADR 0020 2026-11-19 (a deviation from NFX-04 §4's SHOULD): the scoped relays first; the read
- *   relays as the fallback when the scoped read fails, finds nothing or returns a short page,
- *   which is merged with theirs (one per address, the newest revision, the scoped copy on a tie).
+ * - ADR 0026 (2026-11-26; NFX-04 §4 as amended): the scoped and the read relays at once, merged
+ *   (one per address, the newest revision, the scoped copy on a tie); a full answer from one waits
+ *   at most a short grace for the other, so a relay that never answers holds no read.
  * - An NFX failure lists the NIP-71 videos alone.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -311,7 +311,7 @@ describe('twins when the network can play (slice 5d-4)', () => {
   });
 });
 
-describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
+describe('NfxCatalog: the scoped and public relays at once (ADR 0026, 2026-11-26)', () => {
   const PUBLIC = 'wss://public.test' as RelayUrl;
   const SCOPED = 'wss://scoped.test' as RelayUrl;
 
@@ -341,12 +341,15 @@ describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
     return { pub, scoped, client, asked };
   }
 
-  const scopedCatalog = (t: ReturnType<typeof twoPools>): NfxCatalog =>
+  const scopedCatalog = (t: ReturnType<typeof twoPools>, mergeGraceMs?: number): NfxCatalog =>
     new NfxCatalog(
       () => t.client,
       NS,
       () => [SCOPED],
+      mergeGraceMs === undefined ? {} : { mergeGraceMs },
     );
+  const askedScoped = (t: ReturnType<typeof twoPools>): boolean =>
+    t.asked.some((relays) => relays.includes(SCOPED));
   const titles = (p: { readonly items: readonly { readonly title: string }[] }): string[] =>
     p.items.map((v) => v.title);
   const askedPublic = (t: ReturnType<typeof twoPools>): boolean =>
@@ -365,7 +368,7 @@ describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
     throw new Error('no lower id in 256 tries');
   }
 
-  it('reads the scoped relays first; a full page there never asks the public relays', async () => {
+  it('asks the scoped and the public relays at once, and merges: a full scoped page still takes a newer public video', async () => {
     const t = twoPools();
     const creator = new kit.TestSigner();
     t.scoped.store(await kit.sign(creator, nfxDraft('scoped-one', 1)));
@@ -373,12 +376,35 @@ describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
     t.pub.store(await kit.sign(creator, nfxDraft('public-only', 0.5)));
     const cat = scopedCatalog(t);
     const page = await cat.feed({ source: 'author', author: creator.pubkey, limit: 2 }, null);
-    expect(titles(page)).toEqual(['NFX scoped-one', 'NFX scoped-two']);
+    expect(titles(page)).toEqual(['NFX public-only', 'NFX scoped-one']);
     expect(page.next).toBeDefined();
     const tags = await cat.feed({ source: 'tags', tags: ['space'], limit: 1 }, null);
-    expect(titles(tags)).toEqual(['NFX scoped-one']);
-    expect(t.asked[0]).toEqual([SCOPED]);
-    expect(askedPublic(t)).toBe(false);
+    expect(titles(tags)).toEqual(['NFX public-only']);
+    expect(askedScoped(t)).toBe(true);
+    expect(askedPublic(t)).toBe(true);
+  });
+
+  it('a relay set that never answers does not hold a read the other already answered in full (the grace)', async () => {
+    const hang = (): Promise<never> => new Promise<never>(() => undefined);
+    // The public relays hang (an unreachable relay before its connect timeout): a full scoped page answers.
+    const t = twoPools();
+    const a = new kit.TestSigner();
+    t.scoped.store(await kit.sign(a, nfxDraft('scoped-clip', 1)));
+    vi.spyOn(t.pub, 'query').mockImplementation(hang);
+    const cat = scopedCatalog(t, 20);
+    expect(titles(await cat.feed({ source: 'author', author: a.pubkey, limit: 1 }, null))).toEqual([
+      'NFX scoped-clip',
+    ]);
+    expect((await cat.video(addr(a.pubkey, 'scoped-clip')))?.title).toBe('NFX scoped-clip');
+    // The scoped relay hangs (its host unreachable, 2026-11-26): the public relays answer alone.
+    const u = twoPools();
+    u.pub.store(await kit.sign(a, nfxDraft('public-clip', 1)));
+    vi.spyOn(u.scoped, 'query').mockImplementation(hang);
+    const cat2 = scopedCatalog(u, 20);
+    expect(titles(await cat2.feed({ source: 'author', author: a.pubkey, limit: 1 }, null))).toEqual(
+      ['NFX public-clip'],
+    );
+    expect((await cat2.video(addr(a.pubkey, 'public-clip')))?.title).toBe('NFX public-clip');
   });
 
   it('the scoped relays down or timing out with an error: the public relays answer alone', async () => {
@@ -395,7 +421,7 @@ describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
     ]);
     expect((await cat.video(addr(creator.pubkey, 'public-copy')))?.title).toBe('NFX public-copy');
     expect(down).toHaveBeenCalled();
-    expect(t.asked[0]).toEqual([SCOPED]);
+    expect(askedScoped(t)).toBe(true);
   });
 
   it('the scoped relays empty (restarted in-memory, or nothing before the wait ran out): the public pages, cursor and all', async () => {
@@ -412,7 +438,7 @@ describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
       null,
     );
     expect(titles(second)).toEqual(['NFX public-two']);
-    expect(t.asked[0]).toEqual([SCOPED]);
+    expect(askedScoped(t)).toBe(true);
     expect(askedPublic(t)).toBe(true);
   });
 
@@ -431,7 +457,7 @@ describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
     expect(titles(page)).toEqual(['NFX clip-one', 'NFX clip-two', 'NFX clip-three']);
     expect(page.items[2]!.event.created_at).toBe(mocks.FIXTURE_NOW - 2.5 * HOUR);
     expect(page.next).toBeDefined(); // clip-four is still to come
-    expect(t.asked[0]).toEqual([SCOPED]);
+    expect(askedScoped(t)).toBe(true);
     expect(askedPublic(t)).toBe(true);
   });
 
@@ -492,21 +518,26 @@ describe('NfxCatalog: the scoped relays first (ADR 0020, 2026-11-19)', () => {
     await expect(cat.video(addr(nobody.pubkey, 'missing'))).rejects.toThrow('public down');
   });
 
-  it('video(): the scoped relays first; the public relays only when they have none of it', async () => {
+  it('video(): both relay sets at once; the newest revision either holds, the scoped copy on a tie', async () => {
     const t = twoPools();
     const a = new kit.TestSigner();
     const both = await kit.sign(a, nfxDraft('on-both', 1));
     t.scoped.store(both);
     t.pub.store(both);
     t.pub.store(await kit.sign(a, nfxDraft('public-only', 2)));
+    t.scoped.store(await kit.sign(a, nfxDraft('newer-public', 3)));
+    const newer = await kit.sign(a, nfxDraft('newer-public', 1));
+    t.pub.store(newer);
     const cat = scopedCatalog(t);
     expect((await cat.video(addr(a.pubkey, 'on-both')))?.eventId).toBe(both.id);
-    expect(askedPublic(t)).toBe(false);
-    expect((await cat.video(addr(a.pubkey, 'public-only')))?.title).toBe('NFX public-only');
+    expect(askedScoped(t)).toBe(true);
     expect(askedPublic(t)).toBe(true);
+    expect((await cat.video(addr(a.pubkey, 'public-only')))?.title).toBe('NFX public-only');
+    expect((await cat.video(addr(a.pubkey, 'newer-public')))?.eventId).toBe(newer.id);
+    expect(await cat.video(addr(a.pubkey, 'nowhere'))).toBeNull();
   });
 
-  it('twinsOf asks the scoped relays only, which every feed page reads first; without any, the read relays', async () => {
+  it('twinsOf asks the scoped relays only, which every feed page reads; without any, the read relays', async () => {
     const t = twoPools();
     const a = new kit.TestSigner();
     const legacyId = 'ab'.repeat(32) as NostrEventId;

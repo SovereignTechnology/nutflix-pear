@@ -1,12 +1,14 @@
 /**
  * The NFX catalog source (ADR 0020 Phase 1, contracts v9): one network's free videos. Reads go to
- * the network's scoped relays first, its own, and to the user's read relays only as the fallback
- * (ADR 0020, 2026-11-19: a deliberate deviation from NFX-04 §4's "public relays first"). The read
- * relays are asked when the scoped read fails, finds nothing, or returns a short page, and a short
- * page is merged with theirs: a scoped relay that keeps manifests in memory is empty, or partly
- * refilled, for hours after a restart, and must never blank or shrink the catalog. The Network
- * feed asks both at once. Everything comes back through `NostrClient` → `verifyIncoming`, then
- * NFX-02's parser, revisions and deletions (`nostr.nfxVideoPage`).
+ * the network's scoped relays, its own, and to the user's read relays AT ONCE, and the answers are
+ * merged (ADR 0026, 2026-11-26; NFX-04 §4 as amended by nfx decision record 0110). Until then the
+ * read relays were only the fallback, asked after the scoped read failed or came back short (ADR
+ * 0020, 2026-11-19), so an unreachable scoped relay cost every read its whole connect timeout
+ * before the read relays were even asked; on 2026-11-26 the scoped relay's host was unreachable
+ * for 45 minutes. A scoped relay that keeps manifests in memory is still empty, or partly
+ * refilled, for hours after a restart, and the merge still never lets that blank or shrink the
+ * catalog. Everything comes back through `NostrClient` → `verifyIncoming`, then NFX-02's parser,
+ * revisions and deletions (`nostr.nfxVideoPage`).
  *
  * Built only while `Settings.nfx` is enabled (contracts v10); off by default.
  *
@@ -45,6 +47,13 @@ import {
 
 /** Page size when the caller gives none (the desktop catalogue's and the mock's). */
 export const NFX_FEED_PAGE = 20;
+
+/**
+ * How long a read that already has enough from one relay set (a full page, or the video) waits
+ * for the other before it answers: long enough for a healthy relay to add a newer revision, short
+ * enough that an unreachable one (whose connect timeout is about 7 s) never holds the page.
+ */
+export const NFX_MERGE_GRACE_MS = 1_500;
 
 /** A feed's page size as `nfxVideoPage` applies it: 1 to `MAX_PAGE`. */
 const pageSize = (n: number | undefined): number =>
@@ -100,7 +109,18 @@ export interface NfxCatalogOptions {
    * Absent: every relay is sent `search`, as before ADR 0022.
    */
   readonly searchSupport?: ((relay: RelayUrl) => Promise<boolean>) | undefined;
+  /** `NFX_MERGE_GRACE_MS` unless given (tests). */
+  readonly mergeGraceMs?: number | undefined;
 }
+
+type Settled<T> =
+  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
+
+const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
+  p.then(
+    (value) => ({ ok: true, value }),
+    (error: unknown) => ({ ok: false, error }),
+  );
 
 export interface NfxSource {
   /** Subscriptions, tags and author; trending and shorts have no NFX videos. */
@@ -110,8 +130,8 @@ export interface NfxSource {
   video(addr: NfxAddress): Promise<NfxVideo | null>;
   /**
    * Slice 5d-4: the same-author NFX copies of these NIP-71 events (one bounded query), from the
-   * scoped relays (the read relays when there are none) — which every feed page reads first —
-   * so a copy found here is one a feed lists.
+   * scoped relays (the read relays when there are none) — which every feed page reads — so a copy
+   * found here is one a feed lists.
    */
   twinsOf(
     legacy: readonly { readonly id: NostrEventId; readonly author: NostrPubkey }[],
@@ -128,6 +148,7 @@ export class NfxCatalog implements NfxSource {
   readonly namespace: string;
   private readonly scopedRelays: () => readonly RelayUrl[];
   private readonly searchSupport: SearchSupport | undefined;
+  private readonly mergeGraceMs: number;
 
   /** Throws on a namespace NFX-01 refuses: a source never runs on one. */
   constructor(
@@ -144,50 +165,69 @@ export class NfxCatalog implements NfxSource {
     this.namespace = namespace;
     this.scopedRelays = scopedRelays;
     this.searchSupport = opts.searchSupport;
+    this.mergeGraceMs = opts.mergeGraceMs ?? NFX_MERGE_GRACE_MS;
   }
 
   /**
-   * `read` on the scoped relays first, the network's own (ADR 0020, 2026-11-19). On the read
-   * relays as the fallback when that throws (a relay down, or timed out) or `enough` refuses its
-   * answer, which is then `merge`d with theirs. When the read relays fail too, a scoped answer
-   * with something in it stands; otherwise their error is the one reported. Without scoped
-   * relays, the read relays alone, as before.
+   * `read` on the scoped relays, the network's own, and on the read relays at once (ADR 0026), and
+   * the two answers `merge`d (scoped first). When the first answer is `enough` (a full page, the
+   * video), the other gets `mergeGraceMs` more and is left out if it is still not in: a relay that
+   * is down never holds a read that already has its answer. Otherwise both are awaited. When one
+   * side fails, the other's answer stands, except an empty scoped answer beside a failed read: the
+   * read relays' error is then reported, as is any error when both fail. Without scoped relays, the
+   * read relays alone, as before.
    */
-  private async scopedFirst<T>(
+  private async bothAtOnce<T>(
     read: (relays: readonly RelayUrl[] | undefined) => Promise<T>,
     enough: (t: T) => boolean,
     hasAny: (t: T) => boolean,
     merge: (scoped: T, fallback: T) => T,
   ): Promise<T> {
-    const scoped = this.scopedRelays();
-    if (scoped.length === 0) return read(undefined);
-    let first: { readonly value: T } | undefined;
-    try {
-      const value = await read(scoped);
-      if (enough(value)) return value;
-      first = { value };
-    } catch {
-      // Down or timed out: the read relays answer alone.
+    const scopedRelays = this.scopedRelays();
+    if (scopedRelays.length === 0) return read(undefined);
+    const got: [Settled<T> | undefined, Settled<T> | undefined] = [undefined, undefined];
+    const sides = [read(scopedRelays), read(undefined)].map((p, i) =>
+      settle(p).then((r) => {
+        got[i] = r;
+        return r;
+      }),
+    );
+    const first = await Promise.race(sides);
+    if (first.ok && enough(first.value)) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const grace = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, this.mergeGraceMs);
+      });
+      await Promise.race([Promise.all(sides), grace]);
+      clearTimeout(timer);
+    } else {
+      await Promise.all(sides);
     }
-    try {
-      const fallback = await read(undefined);
-      return first === undefined ? fallback : merge(first.value, fallback);
-    } catch (e) {
-      if (first !== undefined && hasAny(first.value)) return first.value;
-      throw e;
+    const [scoped, fallback] = got;
+    if (scoped?.ok === true && fallback?.ok === true) return merge(scoped.value, fallback.value);
+    if (scoped?.ok === true) {
+      if (fallback === undefined || hasAny(scoped.value)) return scoped.value;
+      throw fallback.error;
     }
+    if (fallback?.ok === true) return fallback.value;
+    // Both failed (a side still pending here had to be the one that answered `enough`).
+    throw fallback?.ok === false
+      ? fallback.error
+      : scoped?.ok === false
+        ? scoped.error
+        : new Error('NfxCatalog: no answer');
   }
 
   /**
-   * `scopedFirst` for a page of at most `limit`: a scoped page is enough when it is full. An
-   * empty one is replaced by the read relays' page; a short one is merged with it (`mergePages`:
-   * one video per address, the newest revision, the scoped copy on a tie, newest first, `limit`).
+   * `bothAtOnce` for a page of at most `limit`: a page is enough when it is full. The two pages are
+   * merged (`mergePages`: one video per address, the newest revision, the scoped copy on a tie,
+   * newest first, `limit`), so an empty or short scoped page never shrinks the catalog.
    */
-  private scopedFirstPage(
+  private bothAtOncePage(
     read: (relays: readonly RelayUrl[] | undefined) => Promise<Page<NfxVideo>>,
     limit: number,
   ): Promise<Page<NfxVideo>> {
-    return this.scopedFirst(
+    return this.bothAtOnce(
       read,
       (p) => p.items.length >= limit,
       (p) => p.items.length > 0,
@@ -228,17 +268,17 @@ export class NfxCatalog implements NfxSource {
         if (viewer === null) return { items: [] };
         const { pubkeys } = await fetchSubscriptions(c, viewer);
         if (pubkeys.length === 0) return { items: [] };
-        return this.scopedFirstPage((relays) => page(relays, pubkeys), limit);
+        return this.bothAtOncePage((relays) => page(relays, pubkeys), limit);
       }
       case 'tags':
-        return this.scopedFirstPage(
+        return this.bothAtOncePage(
           (relays) => nfxTagsFeed(c, this.namespace, q.tags ?? [], { ...opts, relays }),
           limit,
         );
       case 'author': {
         const author = q.author;
         if (author === undefined) return { items: [] };
-        return this.scopedFirstPage((relays) => page(relays, [author]), limit);
+        return this.bothAtOncePage((relays) => page(relays, [author]), limit);
       }
       case 'network':
         return this.networkFeed(c, { limit: q.limit ?? NFX_FEED_PAGE, cursor: q.cursor });
@@ -284,18 +324,20 @@ export class NfxCatalog implements NfxSource {
           });
     };
     return (await this.scopedSearch(supports))
-      ? this.scopedFirstPage(read, NFX_FEED_PAGE)
+      ? this.bothAtOncePage(read, NFX_FEED_PAGE)
       : this.publicFirst(read, (p) => p.items.length === 0);
   }
 
   /**
-   * Whether search reads the scoped relays first, as the feeds do: when every scoped relay lists
+   * Whether search reads the scoped relays with the read relays at once, as the feeds do (ADR
+   * 0026): when every scoped relay lists
    * NIP-50 in its NIP-11 document (without `searchSupport`, every relay is taken to, as before ADR
    * 0022). The test network's `relay.nutflix.xyz` does. A scoped relay that does not is only
    * scanned (`scanNfxVideos`): each page downloads up to `NFX_SCAN_PAGE` manifests and matches
-   * here, and few matches are expected however healthy the relay is, so putting it first would
-   * add a heavy scan in front of nearly every search and merge its page, whose cursor is how far it
-   * read and not its last match. Search then keeps the read relays first, as before.
+   * here, and few matches are expected however healthy the relay is, so reading it with the others
+   * would add a heavy scan to nearly every search and merge its page, whose cursor is how far it
+   * read and not its last match. Search then keeps the read relays first, as before. A scoped
+   * relay whose NIP-11 document cannot be fetched (its host down) counts as one without NIP-50.
    */
   private async scopedSearch(supports: SearchSupport | undefined): Promise<boolean> {
     const scoped = this.scopedRelays();
@@ -309,7 +351,7 @@ export class NfxCatalog implements NfxSource {
   ): Promise<NfxVideo[]> {
     if (legacy.length === 0) return Promise.resolve([]);
     // The scoped relays only, which every feed page reads first, so a copy found here is one a
-    // feed lists. Not `scopedFirst`: a copy only the read relays hold is missed by a feed whose
+    // feed lists. Not `bothAtOnce`: a copy only the read relays hold is missed by a feed whose
     // scoped relays fill its pages, and then its NIP-71 video must stay (a duplicate, never a
     // gap). Scoped relays down: this fails, and the merged catalogue lists both.
     const scoped = this.scopedRelays();
@@ -331,11 +373,16 @@ export class NfxCatalog implements NfxSource {
       return Promise.resolve(null);
     }
     const c = this.client();
-    return this.scopedFirst(
+    // The newest revision either side holds; the scoped copy on a tie.
+    return this.bothAtOnce(
       (relays) => fetchNfxVideo(c, addr, { relays }),
       (v) => v !== null,
       (v) => v !== null,
-      (_scoped, fallback) => fallback,
+      (scoped, fallback) =>
+        scoped === null ||
+        (fallback !== null && fallback.event.created_at > scoped.event.created_at)
+          ? fallback
+          : scoped,
     );
   }
 }

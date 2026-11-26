@@ -129,7 +129,12 @@ export class NostrClient {
   subscribe(
     filters: readonly NostrFilter[],
     onEvent: (ev: NostrEvent) => void,
-    opts: { readonly relays?: readonly RelayUrl[]; readonly onEose?: () => void } = {},
+    opts: {
+      readonly relays?: readonly RelayUrl[];
+      readonly onEose?: () => void;
+      /** Called when the relays close the subscription, or none could be reached. */
+      readonly onClose?: (reason: string) => void;
+    } = {},
   ): Unsubscribe {
     const seen = new Set<string>();
     return this.pool.subscribe(
@@ -147,6 +152,7 @@ export class NostrClient {
           onEvent(c.event);
         },
         ...(opts.onEose ? { oneose: opts.onEose } : {}),
+        ...(opts.onClose ? { onclose: opts.onClose } : {}),
       },
       this.#maxWaitMs === undefined ? undefined : { maxWaitMs: this.#maxWaitMs },
     );

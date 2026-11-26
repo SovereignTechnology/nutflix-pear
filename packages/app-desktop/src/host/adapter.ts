@@ -309,8 +309,11 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       log: this.log.child('nfx-mesh'),
     });
     this.beaconWatch = new NfxBeaconWatch({
-      subscribe: (filter, relays, onEvent) =>
-        this.client().subscribe([filter], onEvent, { relays }),
+      subscribe: (filter, relays, onEvent, onClose) =>
+        this.client().subscribe([filter], onEvent, {
+          relays,
+          ...(onClose === undefined ? {} : { onClose }),
+        }),
       now: () => this.now(),
     });
     this.wallet.onChange((e) => {
@@ -403,6 +406,18 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private beaconRelays(): readonly RelayUrl[] {
     const s = this.o.settings.get();
     return s.seeding.enabled && s.nfx?.enabled === true ? s.nfx.scopedRelays : [];
+  }
+
+  /**
+   * Where other seeders' beacons are read: the scoped relays and the read relays together, while
+   * NFX is on (ADR 0026, NFX-03 §5 as amended by nfx decision record 0110), so a scoped relay that
+   * is down no longer hides every seeder. This app's own beacons still go to the scoped relays
+   * only (`beaconRelays`).
+   */
+  private beaconReadRelays(): readonly RelayUrl[] {
+    const nfx = this.o.settings.get().nfx;
+    if (nfx?.enabled !== true) return [];
+    return [...new Set([...nfx.scopedRelays, ...this.client().readRelays])];
   }
 
   /**
@@ -618,7 +633,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     const video = await this.nfxVideo(addr);
     const nfxSettings = this.o.settings.get().nfx;
     if (video !== null && nfxSettings?.enabled === true)
-      this.beaconWatch.watch(video, nfxSettings.scopedRelays);
+      this.beaconWatch.watch(video, this.beaconReadRelays());
     return video;
   }
 
@@ -848,7 +863,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     rendition?: string,
   ): Promise<NfxHostSession> {
     const settings = this.o.settings.get();
-    const scoped = settings.nfx?.enabled === true ? settings.nfx.scopedRelays : [];
+    const beaconRelays = this.beaconReadRelays();
     const video = await this.nfxVideo(addr);
     const d = videoOf(addr);
     if (video === null || d === null) fail('not-found', 'no such free NFX video');
@@ -860,7 +875,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     // at most one republish interval.
     const events = await this.beaconWatch.wait(
       video,
-      scoped,
+      beaconRelays,
       (evs) => sourcesOf(evs).held.seeders > 0,
       this.o.nfxBeaconWaitMs,
     );

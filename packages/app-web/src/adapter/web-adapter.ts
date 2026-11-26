@@ -188,8 +188,11 @@ export class WebNetworkAdapter implements NetworkAdapter {
       { searchSupport: search.supports },
     );
     this.#beacons = new NfxBeaconWatch({
-      subscribe: (filter, relays, onEvent) =>
-        this.#nostr().subscribe([filter], onEvent, { relays }),
+      subscribe: (filter, relays, onEvent, onClose) =>
+        this.#nostr().subscribe([filter], onEvent, {
+          relays,
+          ...(onClose === undefined ? {} : { onClose }),
+        }),
       now: () => this.#now(),
       timers: o.timers,
     });
@@ -221,10 +224,24 @@ export class WebNetworkAdapter implements NetworkAdapter {
     return client;
   }
 
-  /** The relays beacons are read from: the scoped relays, or the read relays when there are none. */
+  /**
+   * The relays beacons are read from: the scoped relays and the read relays, together (ADR 0026,
+   * NFX-03 §5 as amended by nfx decision record 0110). Seeders announce on both, so a scoped relay
+   * that is down no longer hides every seeder.
+   */
   #beaconRelays(): readonly RelayUrl[] {
     const scoped = this.#settings().nfx?.scopedRelays ?? [];
-    return scoped.length > 0 ? scoped : this.#nostr().readRelays;
+    return [...new Set([...scoped, ...this.#nostr().readRelays])];
+  }
+
+  /** Every relay the catalog reads (scoped and read) failed its last connection attempt. */
+  #noRelayReached(): boolean {
+    const unreachable = this.#o.pool.unreachable;
+    if (unreachable === undefined) return false;
+    const all = [
+      ...new Set([...(this.#settings().nfx?.scopedRelays ?? []), ...this.#nostr().readRelays]),
+    ];
+    return all.length > 0 && unreachable.call(this.#o.pool, all).length === all.length;
   }
 
   /** A relay read: `relay-down` when there is no relay to ask or none answered. */
@@ -282,9 +299,16 @@ export class WebNetworkAdapter implements NetworkAdapter {
     switch (q.source) {
       case 'network':
       case 'tags':
-      case 'author':
+      case 'author': {
         if (q.author !== undefined && !isHex64(q.author)) fail('invalid-argument', 'not a pubkey');
-        return this.#read(() => this.#catalog.feed(q, null));
+        const page = await this.#read(() => this.#catalog.feed(q, null));
+        // An unreachable relay answers nothing, which reads as an empty network. Say which it was
+        // (NFX-04 §4 as amended by nfx decision record 0110): nothing here, and no relay reached.
+        if (page.items.length === 0 && this.#noRelayReached()) {
+          fail('relay-down', 'no relay could be reached');
+        }
+        return page;
+      }
       case 'subscriptions':
       case 'trending':
       case 'shorts':
