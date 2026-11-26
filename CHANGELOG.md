@@ -7,6 +7,30 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Added
+
+- **A seeder answers when a viewer presses Play** (NFX-17 seeder lookup). While the app seeds a
+  free video, it listens for lookups (kind-20465 asks) on the network's scoped relays and on your
+  read relays, and answers each at once with its signed beacon, addressed only to the key that
+  asked, so a viewer does not wait for the next beacon. On by default.
+  - Bounded as NFX-17 §3 says: at most 32 asks checked a second on each relay; 2 answers per
+    viewer and video in 10 s; per video 8 at once, then 1 a second; in all 32 at once, then 4 a
+    second; at most 15 answers a minute on each of your read relays. A relay that answers
+    `rate-limited:` or `blocked:` gets no answers and no beacons for a minute, doubling up to 30
+    minutes, until it accepts one again.
+  - An answer carries a beacon only when every address in it, the iroh tickets' included, is a
+    public one. A video whose beacon names a LAN, VPN, tailnet or loopback address gets no
+    answers; its viewers wait for the periodic beacon, as before.
+  - Your read relays now see which free videos you seed (the lookup subscription names them),
+    and your seeder's beacon when a viewer asks there. Until now only the scoped relays saw them.
+
+### Changed
+
+- **Beacons live 60 s and go out every 30 s** (they lived 120 s and went out every 60 s), as
+  NFX-17 §3 recommends, so a seeder that stops is forgotten within a minute. A beacon never goes
+  to the same relay for the same video twice within 20 s (NFX-04 §2). A round stops after 30 s;
+  the videos it did not reach go first in the next one.
+
 ## [0.1.4] - 2026-11-26
 
 A local key can be created in the desktop app at last, stats for nerds in every player, free

@@ -84,6 +84,37 @@ describe('NfxSeederKey', () => {
     await expect(
       key.signBeacon({ kind: 1, created_at: 1, tags: [], content: 'hi' }),
     ).rejects.toThrow(/beacons only/);
+    // A tell is not a beacon.
+    await expect(
+      key.signBeacon({ kind: nfx.KIND_LOOKUP, created_at: 1, tags: [['t', 'tell']], content: '' }),
+    ).rejects.toThrow(/beacons only/);
+  });
+
+  it('NFX-17: signs tells, and refuses asks and anything else of kind 20465', async () => {
+    const d = await dir();
+    const user = new kit.TestSigner();
+    const key = await NfxSeederKey.open({ dir: d, network: NS, user: user.pubkey, seal: user });
+    const p = ['p', 'a'.repeat(64)];
+    const tell = await key.signTell({
+      kind: nfx.KIND_LOOKUP,
+      created_at: 1_790_000_000,
+      tags: [['t', 'tell'], p],
+      content: '{}',
+    });
+    expect(tell.pubkey).toBe(key.pubkey);
+    expect(tell.kind).toBe(20465);
+    for (const draft of [
+      { kind: nfx.KIND_LOOKUP, tags: [['t', 'ask']] },
+      { kind: nfx.KIND_LOOKUP, tags: [['t', 'ask'], p] },
+      { kind: nfx.KIND_LOOKUP, tags: [['t', 'tell']] },
+      { kind: nfx.KIND_LOOKUP, tags: [['t', 'tell'], p, ['p', 'b'.repeat(64)]] },
+      { kind: nfx.KIND_LOOKUP, tags: [['t', 'tell'], ['t', 'ask'], p] },
+      { kind: nfx.KIND_BEACON, tags: [['t', 'tell'], p] },
+      { kind: 1, tags: [['t', 'tell'], p] },
+    ])
+      await expect(key.signTell({ ...draft, created_at: 1, content: '' })).rejects.toThrow(
+        /tells only/,
+      );
   });
 
   it('refuses a network this build does not speak, and a malformed user', async () => {
