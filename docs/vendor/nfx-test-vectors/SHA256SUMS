@@ -1,6 +1,6 @@
-# sha256 of each vendored NFX test vector: nfx commit b5fe5e472accd9d8c2548faad419a40a1885a61e
-# (SovereignTechnology/nfx main, the merge of PR #81; spec/test-vectors/). packages/core/src/nfx/__tests__ checks it.
-52ed1e9a8eedd73e2334659b3c6c09f0f0a674257cd5066c4d9fbe682277831d  beacon-hyperdht.json
+# sha256 of each vendored NFX test vector: nfx commit 2119bea77083e730146fc0cae076c8b6ff976c03
+# (SovereignTechnology/nutflix main, the merge of PR #129; spec/test-vectors/). packages/core/src/nfx/__tests__ checks it.
+82f1b593cb71f41e0e7ab499a426017bee3b437da118fdf81565ad5161bc9f5c  beacon-hyperdht.json
 828e8b298ab9180dfc660156749122c760eab545f3c4c3e9e3cc172fef552761  beacon-invalid.json
 2f291515e7e82c185b84bb5b5568f3add8cf6672cfbde3e3d2c0d52540e67678  beacon.json
 7445c878c7d873e259bc7922e2157fa6058e43ef3c8bb1a15a806cacba9c2a61  beacon-stun.json

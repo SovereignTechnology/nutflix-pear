@@ -67,8 +67,18 @@ export type Endpoint =
     }
   /** The deprecated NFX-12 draft: parsed, never emitted by NFX-12 publishers, never dialed. */
   | { readonly t: 'hyper'; readonly drive: string }
-  /** NFX-12 §2: the seeder's HyperDHT peer key, and its `bind` to this seeder and network. */
-  | { readonly t: 'hyperdht'; readonly peer: string; readonly bind: string }
+  /**
+   * NFX-12 §2: the seeder's HyperDHT peer key, and its `bind` to this seeder and network.
+   * `renditions` (optional, NFX-12 §2 since 2026-11-26, as `https`'s): the renditions whose files
+   * it serves, for a viewer that keeps some (NFX-18); absent means every rendition. The parser
+   * never yields an empty or repeating list.
+   */
+  | {
+      readonly t: 'hyperdht';
+      readonly peer: string;
+      readonly bind: string;
+      readonly renditions?: readonly string[];
+    }
   /**
    * NFX-10 §1: a STUN server the seeder runs (Binding only), for WebRTC peers' public mappings:
    * 1 to `MAX_STUN_ADDRS` distinct `ip:port`, each in canonical text form. Whether an address is
@@ -376,24 +386,14 @@ function parseEndpoint(raw: JsonValue): NfxResult<Endpoint | string> {
       const url = stringField(raw, 'url');
       if (!url.ok) return url;
       if (!isHttpsUrl(url.value)) return bad('https endpoint `url` must be an https URL');
-      // Pear #97: the renditions an origin holds; absent = all. NFX-03 §4 (pear #104): present,
-      // a non-empty list of distinct ids, none `meta`; anything else rejects the beacon whole, as
-      // nfx-proto does and nfx's `beacon-renditions.json` vectors require.
-      const rawRenditions = raw.get('renditions');
-      if (rawRenditions === undefined) return ok<Endpoint>({ t: 'https', url: url.value });
-      const renditions = strings(
-        rawRenditions,
-        'renditions',
-        (r) => r !== '' && r !== RESERVED_RENDITION_ID,
-      );
+      // Pear #97: the renditions an origin holds; absent = all.
+      const renditions = heldRenditions(raw, 'https');
       if (!renditions.ok) return renditions;
-      if (renditions.value.length === 0) {
-        return bad('https `renditions` must name 1 or more renditions');
-      }
-      if (new Set(renditions.value).size !== renditions.value.length) {
-        return bad('https `renditions` must not repeat a rendition');
-      }
-      return ok<Endpoint>({ t: 'https', url: url.value, renditions: renditions.value });
+      return ok<Endpoint>(
+        renditions.value === undefined
+          ? { t: 'https', url: url.value }
+          : { t: 'https', url: url.value, renditions: renditions.value },
+      );
     }
     case 'webrtc': {
       const rawTrackers = raw.get('tracker_urls');
@@ -432,7 +432,14 @@ function parseEndpoint(raw: JsonValue): NfxResult<Endpoint | string> {
       if (typeof bind !== 'string' || !isLowerHex(bind, 128)) {
         return bad('hyperdht `bind` must be 128 lowercase hex');
       }
-      return ok<Endpoint>({ t: 'hyperdht', peer, bind });
+      // NFX-12 §2 (2026-11-26): the renditions a partial seeder serves; absent = all.
+      const renditions = heldRenditions(raw, 'hyperdht');
+      if (!renditions.ok) return renditions;
+      return ok<Endpoint>(
+        renditions.value === undefined
+          ? { t: 'hyperdht', peer, bind }
+          : { t: 'hyperdht', peer, bind, renditions: renditions.value },
+      );
     }
     case 'stun': {
       const rawAddrs = raw.get('addrs');
@@ -482,8 +489,11 @@ function endpointText(e: Endpoint): string {
     }
     case 'hyper':
       return `{"t":"hyper","drive":${q(e.drive)}}`;
-    case 'hyperdht':
-      return `{"t":"hyperdht","peer":${q(e.peer)},"bind":${q(e.bind)}}`;
+    case 'hyperdht': {
+      const renditions =
+        e.renditions === undefined ? '' : `,"renditions":${JSON.stringify(e.renditions)}`;
+      return `{"t":"hyperdht","peer":${q(e.peer)},"bind":${q(e.bind)}${renditions}}`;
+    }
     case 'stun':
       return `{"t":"stun","addrs":${JSON.stringify(e.addrs)}}`;
   }
@@ -499,6 +509,27 @@ function tag(event: NostrEvent, name: string): NfxResult<string> {
 function stringField(obj: JsonObject, name: string): NfxResult<string> {
   const value = obj.get(name);
   return typeof value === 'string' ? ok(value) : bad(`\`${name}\` must be a string`);
+}
+
+/**
+ * An endpoint's optional `renditions` (`https`, NFX-03 §4; `hyperdht`, NFX-12 §2): `undefined`
+ * when absent (every rendition). Present, a non-empty list of distinct ids, none empty or `meta`;
+ * anything else rejects the beacon whole (pear #104), as nfx-proto does and nfx's
+ * `beacon-renditions.json` and `beacon-hyperdht.json` vectors require.
+ */
+function heldRenditions(
+  raw: JsonObject,
+  t: 'https' | 'hyperdht',
+): NfxResult<readonly string[] | undefined> {
+  const value = raw.get('renditions');
+  if (value === undefined) return ok(undefined);
+  const ids = strings(value, 'renditions', (r) => r !== '' && r !== RESERVED_RENDITION_ID);
+  if (!ids.ok) return ids;
+  if (ids.value.length === 0) return bad(`${t} \`renditions\` must name 1 or more renditions`);
+  if (new Set(ids.value).size !== ids.value.length) {
+    return bad(`${t} \`renditions\` must not repeat a rendition`);
+  }
+  return ok(ids.value);
 }
 
 function strings(

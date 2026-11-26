@@ -57,8 +57,8 @@ export interface NfxPlaySources {
   readonly iroh: NfxIrohEndpointWire[];
   /**
    * Pear #97: which renditions the seeders of these endpoints hold (core's `nfx.countHolders`):
-   * a `hyperdht` endpoint every rendition (NFX-12 serves whole videos), an `iroh` one those it
-   * kept a ticket for. Only endpoints kept above count, so a rendition counted is one the worker
+   * a `hyperdht` endpoint those its `renditions` names, or every one when it names none (NFX-12
+   * §2; a viewer that keeps some names them, NFX-18), an `iroh` one those it kept a ticket for. Only endpoints kept above count, so a rendition counted is one the worker
    * can fetch from someone it is given.
    */
   readonly held: NfxHeldWire;
@@ -136,7 +136,9 @@ export function beaconPeers(
       if (e.t === 'hyperdht') {
         if (peers.has(e.peer) || peers.size >= MAX_NFX_PLAY_PEERS) continue;
         peers.set(e.peer, { t: 'hyperdht', peer: e.peer, bind: e.bind });
-        every = true;
+        // NFX-12 §2: a seeder that keeps some renditions names them (NFX-18); absent = all.
+        if (e.renditions === undefined) every = true;
+        else for (const id of e.renditions) ids.add(id);
       } else if (e.t === 'iroh') {
         if (nodes.has(e.node) || nodes.size >= MAX_NFX_PLAY_IROH) continue;
         const wire = irohWire(e, networkRelays);

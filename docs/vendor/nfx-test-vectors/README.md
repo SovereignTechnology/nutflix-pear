@@ -1,8 +1,9 @@
 # NFX test vectors
 
 Byte-for-byte copies of fifteen files from the NFX suite's `spec/test-vectors/`, at nfx commit
-`b5fe5e472accd9d8c2548faad419a40a1885a61e` (SovereignTechnology/nfx `main`, the merge of PR #81;
-the twelve files vendored before, at `47cb059`, are unchanged there). They are the golden fixtures `packages/core/src/nfx/` is written against (NFX-11 §4:
+`2119bea77083e730146fc0cae076c8b6ff976c03` (SovereignTechnology/nutflix, formerly nfx, `main`: the
+merge of PR #129, which adds hyperdht `renditions` to `beacon-hyperdht.json`; the other fourteen are
+unchanged since `b5fe5e4`, the merge of PR #81). They are the golden fixtures `packages/core/src/nfx/` is written against (NFX-11 §4:
 the wire is pinned by its fixtures, not by a library version).
 
 | File                                                     | What it pins                                     |

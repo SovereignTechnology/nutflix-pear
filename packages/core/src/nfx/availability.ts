@@ -12,8 +12,8 @@
  *   an empty or repeating one whole (NFX-03 §4, pear #104), so that seeder holds nothing from it.
  * - `webrtc` (NFX-10 §2): its `renditions`; absent or empty means every rendition, as nfx-proto
  *   reads it.
- * - `hyperdht` (NFX-12): files by sha256 from a seeder that keeps whole videos, so every
- *   rendition.
+ * - `hyperdht` (NFX-12 §2): its optional `renditions`, as `https`'s (a viewer that keeps some
+ *   renditions, NFX-18); absent means every rendition.
  * - `hyper` (deprecated, never dialled) and unknown endpoints: none.
  *
  * Only each seeder's newest valid beacon counts (NFX-03 §2), as the play paths read them, and only
@@ -67,13 +67,12 @@ function held(e: Endpoint): 'all' | readonly string[] {
       return e.tickets.has(RESERVED_RENDITION_ID)
         ? [...e.tickets.keys()].filter((k) => k !== RESERVED_RENDITION_ID)
         : [];
-    case 'https':
-      // The parser never yields `[]` (pear #104); one built by hand names nothing, so holds none.
-      return e.renditions ?? 'all';
     case 'webrtc':
       return e.renditions.length === 0 ? 'all' : e.renditions;
+    case 'https':
     case 'hyperdht':
-      return 'all';
+      // The parser never yields `[]` (pear #104); one built by hand names nothing, so holds none.
+      return e.renditions ?? 'all';
     case 'hyper':
       return [];
     // A STUN server serves no video (NFX-10 §1).

@@ -1,6 +1,6 @@
 /**
  * Every NFX test vector this package implements (docs/vendor/nfx-test-vectors, nfx commit
- * b5fe5e4), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
+ * 2119bea), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
  * reproduced up to their id: nfx-proto re-signs with a zero BIP-340 `aux_rand`, which no
  * signer here exposes, so a rebuilt event's id is compared and the vector's signature verified.
  */
@@ -370,12 +370,26 @@ describe('NFX-12 hyperdht endpoints (beacon-hyperdht.json)', () => {
     for (const c of v.valid) {
       const b = unwrap(parseBeacon(c.event, v.now));
       const hyperdht = b.content.endpoints.find((e) => e.t === 'hyperdht');
-      expect(hyperdht, c.name).toEqual({ t: 'hyperdht', peer: v.bind.peer, bind: v.bind.sig });
+      // NFX-12 §2's optional `renditions`, read as the content states it (NFX-18).
+      const raw = (
+        JSON.parse(c.event.content) as { endpoints: { t: string; renditions?: string[] }[] }
+      ).endpoints.find((e) => e.t === 'hyperdht');
+      expect(hyperdht, c.name).toEqual({
+        t: 'hyperdht',
+        peer: v.bind.peer,
+        bind: v.bind.sig,
+        ...(raw?.renditions === undefined ? {} : { renditions: raw.renditions }),
+      });
       expect(b.content.skipped, c.name).toEqual([]);
       expect(beaconContentText(b.content), c.name).toBe(c.event.content);
       expect(idOf(c.event), c.name).toBe(c.event.id);
     }
-    expect(v.valid.length + v.invalid.length).toBe(12);
+    expect(v.valid.length + v.invalid.length).toBe(21);
+    const one = v.valid.find((c) => c.name === 'hyperdht-names-one-rendition');
+    const named = unwrap(parseBeacon(one!.event, v.now)).content.endpoints.find(
+      (e) => e.t === 'hyperdht',
+    );
+    expect(named).toMatchObject({ renditions: ['720p'] });
   });
 
   it('rejects every invalid beacon whole', () => {
