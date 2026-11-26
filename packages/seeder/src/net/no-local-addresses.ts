@@ -96,19 +96,35 @@ export function localAddressesByBind(
     createServer: (opts, onconnection) => {
       let real: Server | null = null;
       let closed = false;
+      const assertCanListen = (): void => {
+        if (closed) throw new Error('backend-down: the listener was closed');
+        if (real !== null) throw new Error('invalid-argument: already listening');
+      };
       return {
         get publicKey(): Uint8Array | null {
           return real?.publicKey ?? null;
         },
         listen: async (keyPair: KeyPair): Promise<void> => {
-          if (real !== null) throw new Error('invalid-argument: already listening');
+          assertCanListen();
           await node.bind();
-          if (closed) throw new Error('backend-down: the listener was closed');
-          real = node.createServer(
+          assertCanListen();
+          const server = node.createServer(
             hide() ? { ...opts, shareLocalAddress: false } : opts,
             onconnection,
           );
-          await real.listen(keyPair);
+          real = server;
+          try {
+            await server.listen(keyPair);
+          } catch (err) {
+            try {
+              await server.close();
+            } catch {
+              // Report the original listen error.
+            } finally {
+              real = null;
+            }
+            throw err;
+          }
         },
         close: async (): Promise<void> => {
           closed = true;

@@ -120,6 +120,35 @@ describe('localAddressesByBind', () => {
     }
   });
 
+  it('creates only one server for concurrent listens across the bind', async () => {
+    const { node, seen } = fakeNode(null, '127.0.0.1');
+    const server = localAddressesByBind(node).createServer({}, () => undefined);
+    const first = server.listen(keyPair);
+    await expect(server.listen(keyPair)).rejects.toThrow(/^invalid-argument/);
+    await first;
+    expect(seen).toHaveLength(1);
+  });
+
+  it('closes a failed server and permits retry until the wrapper is closed', async () => {
+    const { node, seen } = fakeNode(null, '127.0.0.1');
+    const create = node.createServer.bind(node);
+    const close = vi.fn(() => Promise.resolve());
+    vi.spyOn(node, 'createServer')
+      .mockReturnValueOnce({
+        publicKey: null,
+        listen: () => Promise.reject(new Error('listen failed')),
+        close,
+      })
+      .mockImplementation(create);
+    const server = localAddressesByBind(node).createServer({}, () => undefined);
+    await expect(server.listen(keyPair)).rejects.toThrow('listen failed');
+    expect(close).toHaveBeenCalledOnce();
+    await server.listen(keyPair);
+    await server.close();
+    await expect(server.listen(keyPair)).rejects.toThrow(/^backend-down/);
+    expect(seen).toHaveLength(1);
+  });
+
   it('a listener closed before it listens never listens', async () => {
     const { node, seen } = fakeNode('127.0.0.1');
     const server = localAddressesByBind(node).createServer({}, () => undefined);

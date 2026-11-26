@@ -9,6 +9,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { SeederFs } from '../adapters/fs.js';
 import { NfxStore } from '../nfx-store/store.js';
 import { DiskCap } from '../store/disk-cap.js';
 import { adapters, tmpDir } from './helpers.js';
@@ -20,7 +21,12 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) await d.rm();
 });
 
-async function open(capBytes = 10 * 1024 * 1024, dir?: string, now?: () => number) {
+async function open(
+  capBytes = 10 * 1024 * 1024,
+  dir?: string,
+  now?: () => number,
+  fs: SeederFs = adapters.fs,
+) {
   let d = dir;
   if (d === undefined) {
     const t = await tmpDir('nf-nfx-keep-');
@@ -28,7 +34,7 @@ async function open(capBytes = 10 * 1024 * 1024, dir?: string, now?: () => numbe
     d = t.dir;
   }
   const store = new NfxStore({
-    fs: adapters.fs,
+    fs,
     crypto: adapters.crypto,
     dataDir: d,
     ...(now === undefined ? {} : { now }),
@@ -56,9 +62,20 @@ function begin(
   });
 }
 
-async function fill(store: NfxStore, p: Pkg): Promise<void> {
+async function startFill(
+  store: NfxStore,
+  p: Pkg,
+  rendition = '720p',
+  reason: 'watched' | 'downloaded' = 'watched',
+) {
+  const result = await begin(store, p, rendition, reason);
+  if (!result.ok || result.state !== 'filling') throw new Error('expected a filling rendition');
+  return result;
+}
+
+async function fill(store: NfxStore, p: Pkg, fillId: symbol): Promise<void> {
   for (const { sha256: s } of store.keepMissing(p.video)) {
-    const res = await store.putKeptFile(p.video, s, p.files.get(s) ?? new Uint8Array());
+    const res = await store.putKeptFile(p.video, fillId, s, p.files.get(s) ?? new Uint8Array());
     expect(res.ok).toBe(true);
   }
 }
@@ -69,9 +86,9 @@ async function keep(
   rendition = '720p',
   reason: 'watched' | 'downloaded' = 'watched',
 ) {
-  expect((await begin(store, p, rendition, reason)).ok).toBe(true);
-  await fill(store, p);
-  const done = await store.completeKeep(p.video);
+  const { fillId } = await startFill(store, p, rendition, reason);
+  await fill(store, p, fillId);
+  const done = await store.completeKeep(p.video, fillId);
   expect(done).toMatchObject({ ok: true, state: 'held' });
 }
 
@@ -94,10 +111,8 @@ describe('NfxStore kept videos', () => {
   it('holds one rendition of two and serves only it, once every file is on disk', async () => {
     const { store, dir } = await open();
     const p = pkg('a');
-    const started = await begin(store, p);
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    expect(started.state).toBe('filling');
+    const started = await startFill(store, p);
+    const { fillId } = started;
     // The hash list and the playlist it was given are written at once; the rest is missing.
     const r720 = p.r['720p']!;
     expect(new Set(started.missing.map((f) => f.sha256))).toEqual(
@@ -110,8 +125,12 @@ describe('NfxStore kept videos', () => {
     // Not served while filling.
     expect(store.hasVideo(p.video)).toBe(false);
     expect(store.file(p.video, p.root)).toBeUndefined();
-    await fill(store, p);
-    expect(await store.completeKeep(p.video)).toEqual({ ok: true, state: 'held', missing: [] });
+    await fill(store, p, fillId);
+    expect(await store.completeKeep(p.video, fillId)).toEqual({
+      ok: true,
+      state: 'held',
+      missing: [],
+    });
 
     expect(store.hasVideo(p.video)).toBe(true);
     expect(store.servedRenditions(p.video)).toEqual(['720p']);
@@ -127,7 +146,10 @@ describe('NfxStore kept videos', () => {
     // Never in the whole list, on disk or in memory: an older build reads only that.
     expect(store.videos()).toEqual([]);
     const videos = JSON.parse(
-      await readFile(path.join(dir, 'nfx', 'videos.json'), 'utf8').catch(() => '{"videos":[]}'),
+      await readFile(path.join(dir, 'nfx', 'videos.json'), 'utf8').catch((err: unknown) => {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return '{"videos":[]}';
+        throw err;
+      }),
     ) as { videos: unknown[] };
     expect(videos.videos).toEqual([]);
     const kept = JSON.parse(await readFile(path.join(dir, 'nfx', 'kept.json'), 'utf8')) as {
@@ -169,46 +191,58 @@ describe('NfxStore kept videos', () => {
   it('checks every file against its entry and takes only what the rendition needs', async () => {
     const { store } = await open();
     const p = pkg('c');
-    await begin(store, p);
+    const { fillId } = await startFill(store, p);
     const seg = p.r['720p']!.segments[0]!;
-    expect(await store.putKeptFile(p.video, seg, new Uint8Array(100).fill(9))).toMatchObject({
+    expect(
+      await store.putKeptFile(p.video, fillId, seg, new Uint8Array(100).fill(9)),
+    ).toMatchObject({
       ok: false,
       error: 'mismatch',
     });
     const other = p.r['360p']!.segments[0]!;
-    expect(await store.putKeptFile(p.video, other, p.files.get(other)!)).toMatchObject({
+    expect(await store.putKeptFile(p.video, fillId, other, p.files.get(other)!)).toMatchObject({
       ok: false,
       error: 'unwanted',
     });
-    expect(await store.putKeptFile(addr('nope'), seg, p.files.get(seg)!)).toMatchObject({
+    expect(await store.putKeptFile(addr('nope'), fillId, seg, p.files.get(seg)!)).toMatchObject({
       ok: false,
       error: 'unknown',
     });
     const before = store.keepMissing(p.video).length;
-    expect(await store.putKeptFile(p.video, seg, p.files.get(seg)!)).toEqual({
+    expect(await store.putKeptFile(p.video, fillId, seg, p.files.get(seg)!)).toEqual({
       ok: true,
       remaining: before - 1,
     });
     // Not complete until everything is there.
-    expect(await store.completeKeep(p.video)).toMatchObject({ ok: true, state: 'filling' });
+    expect(await store.completeKeep(p.video, fillId)).toMatchObject({ ok: true, state: 'filling' });
   });
 
   it('resumes a filling rendition after a restart and leaves nothing on disk that no record names', async () => {
     const { store, dir } = await open();
     const p = pkg('d', 3);
-    await begin(store, p);
+    const { fillId } = await startFill(store, p);
     const [first, second] = store.keepMissing(p.video).map((f) => f.sha256);
-    await store.putKeptFile(p.video, first!, p.files.get(first!)!);
+    await store.putKeptFile(p.video, fillId, first!, p.files.get(first!)!);
     // A write a crash cut short.
     await writeFile(path.join(dir, 'nfx', 'tmp', `${second!}.part`), new Uint8Array(3));
 
+    const stray = `${'ff'.repeat(32)}.part`;
+    const alreadyPresent = `${first!}.part`;
+    for (const part of [stray, alreadyPresent])
+      await writeFile(path.join(dir, 'nfx', 'tmp', part), new Uint8Array(3));
     const again = await open(10 * 1024 * 1024, dir);
     const missing = again.store.keepMissing(p.video).map((f) => f.sha256);
     expect(missing).not.toContain(first);
     expect(missing).toContain(second);
-    expect(await onDisk(dir)).not.toContain(`${second!}.part`);
-    await fill(again.store, p);
-    expect(await again.store.completeKeep(p.video)).toMatchObject({ ok: true, state: 'held' });
+    const files = await onDisk(dir);
+    for (const part of [`${second!}.part`, stray, alreadyPresent])
+      expect(files).not.toContain(part);
+    const resumed = await startFill(again.store, p);
+    await fill(again.store, p, resumed.fillId);
+    expect(await again.store.completeKeep(p.video, resumed.fillId)).toMatchObject({
+      ok: true,
+      state: 'held',
+    });
     expect(again.store.servedRenditions(p.video)).toEqual(['720p']);
   });
 
@@ -216,7 +250,7 @@ describe('NfxStore kept videos', () => {
     const { store } = await open();
     const p = pkg('e');
     await keep(store, p, '720p');
-    expect(await begin(store, p, '360p')).toMatchObject({ ok: true, state: 'filling' });
+    const { fillId } = await startFill(store, p, '360p');
     expect(store.servedRenditions(p.video)).toEqual(['720p']);
     // Already filling 360p: asking again adds nothing; 720p is held.
     expect(await begin(store, p, '360p', 'downloaded')).toMatchObject({
@@ -224,8 +258,8 @@ describe('NfxStore kept videos', () => {
       state: 'filling',
     });
     expect(await begin(store, p, '720p')).toMatchObject({ ok: true, state: 'held' });
-    await fill(store, p);
-    await store.completeKeep(p.video);
+    await fill(store, p, fillId);
+    await store.completeKeep(p.video, fillId);
     expect(store.servedRenditions(p.video)).toEqual(['360p', '720p']);
     expect(store.keptOf(p.video)?.reasons).toHaveProperty('downloaded');
 
@@ -251,6 +285,80 @@ describe('NfxStore kept videos', () => {
     expect(big.store.keptVideos()).toEqual([]);
     expect(await onDisk(big.dir)).toEqual([]);
     expect(cap.usedBytes).toBe(0);
+  });
+
+  it('retains a fill on commit failure and retries committed cleanup on reopen', async () => {
+    const { dir } = await open();
+    const p = pkg('abandon-retry');
+    const root = filePath(dir, p.root);
+    let failCommit = false;
+    let failUnlink = false;
+    const { store } = await open(undefined, dir, undefined, {
+      ...adapters.fs,
+      rename: (from, to) =>
+        failCommit && to.endsWith('kept.json')
+          ? Promise.reject(new Error('cannot commit'))
+          : adapters.fs.rename(from, to),
+      unlink: (file) =>
+        failUnlink && file === root
+          ? Promise.reject(new Error('cannot unlink'))
+          : adapters.fs.unlink(file),
+    });
+    const { fillId } = await startFill(store, p);
+    failCommit = true;
+    await expect(store.abandonKeep(p.video)).rejects.toThrow('cannot commit');
+    expect(await store.completeKeep(p.video, fillId)).toMatchObject({ state: 'filling' });
+    expect(await onDisk(dir)).toContain(p.root);
+
+    failCommit = false;
+    failUnlink = true;
+    expect(await store.abandonKeep(p.video)).toBe(true);
+    expect(await onDisk(dir)).toContain(p.root);
+    const again = await open(undefined, dir);
+    expect(again.store.keptOf(p.video)).toBeUndefined();
+    expect(await onDisk(dir)).not.toContain(p.root);
+  });
+
+  it('rejects late writes and completion from an abandoned fill', async () => {
+    const { store } = await open();
+    const p = pkg('replacement-fill');
+    const old = await startFill(store, p);
+    await store.abandonKeep(p.video);
+    const next = await startFill(store, p);
+    const file = next.missing[0]!;
+    expect(
+      await store.putKeptFile(p.video, old.fillId, file.sha256, p.files.get(file.sha256)!),
+    ).toMatchObject({ ok: false, error: 'unknown' });
+    expect(store.keepMissing(p.video)).toContainEqual(file);
+    await fill(store, p, next.fillId);
+    expect(await store.completeKeep(p.video, old.fillId)).toMatchObject({
+      ok: false,
+      error: 'unknown',
+    });
+    expect(await store.completeKeep(p.video, next.fillId)).toMatchObject({ state: 'held' });
+  });
+
+  it('flushes a touch that occurred during a pending kept save', async () => {
+    let now = 10;
+    let duringSave: (() => void) | undefined;
+    const { store, dir } = await open(undefined, undefined, () => now, {
+      ...adapters.fs,
+      rename: (from, to) => {
+        if (to.endsWith('kept.json')) duringSave?.();
+        return adapters.fs.rename(from, to);
+      },
+    });
+    const p = pkg('touch-during-save');
+    await keep(store, p);
+    duringSave = () => {
+      now = 20;
+      store.touchKept(p.video);
+      duringSave = undefined;
+    };
+    await store.addKeepReason(p.video, 'downloaded');
+    await store.flushKept();
+    const again = await open(undefined, dir);
+    expect(again.store.keptOf(p.video)?.usedAt).toBe(20);
   });
 
   it('goes with its last reason, and evicts only watched-only videos, least recently used first', async () => {
@@ -339,20 +447,58 @@ describe('NfxStore kept videos', () => {
     expect(put.ok).toBe(true);
     expect(again.store.keptOf(q.video)).toBeUndefined();
     expect(again.store.servedRenditions(q.video)).toBe('all');
+    const kept = JSON.parse(await readFile(path.join(dir, 'nfx', 'kept.json'), 'utf8')) as {
+      videos: { video: string }[];
+    };
+    expect(kept.videos.map((r) => r.video)).not.toContain(q.video.toString());
   });
 
-  it('sets an unreadable kept.json aside and still loads the whole videos', async () => {
-    const { store, dir } = await open();
-    const p = pkg('m');
-    await keep(store, p);
-    await writeFile(path.join(dir, 'nfx', 'kept.json'), '{"version":2,"videos":[]}');
-    const again = await open(10 * 1024 * 1024, dir);
-    expect(again.store.keptCorruptOnLoad).toBe(true);
-    expect(again.store.keptVideos()).toEqual([]);
-    expect(again.store.loadError).toBeNull();
-    const names = await readdir(path.join(dir, 'nfx'));
-    expect(names.some((n) => n.startsWith('kept.json.unreadable-'))).toBe(true);
-  });
+  it.each(['none', 'quarantine', 'repair'])(
+    'keeps whole videos after kept corruption with %s failure',
+    async (failure) => {
+      const { store, dir } = await open();
+      const p = pkg('m');
+      await keep(store, p);
+      const whole = pkg('whole');
+      expect(
+        await store.putVideo({
+          video: whole.video,
+          root: whole.root,
+          segs: whole.segs,
+          hashListBytes: whole.hashListBytes,
+          read: (e) => Promise.resolve(whole.files.get(e.sha256)!),
+        }),
+      ).toMatchObject({ ok: true });
+      const keptPath = path.join(dir, 'nfx', 'kept.json');
+      const corrupted = '{"version":2,"videos":[]}';
+      await writeFile(keptPath, corrupted);
+      const again = await open(undefined, dir, undefined, {
+        ...adapters.fs,
+        rename: (from, to) => {
+          if (
+            (failure === 'quarantine' && from === keptPath) ||
+            (failure === 'repair' && to === keptPath)
+          )
+            return Promise.reject(new Error('kept database rename failed'));
+          return adapters.fs.rename(from, to);
+        },
+      });
+      expect(again.store.keptCorruptOnLoad).toBe(true);
+      expect(again.store.hasVideo(whole.video)).toBe(true);
+      const root = again.store.file(whole.video, whole.root);
+      expect(await root?.read(0, root.size)).toEqual(whole.hashListBytes);
+      expect(again.store.keptVideos()).toEqual([]);
+      expect(again.store.loadError).toBeNull();
+      const names = await readdir(path.join(dir, 'nfx'));
+      expect(names.some((n) => n.startsWith('kept.json.unreadable-'))).toBe(
+        failure !== 'quarantine',
+      );
+      if (failure === 'quarantine') {
+        expect(await begin(again.store, p)).toMatchObject({ ok: false, error: 'unavailable' });
+        expect(await readFile(keptPath, 'utf8')).toBe(corrupted);
+      }
+    },
+  );
 
   it('drops a malformed kept record on its own', async () => {
     const { store, dir } = await open();

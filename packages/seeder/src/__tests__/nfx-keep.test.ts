@@ -3,7 +3,7 @@
  * held files first, then the fetcher; only fetched bytes are spent; a stop leaves the rendition
  * filling, and the next run fetches only what is still missing.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { KeepBudget } from '../nfx-keep/budget.js';
 import { keepRendition } from '../nfx-keep/job.js';
@@ -56,7 +56,7 @@ describe('keepRendition', () => {
     const held = new Set([r720.init, r720.segments[0]!]);
     const fetched: string[] = [];
     const spent: number[] = [];
-    const progress: number[] = [];
+    const progress: { done: number; total: number }[] = [];
     const res = await keepRendition(
       input(store, p, {
         held: (s) => Promise.resolve(held.has(s) ? p.files.get(s)! : null),
@@ -68,7 +68,7 @@ describe('keepRendition', () => {
           spent.push(b);
           return true;
         },
-        onProgress: (x) => progress.push(x.done),
+        onProgress: ({ done, total }) => progress.push({ done, total }),
       }),
     );
     expect(res.ok).toBe(true);
@@ -78,13 +78,62 @@ describe('keepRendition', () => {
     for (const s of fetched) bytes += p.files.get(s)!.byteLength;
     expect(res.fetchedBytes).toBe(bytes);
     expect(spent.reduce((a, b) => a + b, 0)).toBe(bytes);
-    expect(progress.at(-1)).toBe(progress.length > 0 ? Math.max(...progress) : 0);
+    const total = new Set([...p.meta, r720.init, ...r720.segments]).size;
+    expect(progress.at(-1)).toEqual({ done: total, total });
     expect(store.servedRenditions(p.video)).toEqual(['720p']);
     // Again: already held, nothing fetched.
     const again = await keepRendition(
       input(store, p, { fetch: () => Promise.reject(new Error('no fetch expected')) }),
     );
     expect(again).toEqual({ ok: true, state: 'held', fetchedBytes: 0 });
+  });
+
+  it('fetches a mismatched spool file and stops before completing if the final write aborts', async () => {
+    const store = await openStore(await dir());
+    const p = pkg('job-stale-spool');
+    const segment = p.r['720p']!.segments[0]!;
+    const fetched: string[] = [];
+    const ac = new AbortController();
+    const result = await keepRendition(
+      input(store, p, {
+        signal: ac.signal,
+        held: (sha) => Promise.resolve(sha === segment ? new Uint8Array(1) : p.files.get(sha)!),
+        fetch: (file) => {
+          fetched.push(file.sha256);
+          return Promise.resolve(p.files.get(file.sha256)!);
+        },
+        onProgress: ({ done, total }) => {
+          if (done === total) ac.abort();
+        },
+      }),
+    );
+    expect(fetched).toEqual([segment]);
+    expect(result).toMatchObject({ state: 'stopped', why: 'aborted' });
+    expect(store.hasVideo(p.video)).toBe(false);
+    expect(store.keepMissing(p.video)).toEqual([]);
+  });
+
+  it('does not spend or fetch when aborted during the held lookup', async () => {
+    const store = await openStore(await dir());
+    const p = pkg('job-lookup-abort');
+    const spend = vi.fn(() => true);
+    const fetch = vi.fn(() => Promise.resolve(new Uint8Array()));
+    const ac = new AbortController();
+    const result = await keepRendition(
+      input(store, p, {
+        signal: ac.signal,
+        held: async () => {
+          await Promise.resolve();
+          ac.abort();
+          return null;
+        },
+        spend,
+        fetch,
+      }),
+    );
+    expect(result).toMatchObject({ state: 'stopped', why: 'aborted', fetchedBytes: 0 });
+    expect(spend).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('stops when asked, leaves the rendition filling, and a later run fetches only the rest', async () => {
@@ -158,19 +207,40 @@ describe('KeepBudget', () => {
       now: () => t,
     });
     await b.load();
-    expect(b.start()).toBe(true);
-    expect(b.start()).toBe(true);
+    expect(await b.start()).toBe(true);
+    expect(await b.start()).toBe(true);
     expect(b.canStart()).toBe(false);
-    expect(b.start()).toBe(false);
-    expect(b.spend(600)).toBe(true);
-    expect(b.spend(500)).toBe(false);
-    expect(b.spend(400)).toBe(true);
+    expect(await b.start()).toBe(false);
+    expect(await b.spend(600)).toBe(true);
+    expect(await b.spend(500)).toBe(false);
+    expect(await b.spend(400)).toBe(true);
     expect(b.usedBytes()).toBe(1000);
-    expect(b.spend(-1)).toBe(false);
-    expect(b.spend(0.5)).toBe(false);
+    expect(await b.spend(-1)).toBe(false);
+    expect(await b.spend(0.5)).toBe(false);
     t += 3_600_000 + 60_000;
-    expect(b.canStart()).toBe(true);
     expect(b.usedBytes()).toBe(0);
+    expect(b.canStart()).toBe(true);
+  });
+
+  it('rejects a charge when saving fails and can flush the current budget afterward', async () => {
+    const d = await dir();
+    let fail = true;
+    const budget = new KeepBudget({
+      fs: {
+        ...adapters.fs,
+        rename: (from, to) =>
+          fail ? Promise.reject(new Error('budget write failed')) : adapters.fs.rename(from, to),
+      },
+      crypto: adapters.crypto,
+      dir: d,
+    });
+    await budget.load();
+    await expect(budget.spend(100)).rejects.toThrow('budget write failed');
+    fail = false;
+    await budget.flush();
+    const reopened = new KeepBudget({ ...adapters, dir: d });
+    await reopened.load();
+    expect(reopened.usedBytes()).toBe(100);
   });
 
   it('survives a restart, and a clock set back does not stretch the hour', async () => {
@@ -187,9 +257,8 @@ describe('KeepBudget', () => {
       });
     const b = make();
     await b.load();
-    expect(b.start()).toBe(true);
-    expect(b.spend(900)).toBe(true);
-    await b.flush();
+    expect(await b.start()).toBe(true);
+    expect(await b.spend(900)).toBe(true);
     const again = make();
     await again.load();
     expect(again.canStart()).toBe(false);

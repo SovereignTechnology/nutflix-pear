@@ -21,7 +21,7 @@
  * - Disk cap (one pool with the legacy store): a put reserves the bytes of the files not
  *   already stored against the seeder's `DiskCap` and commits them when the video is recorded;
  *   a removal frees the bytes of files no other video lists.
- * - Crash safety, without a directory listing (the fs adapter has none): nothing may be left
+ * - Crash safety: nothing may be left
  *   on disk that no record names. A put is recorded as `pending` before its first file is
  *   written, and a load removes a pending put's files and `.part` files; a removal deletes its
  *   files before it saves the record list. At load the size on disk decides which records are
@@ -88,6 +88,8 @@ export interface NfxKeptRecord {
 interface KeptFile {
   readonly version: 1;
   readonly videos: readonly NfxKeptRecord[];
+  /** Files of a committed abandonment, until cleanup succeeds. */
+  readonly cleanup?: readonly string[];
   /** Records refused at load (malformed, or an address given twice). Never saved. */
   readonly dropped?: number;
 }
@@ -120,8 +122,15 @@ export type NfxKeepError =
 export type NfxKeepResult =
   | {
       readonly ok: true;
-      readonly state: 'whole' | 'held' | 'filling';
+      readonly state: 'whole' | 'held';
       readonly missing: readonly NfxStoredFile[];
+    }
+  | {
+      readonly ok: true;
+      readonly state: 'filling';
+      readonly missing: readonly NfxStoredFile[];
+      /** Identity of this fill in the open store. */
+      readonly fillId: symbol;
     }
   | { readonly ok: false; readonly error: NfxKeepError; readonly message: string };
 
@@ -288,7 +297,7 @@ function validateFiles(v: unknown, nonEmpty: boolean): NfxStoredFile[] | null {
   return out;
 }
 
-/** A rendition id as a hash list may give one (NFX-05 §2), never `meta`. */
+/** The rendition IDs supported by the kept store. */
 function renditionId(v: unknown): v is string {
   return (
     typeof v === 'string' &&
@@ -330,6 +339,13 @@ function validateKeptRecord(v: unknown): NfxKeptRecord | null {
     if (!renditionId(rendition) || files === null || Object.hasOwn(held, rendition)) return null;
     filling = { rendition, files };
   }
+  const sizes = new Map<string, number>();
+  for (const files of [meta, ...Object.values(held), filling?.files ?? []])
+    for (const { sha256, size } of files) {
+      const previous = sizes.get(sha256);
+      if (previous !== undefined && previous !== size) return null;
+      sizes.set(sha256, size);
+    }
   const reasonsRaw = r['reasons'];
   if (typeof reasonsRaw !== 'object' || reasonsRaw === null || Array.isArray(reasonsRaw))
     return null;
@@ -360,7 +376,14 @@ function validateKeptFile(raw: unknown): KeptFile | null {
     seen.add(r.video);
     videos.push(r);
   }
-  return { version: 1, videos, dropped };
+  const cleanup = o['cleanup'];
+  if (
+    cleanup !== undefined &&
+    (!Array.isArray(cleanup) ||
+      !cleanup.every((sha: unknown) => typeof sha === 'string' && SHA.test(sha)))
+  )
+    return null;
+  return { version: 1, videos, dropped, ...(cleanup === undefined ? {} : { cleanup }) };
 }
 
 /** Every file a kept record names, each once (a sha may serve two renditions). */
@@ -406,6 +429,10 @@ export class NfxStore {
   private readonly keptDb: JsonStore<KeptFile>;
   /** A kept record changed only in memory (`touchKept`): saved with the next save. */
   private keptDirty = false;
+  private keptGeneration = 0;
+  private keptWritable = true;
+  private readonly fillIds = new WeakMap<NonNullable<NfxKeptRecord['filling']>, symbol>();
+  private readonly keepCleanup = new Set<string>();
   private readonly root: string;
   private readonly now: () => number;
   private cap: DiskCap | null = null;
@@ -494,17 +521,27 @@ export class NfxStore {
 
     // Kept videos, before anything is removed: a file only a kept record names is not a
     // dropped whole video's to delete.
-    const keptLoad = await this.keptDb.load();
-    this.keptCorruptOnLoad = keptLoad.corrupt;
-    if (keptLoad.corrupt && (await fs.stat(this.keptPath())) !== null) {
-      await fs.rename(
-        this.keptPath(),
-        `${this.keptPath()}.unreadable-${this.o.crypto.randomHex(4)}`,
-      );
+    let keptLoad: Awaited<ReturnType<typeof this.keptDb.load>>;
+    try {
+      keptLoad = await this.keptDb.load();
+      this.keptCorruptOnLoad = keptLoad.corrupt;
+      if (keptLoad.corrupt) {
+        await fs.rename(
+          this.keptPath(),
+          `${this.keptPath()}.unreadable-${this.o.crypto.randomHex(4)}`,
+        );
+      }
+    } catch {
+      // The kept database could not be read or set aside. Keep serving whole videos and
+      // leave the database and any final files it might name untouched until the next load.
+      this.keptWritable = false;
+      await this.cleanParts().catch(() => undefined);
+      return;
     }
     this.kept.clear();
     this.keptServes.clear();
     const keptAll = keptLoad.value.videos;
+    for (const sha of keptLoad.value.cleanup ?? []) this.keepCleanup.add(sha);
     for (const r of keptAll)
       for (const f of keptFiles(r)) {
         if (onDisk.has(f.sha256)) continue;
@@ -535,18 +572,21 @@ export class NfxStore {
     for (const r of this.kept.values())
       for (const f of keptFiles(r)) if (onDisk.get(f.sha256) === f.size) this.present.add(f.sha256);
 
-    // Remove what no record names: the files of dropped and interrupted puts and kept records,
-    // and the `.part` file of any write a crash cut short (a filling file not on disk).
+    // Remove final files of dropped and interrupted records that no surviving record names.
     const candidates = new Set<string>();
     for (const r of [...done, ...interrupted]) for (const f of r.files) candidates.add(f.sha256);
     for (const r of keptAll) for (const f of keptFiles(r)) candidates.add(f.sha256);
     for (const sha of candidates) {
       if (this.present.has(sha)) continue;
       if (!this.sizes.has(sha)) await this.unlinkQuietly(this.filePath(sha));
-      await this.unlinkQuietly(this.partPath(sha));
     }
+    await this.cleanParts();
+    const cleaned = await this.cleanAbandonedFiles();
     if (this.droppedOnLoad > 0 || interrupted.length > 0 || corrupt) await this.persist();
-    if (keptDropped > 0 || keptLoad.corrupt) await this.persistKept();
+    if (keptDropped > 0 || keptLoad.corrupt || cleaned) {
+      this.keptDirty = true;
+      await this.persistKept().catch(() => undefined);
+    }
   }
 
   /**
@@ -688,18 +728,19 @@ export class NfxStore {
    */
   putKeptFile(
     video: nfx.VideoAddr,
+    fillId: symbol,
     sha: string,
     bytes: Uint8Array,
   ): Promise<
     | { readonly ok: true; readonly remaining: number }
     | { readonly ok: false; readonly error: NfxKeepError; readonly message: string }
   > {
-    return this.serialize(() => this.putKept(video, sha, bytes));
+    return this.serialize(() => this.putKept(video, fillId, sha, bytes));
   }
 
   /** The filling rendition becomes held, once every file it needs is on disk. */
-  completeKeep(video: nfx.VideoAddr): Promise<NfxKeepResult> {
-    return this.serialize(() => this.complete(video));
+  completeKeep(video: nfx.VideoAddr, fillId: symbol): Promise<NfxKeepResult> {
+    return this.serialize(() => this.complete(video, fillId));
   }
 
   /**
@@ -712,10 +753,26 @@ export class NfxStore {
       const key = video.toString();
       const r = this.kept.get(key);
       if (r === undefined || r.filling === null) return false;
-      await this.replaceKept(
-        key,
-        Object.keys(r.held).length === 0 ? null : { ...r, filling: null },
-      );
+      const next = Object.keys(r.held).length === 0 ? null : { ...r, filling: null };
+      const videos = this.keptVideos().filter((record) => record.video !== key);
+      if (next !== null) videos.push(next);
+      const named = new Set<string>();
+      for (const record of this.records.values()) for (const f of record.files) named.add(f.sha256);
+      for (const record of videos) for (const f of keptFiles(record)) named.add(f.sha256);
+      const removed = keptFiles(r).filter((f) => !named.has(f.sha256));
+      const cleanup = new Set([...this.keepCleanup, ...removed.map((f) => f.sha256)]);
+      // Commit the new record list and its cleanup together. Until this succeeds, the
+      // original fill is still resumable and no files have been touched.
+      await this.persistKept(videos, cleanup);
+      if (next === null) this.deleteKept(key);
+      else this.setKept({ ...next, usedAt: this.kept.get(key)?.usedAt ?? next.usedAt });
+      for (const { sha256, size } of removed) {
+        this.keepCleanup.add(sha256);
+        this.present.delete(sha256);
+        this.cap?.free(size);
+      }
+      this.recount();
+      if (await this.cleanAbandonedFiles()) this.keptDirty = true;
       return true;
     });
   }
@@ -776,13 +833,16 @@ export class NfxStore {
     const r = this.kept.get(video.toString());
     if (r === undefined) return;
     this.setKept({ ...r, usedAt: this.now() });
+    this.keptGeneration += 1;
     this.keptDirty = true;
   }
 
   /** Save what `touchKept` changed. */
   flushKept(): Promise<void> {
     return this.serialize(async () => {
-      if (this.keptDirty && this.loadError === null) await this.persistKept();
+      if (this.loadError !== null || !this.keptWritable) return;
+      if (await this.cleanAbandonedFiles()) this.keptDirty = true;
+      if (this.keptDirty) await this.persistKept();
     });
   }
 
@@ -793,7 +853,9 @@ export class NfxStore {
       error,
       message,
     });
-    if (this.loadError !== null) return fail('unavailable', 'the NFX store did not load');
+    if (this.loadError !== null || !this.keptWritable)
+      return fail('unavailable', 'the kept store did not load');
+    if (!renditionId(input.rendition)) return fail('rendition', 'unsupported rendition id');
     const key = input.video.toString();
     if (!SHA.test(input.root)) return fail('invalid', 'root is not 64 lowercase hex');
     if (input.hashListBytes.byteLength > nfx.MAX_HASH_LIST_BYTES)
@@ -808,7 +870,7 @@ export class NfxStore {
     if (known !== undefined && known.root !== input.root)
       return fail('exists', 'the video is kept with another hash list');
     // Copies: the caller's buffers may change after they are checked.
-    const listBytes = input.hashListBytes.slice();
+    const listBytes = new Uint8Array(input.hashListBytes);
     const verified = nfx.verifyHashList(listBytes, input.root, input.video, input.segs);
     if (!verified.ok) return fail('invalid', verified.error.reason);
     const list = verified.value;
@@ -817,7 +879,7 @@ export class NfxStore {
       rendition === undefined
         ? undefined
         : list.files.find((f) => f.role === 'playlist' && f.name === rendition.playlist);
-    const playlistBytes = input.playlistBytes.slice();
+    const playlistBytes = new Uint8Array(input.playlistBytes);
     if (
       playlist?.size !== BigInt(playlistBytes.byteLength) ||
       this.sha256(playlistBytes) !== playlist.sha256
@@ -845,7 +907,7 @@ export class NfxStore {
         // The state of the rendition asked for, not of another one filling meanwhile.
         return Object.hasOwn(known.held, input.rendition)
           ? { ok: true, state: 'held', missing: [] }
-          : { ok: true, state: 'filling', missing: this.missingOf(record) };
+          : this.fillingResult(record);
       }
       if (known.filling !== null)
         return fail('busy', `rendition ${known.filling.rendition} is being fetched`);
@@ -928,11 +990,12 @@ export class NfxStore {
         // left missing
       }
     }
-    return { ok: true, state: 'filling', missing: this.missingOf(record) };
+    return this.fillingResult(record);
   }
 
   private async putKept(
     video: nfx.VideoAddr,
+    fillId: symbol,
     sha: string,
     bytes: Uint8Array,
   ): Promise<
@@ -941,14 +1004,14 @@ export class NfxStore {
   > {
     this.assertLoaded();
     const r = this.kept.get(video.toString());
-    if (r === undefined || r.filling === null)
-      return { ok: false, error: 'unknown', message: 'the video is not filling' };
+    if (r === undefined || r.filling === null || this.fillIdentity(r.filling) !== fillId)
+      return { ok: false, error: 'unknown', message: 'the fill is no longer active' };
     const want =
       r.meta.find((f) => f.sha256 === sha) ?? r.filling.files.find((f) => f.sha256 === sha);
     if (!SHA.test(sha) || want === undefined)
       return { ok: false, error: 'unwanted', message: 'not a file this rendition needs' };
     if (!this.present.has(sha)) {
-      const copy = bytes.slice();
+      const copy = new Uint8Array(bytes);
       if (copy.byteLength !== want.size || this.sha256(copy) !== sha)
         return { ok: false, error: 'mismatch', message: 'not the listed bytes' };
       try {
@@ -961,14 +1024,14 @@ export class NfxStore {
     return { ok: true, remaining: this.missingOf(r).length };
   }
 
-  private async complete(video: nfx.VideoAddr): Promise<NfxKeepResult> {
+  private async complete(video: nfx.VideoAddr, fillId: symbol): Promise<NfxKeepResult> {
     this.assertLoaded();
     const key = video.toString();
     const r = this.kept.get(key);
-    if (r === undefined || r.filling === null)
-      return { ok: false, error: 'unknown', message: 'the video is not filling' };
+    if (r === undefined || r.filling === null || this.fillIdentity(r.filling) !== fillId)
+      return { ok: false, error: 'unknown', message: 'the fill is no longer active' };
     const missing = this.missingOf(r);
-    if (missing.length > 0) return { ok: true, state: 'filling', missing };
+    if (missing.length > 0) return { ok: true, state: 'filling', missing, fillId };
     const record: NfxKeptRecord = {
       ...r,
       held: { ...r.held, [r.filling.rendition]: r.filling.files },
@@ -1001,6 +1064,25 @@ export class NfxStore {
       this.cap?.free(size);
     }
     await this.persistKept().catch(() => undefined);
+  }
+
+  private fillingResult(r: NfxKeptRecord): NfxKeepResult {
+    if (r.filling === null) throw new Error('NfxStore: expected a filling rendition');
+    return {
+      ok: true,
+      state: 'filling',
+      missing: this.missingOf(r),
+      fillId: this.fillIdentity(r.filling),
+    };
+  }
+
+  private fillIdentity(filling: NonNullable<NfxKeptRecord['filling']>): symbol {
+    let fillId = this.fillIds.get(filling);
+    if (fillId === undefined) {
+      fillId = Symbol();
+      this.fillIds.set(filling, fillId);
+    }
+    return fillId;
   }
 
   private setKept(r: NfxKeptRecord): void {
@@ -1041,7 +1123,7 @@ export class NfxStore {
         : fail('exists', 'the video is stored with another hash list');
     }
     // A copy: the caller's buffer may change after it is checked.
-    const listBytes = input.hashListBytes.slice();
+    const listBytes = new Uint8Array(input.hashListBytes);
     const verified = nfx.verifyHashList(listBytes, input.root, input.video, input.segs);
     if (!verified.ok) return fail('invalid', verified.error.reason);
 
@@ -1097,7 +1179,7 @@ export class NfxStore {
       if (this.present.has(sha)) continue; // stored for another video
       let bytes: Uint8Array;
       try {
-        bytes = entry === undefined ? listBytes : (await input.read(entry)).slice();
+        bytes = entry === undefined ? listBytes : new Uint8Array(await input.read(entry));
       } catch {
         await undo();
         return fail('io', `could not read ${entry?.name ?? 'the hash list'}`);
@@ -1255,9 +1337,44 @@ export class NfxStore {
     return this.db.save({ version: 1, videos });
   }
 
-  private async persistKept(): Promise<void> {
-    await this.keptDb.save({ version: 1, videos: this.keptVideos() });
-    this.keptDirty = false;
+  private async cleanParts(): Promise<void> {
+    for (const name of await this.o.fs.readdir(this.o.fs.join(this.root, 'tmp'))) {
+      const sha = name.slice(0, -5);
+      if (name.endsWith('.part') && SHA.test(sha)) await this.unlinkQuietly(this.partPath(sha));
+    }
+  }
+
+  /** Keep failed deletions in the journal so a flush or restart can retry them. */
+  private async cleanAbandonedFiles(): Promise<boolean> {
+    const fs = this.o.fs;
+    let changed = false;
+    for (const sha of this.keepCleanup) {
+      try {
+        if (!this.sizes.has(sha)) {
+          for (const path of [this.filePath(sha), this.partPath(sha)])
+            if ((await fs.stat(path)) !== null) await fs.unlink(path);
+        }
+        this.keepCleanup.delete(sha);
+        changed = true;
+      } catch {
+        // The committed cleanup entry remains available for a later retry.
+      }
+    }
+    return changed;
+  }
+
+  private async persistKept(
+    videos = this.keptVideos(),
+    cleanup: ReadonlySet<string> = this.keepCleanup,
+  ): Promise<void> {
+    if (!this.keptWritable) throw new Error('could not recover kept.json');
+    const generation = this.keptGeneration;
+    await this.keptDb.save({
+      version: 1,
+      videos,
+      ...(cleanup.size === 0 ? {} : { cleanup: [...cleanup] }),
+    });
+    if (this.keptGeneration === generation) this.keptDirty = false;
   }
 
   private serialize<T>(task: () => Promise<T>): Promise<T> {
