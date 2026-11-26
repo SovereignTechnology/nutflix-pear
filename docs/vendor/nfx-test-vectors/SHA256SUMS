@@ -1,5 +1,5 @@
-# sha256 of each vendored NFX test vector: nfx commit b5fe5e472accd9d8c2548faad419a40a1885a61e
-# (SovereignTechnology/nfx main, the merge of PR #81; spec/test-vectors/). packages/core/src/nfx/__tests__ checks it.
+# sha256 of each vendored NFX test vector: nfx commit 4b6095c2aea7f05e7ee384c478fb59857b4eac1d
+# (SovereignTechnology/nutflix main, was nfx; the squash merge of PR #119; spec/test-vectors/). packages/core/src/nfx/__tests__ checks it.
 52ed1e9a8eedd73e2334659b3c6c09f0f0a674257cd5066c4d9fbe682277831d  beacon-hyperdht.json
 828e8b298ab9180dfc660156749122c760eab545f3c4c3e9e3cc172fef552761  beacon-invalid.json
 2f291515e7e82c185b84bb5b5568f3add8cf6672cfbde3e3d2c0d52540e67678  beacon.json
@@ -10,6 +10,8 @@
 0ef62a4cf4800f0889616b0b9deffea1326d689389f1475910beabf081d1b4c6  files1.json
 3dadcab17a656d5322d032dbf2d588e6056a1fa73f0a714e96f1f489d4c87cb8  hashlist-invalid.json
 4a0292939ebe45902ce975827683dbf1576791a5b2af143ed52cefc8379a5101  hashlist.json
+3693ffc3da76c164662a8f363a28fd399738f6a6311eb9746c810481a66f5f4c  lookup-invalid.json
+ed45a9ff5fede8cdca966e1c3643875db96d7548e7afd6e7dcd8ab6a74f88691  lookup.json
 467619ca9484e9a8b71696f5a466a0be045d106671d7e2bf7b1a32c4ea23e419  manifest-invalid.json
 6c3feb6f9aadee40d619965262ddccf2f3b09ac9b5e41cf525eebcb1c1543c95  manifest.json
 4328986b13ba9a21b40bd8961b2e95fa45ba2f3449d387172e98e171241307c7  manifest-open.json

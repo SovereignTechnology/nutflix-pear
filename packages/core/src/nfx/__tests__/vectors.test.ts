@@ -1,6 +1,6 @@
 /**
  * Every NFX test vector this package implements (docs/vendor/nfx-test-vectors, nfx commit
- * b5fe5e4), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
+ * 4b6095c), mirroring nfx-proto's `tests/vectors.rs` case by case. Signed events are
  * reproduced up to their id: nfx-proto re-signs with a zero BIP-340 `aux_rand`, which no
  * signer here exposes, so a rebuilt event's id is compared and the vector's signature verified.
  */
@@ -83,6 +83,8 @@ const VECTOR_FILES = [
   'files1.json',
   'hashlist-invalid.json',
   'hashlist.json',
+  'lookup-invalid.json',
+  'lookup.json',
   'manifest-invalid.json',
   'manifest-open.json',
   'manifest.json',
