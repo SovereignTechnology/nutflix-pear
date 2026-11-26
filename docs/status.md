@@ -32,6 +32,8 @@ Every pull request runs these on GitHub Actions ([`ci.yml`](../.github/workflows
 - **test**: the unit and integration suites. On the release commit's run (2026-10-05) that was 248
   test files, 4,065 tests passed and 36 skipped.
 - **e2e**: the Electron end-to-end suites, with Chromium's sandbox on, under a virtual display.
+  One of them (`secure-memory.e2e.ts`, since 0.1.4) runs inside the Electron binary without
+  mocks: it makes, unlocks and uses a local key, derives the wallet seed and makes a signaling key.
 - **package**: stages the packaged app and runs its gates (no installer is built).
 
 A fuzz campaign over the `pay/1` codec and the payment parsers runs on demand
@@ -43,7 +45,10 @@ Lightning backend; they are opt-in and not part of CI.
 
 - The packaged app has not been run end to end against real relays, real peers and a real mint,
   and there is no recorded install-and-launch of the `.deb` or AppImage on a clean machine. The
-  end-to-end suites run the development layout with fixtures and mock money.
+  end-to-end suites run the development layout with fixtures and mock money. That is how every
+  release up to 0.1.3 shipped unable to create a local key (#150): no suite had run the signer
+  inside Electron. The sign-in flow itself, through the prompt window to a stored key, is still
+  not run end to end.
 - No real payment is on record, and no independent party has audited the code.
   [`security-review.md`](security-review.md) is an in-house review.
 - Where the signed release notice is published on Nostr relays has not been re-checked since the

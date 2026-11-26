@@ -72,6 +72,21 @@ new default relays.
 
 ### Fixed
 
+- **A local key can be created, imported and unlocked** (#150, reported on Nostr). In every
+  earlier release, 0.1.0 to 0.1.3, "Create a new key" always answered "internal error". The app
+  asked libsodium for guarded memory (`sodium_malloc`) for every key it holds, and Electron
+  refuses that memory (the V8 memory cage; holepunchto/sodium-native#185), so the call threw
+  before a key was made. The same call comes first when the wallet's journal is opened and when
+  a WebRTC signaling key is made (0.1.3), which therefore cannot have worked in the packaged app
+  either. Inside Electron, keys are now in ordinary process memory, wiped on lock; the seeder and
+  gateway, on Node, keep guarded memory. [SECURITY.md](SECURITY.md#what-010-does-not-protect-against)
+  states the limit. The unit tests run in Node and the Electron suites ran with mocks, so nothing
+  had allocated key memory inside Electron: a new suite, `e2e/secure-memory.e2e.ts`, makes,
+  unlocks and uses a key, derives the wallet seed and makes a signaling key inside the Electron
+  binary.
+- **An "internal error" from the signer or from any host call now leaves a line in the host's
+  log** with the call's name and the error's code or class, never its message. Before, nothing
+  recorded why.
 - **The Network tab no longer drops videos** when the scoped relay's page and your read relays'
   page are each short of a full page but longer together: the rest now comes on the next page.
 
