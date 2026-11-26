@@ -194,8 +194,16 @@ describe('isWebSettingsPatch', () => {
     ['a signaling relay with a bare /', { nfx: { ...nfx, meshRelays: ['wss://relay.example/'] } }],
     // Pear #89: trackers are gone from the web's settings.
     ['a list of trackers', { nfx: { ...nfx, trackers: ['wss://web.nutflix.xyz/tracker'] } }],
+    // Contracts v20: the No HTTPS switch is a boolean.
+    ['peers only as text', { nfx: { ...nfx, peersOnly: 'yes' } }],
+    ['peers only as a number', { nfx: { ...nfx, peersOnly: 1 } }],
   ])('refuses %s', (_name, patch) => {
     expect(isWebSettingsPatch(patch)).toBe(false);
+  });
+
+  it('contracts v20: takes the No HTTPS switch, on or off', () => {
+    expect(isWebSettingsPatch({ nfx: { ...nfx, peersOnly: true } })).toBe(true);
+    expect(isWebSettingsPatch({ nfx: { ...nfx, peersOnly: false } })).toBe(true);
   });
 
   it('never throws, whatever a getter does', () => {

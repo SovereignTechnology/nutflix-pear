@@ -42,6 +42,7 @@ import type {
   NfxOriginSource,
   NfxPlayerEvent,
   NfxPlayerLib,
+  NfxSegmentSource,
 } from '../nfx-lib.js';
 
 /** `MAX_PLAY_SOURCES` (contracts v19), as a value: core's constant is imported as a type only. */
@@ -130,6 +131,15 @@ export function playStats(s: NfxLibStats): NfxPlayStats {
         }),
     verified: s.verified,
     refused: s.rejected.length + (mesh?.rejected.length ?? 0),
+    ...(mesh?.source === undefined
+      ? {}
+      : {
+          transport: {
+            source: mesh.source,
+            ...(mesh.rescues === undefined ? {} : { rescues: mesh.rescues }),
+            ...(mesh.webrtc === 'ok' || mesh.webrtc === 'blocked' ? { webrtc: mesh.webrtc } : {}),
+          },
+        }),
     ...(s.bandwidthEstimate === undefined ? {} : { bandwidthEstimate: s.bandwidthEstimate }),
   };
 }
@@ -217,9 +227,16 @@ export function problemOf(e: NfxPlayerEvent): NfxPlayProblem | null {
             message: `Refused ${shortUrl(m[2] ?? '')} from ${m[1] === 'p2p' ? 'a peer' : 'an origin'}: ${m[3] ?? ''}`,
           };
     }
+    case 'mesh':
+      // Contracts v20: the viewer is told why no peer shows up (the library's own words name
+      // what its check found; a short reason is enough here).
+      return { kind: 'peers', message: capped(e.why) };
     case 'verified':
     case 'levels':
     case 'playing':
+    case 'waiting':
+    case 'resumed':
+    case 'rescue':
       return null;
   }
 }
@@ -237,6 +254,13 @@ export interface WebNfxSessionOptions {
   readonly renditions?: readonly string[] | undefined;
   /** The signaling relays (NFX-10 §6); none: no mesh, every byte from an origin. */
   readonly meshRelays: readonly string[];
+  /**
+   * ADR 0025: where the mesh takes segments from; absent, the library's default (HTTPS first).
+   * Passed only with signaling relays: without a mesh there are no peers to ask.
+   */
+  readonly segmentSource?: NfxSegmentSource | undefined;
+  /** Contracts v20: told when the viewer switches HTTPS off or on, so the choice is kept. */
+  readonly onPeersOnly?: ((on: boolean) => void) | undefined;
   readonly iceServers: readonly { readonly urls: readonly string[] }[];
   /**
    * The rendition the viewer picked (`playNfx(addr, id)`): played, and hls.js's choice turned
@@ -272,14 +296,43 @@ export class WebNfxSession implements NfxPlaySession {
   #attached: Attachment | null = null;
   #closed = false;
   #problems: NfxPlayProblem[] = [];
+  /** Contracts v20: why the play is waiting for a peer, or `null` while it is not. */
+  #waiting: 'no-peer' | 'slow' | null = null;
   /** Whether `pin` was set on the player's levels (once). */
   #pinned = false;
+  /** Where the mesh takes segments from now (it can change while the play is open). */
+  #segmentSource: NfxSegmentSource | undefined;
   readonly #listeners = new Set<() => void>();
+  /**
+   * Contracts v20: the switch that turns HTTPS off for segments. There only with a mesh that
+   * has a segment source to switch: without one there are no peers to take them from.
+   */
+  readonly setPeersOnly?: (on: boolean) => Promise<void>;
 
   constructor(o: WebNfxSessionOptions) {
     this.#o = o;
     this.videoId = o.videoId;
     this.#picked = o.pin ?? null;
+    this.#segmentSource = o.segmentSource;
+    if (o.meshRelays.length > 0 && o.segmentSource !== undefined) {
+      this.setPeersOnly = (on: boolean): Promise<void> => {
+        if (this.#closed) return rejectWith('invalid-argument', 'the play is closed');
+        const next: NfxSegmentSource = on ? 'peers-only' : 'peers-then-https';
+        try {
+          // A player not open yet starts with it; one from before nfx 0109 cannot switch.
+          this.#attached?.session?.setSegmentSource?.(next);
+        } catch (e) {
+          return rejectWith(
+            'invalid-argument',
+            e instanceof Error ? e.message : 'the player refused the segment source',
+          );
+        }
+        this.#segmentSource = next;
+        this.#o.onPeersOnly?.(on);
+        this.#changed();
+        return Promise.resolve();
+      };
+    }
     this.source = {
       kind: 'element',
       attach: (el: MediaElementLike): Unsubscribe => this.#attach(el),
@@ -318,6 +371,11 @@ export class WebNfxSession implements NfxPlaySession {
 
   get closed(): boolean {
     return this.#closed;
+  }
+
+  /** Contracts v20: set while the play has nothing to play and waits for a peer. */
+  get waiting(): 'no-peer' | 'slow' | null {
+    return this.#waiting;
   }
 
   /** Contracts v15: told after the renditions, the rendition or the problems change. */
@@ -428,7 +486,10 @@ export class WebNfxSession implements NfxPlaySession {
         // Signaling over Nostr (NFX-10 §6, pear #89): this page, the desktop app and nfxd's mesh
         // endpoint meet in the rendition's room on these relays. Never a tracker.
         ...(o.meshRelays.length > 0
-          ? { signaling: { kind: 'nostr' as const, relays: [...o.meshRelays] } }
+          ? {
+              signaling: { kind: 'nostr' as const, relays: [...o.meshRelays] },
+              ...(this.#segmentSource === undefined ? {} : { segmentSource: this.#segmentSource }),
+            }
           : {}),
         iceServers: o.iceServers.map((s): NfxIceServer => ({ urls: [...s.urls] })),
         onEvent: (e) => {
@@ -461,6 +522,13 @@ export class WebNfxSession implements NfxPlaySession {
     if (e.type === 'levels') {
       this.#levels = [...e.levels];
       this.#pinLevel();
+      this.#changed();
+      return;
+    }
+    if (e.type === 'waiting' || e.type === 'resumed') {
+      const waiting = e.type === 'waiting' ? e.reason : null;
+      if (waiting === this.#waiting) return;
+      this.#waiting = waiting;
       this.#changed();
       return;
     }

@@ -34,10 +34,11 @@ supersedes it.
 | [0022](0022-a-web-client-for-nfx.md)                 | A web client for NFX videos at web.nutflix.xyz                            | Accepted                                                  |
 | [0023](0023-webrtc-in-the-helper.md)                 | Trade segments with browsers over WebRTC, through the helper              | Proposed                                                  |
 | [0024](0024-stats-for-nerds.md)                      | Stats for nerds: show where a play's bytes come from                      | Accepted                                                  |
+| [0025](0025-the-web-client-takes-segments-from-peers-first.md) | The web client takes its segments from peers first             | Accepted; amends 0022 item 5 for segments                 |
 
 ## Numbering
 
-The next free number is **0024**. Numbers **0006** and **0008** are not
+The next free number is **0026**. Numbers **0006** and **0008** are not
 missing: the sibling [nfx](https://github.com/SovereignTechnology/nfx) repository uses them
 ([0006, the standardisation suite](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0006-standardization-suite-nfx.md)
 and

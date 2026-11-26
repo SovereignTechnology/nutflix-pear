@@ -131,5 +131,14 @@
  *       only behind a switch). Additive: `NfxPlaySession.stats?()` → `NfxPlayStats`,
  *       `NfxPlaySession.addresses?()` and `PlaySession.addresses?()` → `PlaySourceAddress[]`,
  *       `PlaySourceStat`, `PlaySourceKind`, `MAX_PLAY_SOURCES` (64). Every v18 consumer compiles.
+ *  20 — 2026-11-26 (ADR 0025: the web client takes its segments from peers first; the
+ *       maintainer's decision of 2026-11-26: an origin only as a rescue now, not at all later).
+ *       Additive: `NfxPlayStats.transport?` (where segments come from, rescues, whether peers can
+ *       be reached), `NfxPlaySession.waiting?` (the play waits for a peer),
+ *       `NfxPlaySession.setPeersOnly?` with `NfxSettings.peersOnly?` (the switch in stats for
+ *       nerds that turns HTTPS off for segments), and a fourth `NfxPlayProblem.kind`, `peers`
+ *       (no peer can be reached from this shell). A stored v10 to v19 `nfx` stays valid. Every
+ *       v19 consumer compiles; one that switches over the problem kinds without a default must
+ *       name the new one.
  */
-export const CONTRACTS_VERSION = 19 as const;
+export const CONTRACTS_VERSION = 20 as const;

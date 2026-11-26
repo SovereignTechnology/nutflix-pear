@@ -219,6 +219,16 @@ export interface NfxPlayStats {
   readonly refused?: number;
   /** The player's bandwidth estimate, bits per second. */
   readonly bandwidthEstimate?: number;
+  /**
+   * v20 (ADR 0025): where the play takes its media segments from: peers first with an origin as
+   * the rescue, peers only, or an origin first; how many segments were rescued from an origin;
+   * and whether this shell can reach peers at all (`blocked`: it cannot). Absent: not said.
+   */
+  readonly transport?: {
+    readonly source: 'peers-then-https' | 'peers-only' | 'https-first';
+    readonly rescues?: number;
+    readonly webrtc?: 'ok' | 'blocked';
+  };
 }
 
 /**
@@ -258,10 +268,13 @@ export interface NfxRenditionInfo {
  * - `refused`: a file did not match the hash list and was dropped (the play may go on from
  *   another source);
  * - `origin`: an origin's copy of the hash list did not verify, and the next origin was tried;
- * - `stopped`: the play cannot go on (no origin served a hash list that verifies, a media error).
+ * - `stopped`: the play cannot go on (no origin served a hash list that verifies, a media error);
+ * - `peers` (v20, ADR 0025): this shell cannot reach any peer (in a browser, WebRTC is switched
+ *   off or kept to a proxy), so the video comes from origins alone, or does not play where the
+ *   shell takes it from peers only. A screen written before v20 ignores the kind.
  */
 export interface NfxPlayProblem {
-  readonly kind: 'refused' | 'origin' | 'stopped';
+  readonly kind: 'refused' | 'origin' | 'stopped' | 'peers';
   /** One line for a viewer; it names no key or secret. */
   readonly message: string;
 }
@@ -292,6 +305,20 @@ export interface NfxPlaySession {
    * newest kept). Absent: the session reports none.
    */
   readonly problems?: readonly NfxPlayProblem[];
+  /**
+   * v20 (ADR 0025): set while the play has nothing to play and waits for a peer to deliver it:
+   * `no-peer` when none is connected, `slow` when those connected have not delivered. `null` or
+   * absent otherwise. `onChange` tells of a change.
+   */
+  readonly waiting?: 'no-peer' | 'slow' | null;
+  /**
+   * v20 (ADR 0025): from now on take this play's segments from peers only (`true`: nothing more
+   * is asked of an HTTPS origin for a segment), or from peers first with an origin as the rescue
+   * (`false`). The shell keeps the choice for later plays (`NfxSettings.peersOnly`).
+   * `NfxPlayStats.transport.source` says which holds. Absent: the play has no such choice (it has
+   * no mesh, or its shell fetches from no origin).
+   */
+  setPeersOnly?(on: boolean): Promise<void>;
   /**
    * v15 (ADR 0022): `cb` is called after `renditions`, `rendition` or `problems` change, for a
    * session that learns them while it plays (an `element` source learns its renditions once
@@ -485,6 +512,14 @@ export interface NfxSettings {
    * `nfx` stays valid.
    */
   readonly meshRelays?: readonly RelayUrl[];
+  /**
+   * v20 (ADR 0025): `true`: a shell that can fetch a free video's segments from an HTTPS origin
+   * never does, and takes them from peers only (a play then waits when no peer delivers).
+   * Absent or `false`: peers first, an origin as the rescue. Set by the switch in stats for nerds
+   * (`NfxPlaySession.setPeersOnly`). A shell that fetches from no origin ignores it. A stored v10
+   * to v19 `nfx` stays valid.
+   */
+  readonly peersOnly?: boolean;
 }
 
 export interface Settings {

@@ -584,6 +584,8 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
       ],
       // Pear #89: over Nostr; the trackers the beacons name are not asked.
       signaling: { kind: 'nostr', relays: ['wss://signal.example', 'ws://127.0.0.1:7778'] },
+      // ADR 0025: segments from the mesh's peers first, an origin only as a rescue.
+      segmentSource: 'peers-then-https',
       iceServers: [{ urls: ['stun:relay.nutflix.xyz:3478'] }],
     });
     expect(typeof onEvent).toBe('function');
@@ -609,12 +611,43 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     session.source.attach(document.createElement('video'));
     await tick();
     expect(r.player.last.options.signaling).toBeUndefined();
+    // No mesh, so no peers to ask first: the library is told nothing about segment sources.
+    expect(r.player.last.options.segmentSource).toBeUndefined();
     expect(r.player.last.options.origins).toEqual([
       { url: 'https://seed.example/o', tier: 3 },
       WEB_FALLBACK_ORIGIN,
     ]);
     await session.close();
     expect(r.player.last.session.destroyed).toBe(1);
+  });
+
+  it('v20: the No HTTPS switch is kept in the settings and starts later plays with peers only', async () => {
+    const r = make();
+    const { addr } = await playable(r);
+    put(r.relays, [SCOPED], beacon(new Key(), addr, [https('https://seed.example/o')]));
+    const first = await r.adapter.playNfx(addr);
+    if (first.source.kind !== 'element') throw new Error('not an element source');
+    first.source.attach(document.createElement('video'));
+    await tick();
+    expect(r.player.last.options.segmentSource).toBe('peers-then-https');
+    expect((await r.adapter.settings()).nfx?.peersOnly).toBeUndefined();
+    await first.setPeersOnly?.(true);
+    expect(r.player.last.session.segmentSources).toEqual(['peers-only']);
+    const kept = (await r.adapter.settings()).nfx;
+    expect(kept?.peersOnly).toBe(true);
+    // The rest of the stored `nfx` is as it was.
+    expect(kept?.scopedRelays).toEqual([SCOPED]);
+    await first.close();
+
+    const second = await r.adapter.playNfx(addr);
+    if (second.source.kind !== 'element') throw new Error('not an element source');
+    second.source.attach(document.createElement('video'));
+    await tick();
+    expect(r.player.last.options.segmentSource).toBe('peers-only');
+    await second.setPeersOnly?.(false);
+    expect(r.player.last.session.segmentSources).toEqual(['peers-then-https']);
+    expect('peersOnly' in ((await r.adapter.settings()).nfx ?? {})).toBe(false);
+    await second.close();
   });
 
   it('a beacon that arrives while the play waits opens it (beacons are never stored)', async () => {

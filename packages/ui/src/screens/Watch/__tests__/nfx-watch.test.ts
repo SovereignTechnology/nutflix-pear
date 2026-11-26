@@ -366,6 +366,65 @@ describe('NfxWatch', () => {
     expect(playNfx).toHaveBeenLastCalledWith(NFX.id);
   });
 
+  it('v20: says when no peer can be reached, and while the play waits for one', async () => {
+    const adapter = new MockNetworkAdapter({ nfx: true });
+    const real = adapter.playNfx.bind(adapter);
+    let problems: NfxPlayProblem[] = [];
+    let waiting: 'no-peer' | 'slow' | null = null;
+    let tell: () => void = () => undefined;
+    vi.spyOn(adapter, 'playNfx').mockImplementation(async (addr, rendition) => {
+      const s = await real(addr, rendition);
+      return {
+        ...s,
+        get problems() {
+          return problems;
+        },
+        get waiting() {
+          return waiting;
+        },
+        onChange: (cb) => {
+          tell = cb;
+          return () => undefined;
+        },
+      };
+    });
+    const { r } = mount(adapter);
+    await flush();
+    click(r.get('.nf-nfxwatch__start button'));
+    await flush();
+    expect(r.container.querySelector('.nf-nfxwatch__problems')).toBeNull();
+    waiting = 'no-peer';
+    act(() => {
+      tell();
+    });
+    expect(r.get('[data-testid="nfx-waiting"]').textContent).toContain(
+      'Waiting for peers… No peer that holds this video is connected yet.',
+    );
+    waiting = 'slow';
+    act(() => {
+      tell();
+    });
+    expect(r.get('[data-testid="nfx-waiting"]').textContent).toContain(
+      'The peers connected have not sent the next part yet.',
+    );
+    waiting = null;
+    act(() => {
+      tell();
+    });
+    expect(r.container.querySelector('.nf-nfxwatch__problems')).toBeNull();
+    problems = [{ kind: 'peers', message: 'WebRTC gathered no network candidate' }];
+    waiting = 'no-peer';
+    act(() => {
+      tell();
+    });
+    expect(r.get('[data-testid="nfx-peers-blocked"]').textContent).toContain(
+      'This browser cannot connect to peers.',
+    );
+    // The reason it waits is the blocked WebRTC: one notice, not two.
+    expect(r.container.querySelector('[data-testid="nfx-waiting"]')).toBeNull();
+    expect(r.container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('nobody seeding: says so, and Retry asks again', async () => {
     const adapter = new MockNetworkAdapter({ nfx: true, failWith: 'no-seeders' });
     const playNfx = vi.spyOn(adapter, 'playNfx');

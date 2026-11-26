@@ -97,20 +97,48 @@ type PlayState =
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** What the player ran into (v15), as the viewer reads it: a stop, refused files, origins skipped. */
+/**
+ * What the player ran into (v15), as the viewer reads it: a stop, refused files, origins skipped,
+ * and (v20) that no peer can be reached, or that the play is waiting for one.
+ */
 function NfxProblems({
   problems,
+  waiting,
   onRetry,
 }: {
   readonly problems: readonly NfxPlayProblem[];
+  readonly waiting: 'no-peer' | 'slow' | null;
   readonly onRetry: () => void;
 }): ReactElement | null {
   const stopped = problems.findLast((p) => p.kind === 'stopped');
   const refused = problems.filter((p) => p.kind === 'refused');
   const origins = problems.filter((p) => p.kind === 'origin');
-  if (stopped === undefined && refused.length === 0 && origins.length === 0) return null;
+  const peers = problems.findLast((p) => p.kind === 'peers');
+  if (
+    stopped === undefined &&
+    refused.length === 0 &&
+    origins.length === 0 &&
+    peers === undefined &&
+    waiting === null
+  ) {
+    return null;
+  }
   return (
     <div className="nf-nfxwatch__problems">
+      {peers !== undefined ? (
+        <p className="nf-nfxwatch__problem" role="status" data-testid="nfx-peers-blocked">
+          <strong>This browser cannot connect to peers.</strong> Its WebRTC is switched off or kept
+          to a proxy (a browser setting or an extension), so nothing can come from other viewers and
+          seeders. Allow WebRTC to use UDP for this site to watch from peers.
+        </p>
+      ) : waiting !== null ? (
+        <p className="nf-nfxwatch__problem" role="status" data-testid="nfx-waiting">
+          <strong>Waiting for peers…</strong>{' '}
+          {waiting === 'no-peer'
+            ? 'No peer that holds this video is connected yet.'
+            : 'The peers connected have not sent the next part yet.'}
+        </p>
+      ) : null}
       {stopped !== undefined ? (
         <div className="nf-nfxwatch__problem nf-nfxwatch__problem--stopped" role="alert">
           <p className="nf-nfxwatch__problem-text">
@@ -186,6 +214,13 @@ function NfxPlayer({
     },
     [source],
   );
+
+  // v20 (ADR 0025): the viewer's last flip of "No HTTPS", shown at once; the play's own numbers
+  // say the same a moment later. A new session starts from what it reports.
+  const [peersOnlyPick, setPeersOnlyPick] = useState<boolean | null>(null);
+  useEffect(() => {
+    setPeersOnlyPick(null);
+  }, [session]);
 
   // v19 (ADR 0024): stats for nerds.
   const [nerdOpen, setNerdOpen] = useState(false);
@@ -296,6 +331,19 @@ function NfxPlayer({
               showAddresses={nerd.showAddresses}
               addresses={nerd.addresses}
               onShowAddresses={nerd.setShowAddresses}
+              peersOnly={
+                session.setPeersOnly === undefined
+                  ? undefined
+                  : {
+                      on: peersOnlyPick ?? nerd.stats?.transport?.source === 'peers-only',
+                      onChange: (on) => {
+                        setPeersOnlyPick(on);
+                        session.setPeersOnly?.(on).catch(() => {
+                          setPeersOnlyPick(null);
+                        });
+                      },
+                    }
+              }
               onClose={() => {
                 setNerdOpen(false);
               }}
@@ -340,7 +388,11 @@ function NfxPlayer({
           </select>
         </label>
       ) : null}
-      <NfxProblems problems={session.problems ?? []} onRetry={onRetry} />
+      <NfxProblems
+        problems={session.problems ?? []}
+        waiting={session.waiting ?? null}
+        onRetry={onRetry}
+      />
     </div>
   );
 }

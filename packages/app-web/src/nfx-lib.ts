@@ -46,7 +46,21 @@ export type NfxPlayerEvent =
     }
   | { readonly type: 'levels'; readonly levels: readonly NfxLevel[] }
   | { readonly type: 'playing' }
+  /** The browser's WebRTC gathers no UDP candidate: no peer can connect (nfx decision 0109). */
+  | { readonly type: 'mesh'; readonly state: 'blocked'; readonly why: string }
+  /** With peers first: playback has nothing to play and waits for a peer; `resumed` follows. */
+  | { readonly type: 'waiting'; readonly reason: 'no-peer' | 'slow'; readonly peers: number }
+  | { readonly type: 'resumed' }
+  /** A segment came over HTTPS although peers come first. */
+  | { readonly type: 'rescue'; readonly url: string }
   | { readonly type: 'error'; readonly message: string };
+
+/**
+ * Where a session with a mesh takes its media segments from (the library's `SegmentSource`, nfx
+ * decision 0109): peers first with HTTPS as a rescue, peers only, or HTTPS first (the library's
+ * default). The hash list, playlists and init segments come from an origin under all three.
+ */
+export type NfxSegmentSource = 'peers-then-https' | 'peers-only' | 'https-first';
 
 /**
  * NFX-10 §6 signalling over Nostr (`nfx-mesh/1`): general relays, `wss:` (or `ws:` to a loopback
@@ -100,6 +114,8 @@ export interface NfxOpenOptions {
   readonly renditions?: string[];
   /** The browser mesh; absent = every byte from an origin. */
   readonly signaling?: NfxNostrSignaling;
+  /** Where the mesh takes segments from; absent = `https-first`. `peers-only` needs `signaling`. */
+  readonly segmentSource?: NfxSegmentSource;
   readonly iceServers?: NfxIceServer[];
   readonly onEvent?: (event: NfxPlayerEvent) => void;
   /** Aborting it cancels `open()`, or destroys the session once open. */
@@ -136,6 +152,12 @@ export interface NfxLibMeshStats {
   readonly segments?: { readonly http: number; readonly p2p: number };
   readonly peerList?: readonly NfxLibPeer[];
   readonly signal?: { readonly open: number } | null;
+  /** nfx decision 0109 (absent before it): where segments come from, and what came of it. */
+  readonly source?: NfxSegmentSource;
+  /** Segments fetched over HTTPS although peers come first. */
+  readonly rescues?: number;
+  /** Whether the browser's WebRTC can reach a peer at all. */
+  readonly webrtc?: 'unknown' | 'ok' | 'blocked';
 }
 
 /** The library's `Session.stats()`, as stats for nerds reads it (contracts v19, ADR 0024). */
@@ -181,6 +203,11 @@ export interface NfxLibSession {
    * IP addresses: called only while the viewer has asked to see them. Absent before nfx #99.
    */
   addresses?(): Promise<NfxLibPeerAddress[]>;
+  /**
+   * nfx decision 0109: take segments from `source` from now on; throws `TypeError` for a value
+   * `open()` would refuse. Absent before it.
+   */
+  setSegmentSource?(source: NfxSegmentSource): void;
   /** Stops hls.js, the p2p loader, its signaling sockets and peers, and the media source. Idempotent. */
   destroy(): void;
 }

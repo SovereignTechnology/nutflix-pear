@@ -1056,11 +1056,19 @@ interface Checks {
    * are known when it opens, and reports no problems on the session.
    * v19: the optional `stats` and `addresses` (stats for nerds) are `session.stats` and
    * `session.addresses` (`optionalSessionMethods` below).
+   * v20 (ADR 0025): the optional `waiting` and `setPeersOnly` are left out too: this app fetches
+   * a free video from no HTTPS origin, so it has no HTTPS to switch off and no rescue to wait on.
    */
   nfxPlayKeys: IsNever<
     Exclude<
       NonMethodKeys<NfxPlaySession>,
-      keyof NfxPlaySessionWire | 'setRendition' | 'problems' | 'onChange' | OptionalSessionMethod
+      | keyof NfxPlaySessionWire
+      | 'setRendition'
+      | 'problems'
+      | 'onChange'
+      | 'waiting'
+      | 'setPeersOnly'
+      | OptionalSessionMethod
     >
   >;
   nfxPlayData: Mutual<Pick<NfxPlaySessionWire, NfxPlayData>, Pick<NfxPlaySession, NfxPlayData>>;

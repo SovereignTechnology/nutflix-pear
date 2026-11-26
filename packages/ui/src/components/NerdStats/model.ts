@@ -173,6 +173,21 @@ export function statRows(
       ? `${String(Math.round((fromPeers / down) * 100))}% (${formatByteCount(fromPeers)} of ${formatByteCount(down)})`
       : '–',
   ]);
+  if (stats.transport !== undefined) {
+    const { source, rescues, webrtc } = stats.transport;
+    const n = rescues ?? 0;
+    rows.push([
+      'Segments from',
+      source === 'peers-then-https'
+        ? `peers first, HTTPS only as a rescue (${String(n)} rescued)`
+        : source === 'peers-only'
+          ? 'peers only (HTTPS off)'
+          : 'HTTPS first, peers for the rest',
+    ]);
+    if (webrtc === 'blocked') {
+      rows.push(['WebRTC', 'blocked in this browser: no peer can connect']);
+    }
+  }
   if (up > 0) rows.push(['Uploaded', formatByteCount(up)]);
   if (stats.peers !== undefined) {
     rows.push([

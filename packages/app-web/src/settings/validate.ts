@@ -114,7 +114,8 @@ const isWebNfx = obj<NfxSettings>(
     scopedRelays: unique(arrayOf(isScopedRelayUrl, MAX_SCOPED_RELAYS)),
   },
   // Contracts v18: the signaling relays (absent: the default list; empty: no mesh).
-  { meshRelays: unique(arrayOf(isScopedRelayUrl, WEB_MAX_MESH_RELAYS)) },
+  // Contracts v20: segments from peers only (the switch in stats for nerds).
+  { meshRelays: unique(arrayOf(isScopedRelayUrl, WEB_MAX_MESH_RELAYS)), peersOnly: bool },
 );
 
 /** The fields a viewer sets on the web; every other `Settings` field is fixed in v1. */
