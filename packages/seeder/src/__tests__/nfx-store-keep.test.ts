@@ -319,6 +319,36 @@ describe('NfxStore kept videos', () => {
     expect(await onDisk(dir)).not.toContain(p.root);
   });
 
+  it('keeps a cleanup file it could not delete charged to the cap, across a reopen', async () => {
+    const p = pkg('abandon-charge');
+    const { dir } = await open();
+    const root = filePath(dir, p.root);
+    let failUnlink = true;
+    const fs: SeederFs = {
+      ...adapters.fs,
+      unlink: (file) =>
+        failUnlink && file === root
+          ? Promise.reject(new Error('cannot unlink'))
+          : adapters.fs.unlink(file),
+    };
+    const { store, cap } = await open(undefined, dir, undefined, fs);
+    await startFill(store, p);
+    expect(await store.abandonKeep(p.video)).toBe(true);
+    // Every other file is gone and freed; the hash list stays on disk, and stays charged.
+    expect(await onDisk(dir)).toEqual([p.root]);
+    const left = p.hashListBytes.byteLength;
+    expect(cap.usedBytes).toBe(left);
+    expect(store.totalBytes()).toBe(left);
+
+    const stuck = await open(undefined, dir, undefined, fs);
+    expect(stuck.cap.usedBytes).toBe(left);
+    failUnlink = false;
+    await stuck.store.flushKept();
+    expect(await onDisk(dir)).toEqual([]);
+    expect(stuck.cap.usedBytes).toBe(0);
+    expect(stuck.store.totalBytes()).toBe(0);
+  });
+
   it('rejects late writes and completion from an abandoned fill', async () => {
     const { store } = await open();
     const p = pkg('replacement-fill');
@@ -499,6 +529,37 @@ describe('NfxStore kept videos', () => {
       }
     },
   );
+
+  it('while kept records are unknown, refuses whole puts and removals: a shared file stays', async () => {
+    const shared = new Uint8Array(150).fill(43);
+    const p = pkg('n', 1, shared);
+    const { store, dir } = await open();
+    await keep(store, p);
+    const w = pkg('o', 1, shared);
+    const put = (s: NfxStore, v: Pkg) =>
+      s.putVideo({
+        video: v.video,
+        root: v.root,
+        segs: v.segs,
+        hashListBytes: v.hashListBytes,
+        read: (e) => Promise.resolve(v.files.get(e.sha256)!),
+      });
+    expect(await put(store, w)).toMatchObject({ ok: true });
+    const keptPath = path.join(dir, 'nfx', 'kept.json');
+    await writeFile(keptPath, '{"version":2,"videos":[]}');
+    // Unreadable and not set aside: what the kept records name is unknown.
+    const again = await open(undefined, dir, undefined, {
+      ...adapters.fs,
+      rename: (from, to) =>
+        from === keptPath
+          ? Promise.reject(new Error('kept database rename failed'))
+          : adapters.fs.rename(from, to),
+    });
+    await expect(again.store.removeVideo(w.video)).rejects.toThrow(/^unavailable:/);
+    expect(again.store.hasVideo(w.video)).toBe(true);
+    expect(await onDisk(dir)).toContain(sha(shared));
+    expect(await put(again.store, pkg('x'))).toMatchObject({ ok: false, error: 'unavailable' });
+  });
 
   it('drops a malformed kept record on its own', async () => {
     const { store, dir } = await open();
