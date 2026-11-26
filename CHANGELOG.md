@@ -7,10 +7,10 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
-## [0.1.4] - 2026-11-25
+## [0.1.4] - 2026-11-26
 
-Stats for nerds in every player, free videos found through the network's own relay first, and
-new default relays.
+A local key can be created in the desktop app at last, stats for nerds in every player, free
+videos found through the network's own relay first, and new default relays.
 
 ### Added
 

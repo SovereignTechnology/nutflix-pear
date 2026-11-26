@@ -1,12 +1,13 @@
 # Status
 
-Last updated 2026-11-25 (UTC). For what each release contains, see the [CHANGELOG](../CHANGELOG.md);
+Last updated 2026-11-26 (UTC). For what each release contains, see the [CHANGELOG](../CHANGELOG.md);
 for what does not work yet, see the README's [known limitations](../README.md#known-limitations).
 
 ## Release
 
-- **Desktop 0.1.4** is the current release: tag `desktop-v0.1.4`, 2026-11-25 (UTC), as a Linux
-  x86_64 `.deb` and AppImage. It adds stats for nerds in every player (where a video's bytes come
+- **Desktop 0.1.4** is the current release: tag `desktop-v0.1.4`, 2026-11-26 (UTC), as a Linux
+  x86_64 `.deb` and AppImage. It fixes local keys, which no earlier release could create, import
+  or unlock (#150). It adds stats for nerds in every player (where a video's bytes come
   from, source by source; peers by short ID, addresses only behind a switch that is off every
   time), finds free videos through the network's own relay (`relay.nutflix.xyz`) before your read
   relays, and changes the default relays (`relay.damus.io` and `nos.lol` leave the read relays;

@@ -18,7 +18,7 @@ This repository, `nutflix-pear`, is the JavaScript implementation: an Electron d
 [Bare](https://github.com/holepunchto/bare) worker, plus the seeder and gateway daemons. A Rust
 implementation built on iroh lives in [nfx](https://github.com/SovereignTechnology/nfx).
 
-> **Status: experimental.** Desktop 0.1.4 for Linux x86_64 was released on 2026-11-25. It is a
+> **Status: experimental.** Desktop 0.1.4 for Linux x86_64 was released on 2026-11-26. It is a
 > demo, not a product you should trust with money you cannot afford to lose. Read
 > [Known limitations](#known-limitations) before you install it.
 
