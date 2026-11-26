@@ -406,10 +406,15 @@ describe('NfxCatalog: the scoped and public relays at once (ADR 0026, 2026-11-26
       'NFX live-video',
     ]);
     expect(await cat.video(addr(creator.pubkey, 'gone-video'))).toBeNull();
+    expect(titles(await cat.feed({ source: 'network' }, null))).toEqual(['NFX live-video']);
     // A revision newer than the deletion republishes the video, wherever it was read.
     t.pub.store(await kit.sign(creator, nfxDraft('gone-video', 0.25, [['t', 'recut']])));
     expect((await cat.video(addr(creator.pubkey, 'gone-video')))?.title).toBe('NFX gone-video');
     expect(titles(await cat.feed({ source: 'author', author: creator.pubkey }, null))).toEqual([
+      'NFX gone-video',
+      'NFX live-video',
+    ]);
+    expect(titles(await cat.feed({ source: 'network' }, null))).toEqual([
       'NFX gone-video',
       'NFX live-video',
     ]);

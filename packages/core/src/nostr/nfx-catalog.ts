@@ -333,7 +333,8 @@ export class NfxCatalog implements NfxSource {
    * Every video on the network, newest first: the scoped relays (the network's own) and the read
    * relays (which carry its mirrors) are both asked, so a video listed on only one still shows.
    * One video is one address, whichever relays held it or how many revisions; the newest wins, and
-   * the scoped relays' copy a tie (`mergePages`). Fails only when every relay set does.
+   * the scoped relays' copy a tie (`mergePages`), unless a deletion on the set that lacks it
+   * withdraws it (`withdrawnAcross`). Fails only when every relay set does.
    */
   private async networkFeed(
     c: NostrClient,
@@ -348,7 +349,14 @@ export class NfxCatalog implements NfxSource {
     const pages = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
     const first = settled.find((s) => s.status === 'rejected');
     if (pages.length === 0 && first !== undefined) throw first.reason;
-    return mergePages(pages, opts.limit);
+    const [ofScoped, ofRead] = settled;
+    // Both sets answered: each side's videos are checked on the other's deletions, as in
+    // `bothAtOncePage` (ADR 0026).
+    const withdrawn =
+      ofScoped?.status === 'fulfilled' && ofRead?.status === 'fulfilled'
+        ? await this.withdrawnAcross(ofScoped.value.items, ofRead.value.items, scoped)
+        : new Set<string>();
+    return mergePages(pages, opts.limit, withdrawn);
   }
 
   async search(q: NfxSearchQuery): Promise<Page<NfxVideo>> {
