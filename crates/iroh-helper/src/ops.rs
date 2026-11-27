@@ -58,6 +58,11 @@ enum Op {
         /// Off unless asked: a viewer's node has no business opening ports on the gateway.
         #[serde(default)]
         portmapper: bool,
+        /// Put this host's non-global direct addresses (LAN, loopback, CGNAT) in `addr` answers
+        /// and tickets: tests and same-LAN runs only, as `rtc-init`'s `allow_private`. Off unless
+        /// asked: what a seeder hands out never maps its user's network (NFX-18).
+        #[serde(default)]
+        local_addrs: bool,
         /// Extra trust anchors (DER, hex) for the relays' TLS only, beside iroh's embedded roots:
         /// a network whose relays use a private CA. Never consulted for iroh connections.
         #[serde(default)]
@@ -459,6 +464,7 @@ impl Shared {
         relays: Vec<String>,
         relay_only: bool,
         portmapper: bool,
+        local_addrs: bool,
         relay_cas: Vec<String>,
     ) -> OpResult {
         if self.node.initialized() {
@@ -496,6 +502,7 @@ impl Shared {
             relays,
             relay_only,
             portmapper,
+            local_addrs,
             relay_cas,
         )
         .await
@@ -763,12 +770,20 @@ pub async fn serve(state: &Path) -> u8 {
             relays,
             relay_only,
             portmapper,
+            local_addrs,
             relay_cas,
         } = op
         {
             // In order: nothing else is served before it answers.
             let result = shared
-                .init(secret, relays, relay_only, portmapper, relay_cas)
+                .init(
+                    secret,
+                    relays,
+                    relay_only,
+                    portmapper,
+                    local_addrs,
+                    relay_cas,
+                )
                 .await;
             if reply(&tx, id, result).await.is_err() {
                 break EXIT_IO;
@@ -829,6 +844,28 @@ mod tests {
             serde_json::from_value::<Op>(json!({"id": 5, "op": "rtc-get", "peer": 2, "max": 10}))
                 .is_err()
         );
+    }
+
+    /// NFX-18: an `init` that does not ask hands out no local address.
+    #[test]
+    fn init_hands_out_local_addresses_only_when_asked() {
+        let op = parse(json!({"id": 1, "op": "init", "relays": []}));
+        assert!(matches!(
+            op,
+            Op::Init {
+                local_addrs: false,
+                portmapper: false,
+                ..
+            }
+        ));
+        let op = parse(json!({"id": 1, "op": "init", "local_addrs": true}));
+        assert!(matches!(
+            op,
+            Op::Init {
+                local_addrs: true,
+                ..
+            }
+        ));
     }
 
     #[test]

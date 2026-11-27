@@ -5,7 +5,9 @@
  *
  * The work runs in passes, one at a time: at every `set` and every `endpoint` ask (the beacon
  * round is the clock), and when the helper restarts. A pass serves what is stored and not yet
- * served, and stops serving what is no longer stored. For each video:
+ * served, and stops serving what is no longer stored. NFX-18: a kept video is served by the
+ * renditions it holds (`./served.ts`): `meta` and those collections only, made again when it
+ * holds another. For each video:
  * - **Imports by path.** Every member of its collections is imported into the helper by its path
  *   in the NFX store, which names a path only for a file that video's verified hash list lists
  *   (`NfxStore.path`) and stored none before its sha256 checked out. So nothing is hashed again
@@ -29,7 +31,7 @@
  */
 import type { IrohRelayUrl } from '@sovit/core';
 import { nfx } from '@sovit/core';
-import type { Logger, NfxStoreFile, NfxVideoRecord } from '@sovit/seeder';
+import type { Logger } from '@sovit/seeder';
 import { NFX_MAX_READ_BYTES } from '@sovit/seeder';
 
 import { isNfxBlobTicket, isNfxSocketAddr, isNfxTicketKey } from '../../ipc/worker-guards.js';
@@ -39,16 +41,14 @@ import type { NfxCollection } from '../iroh/collections.js';
 import { META_COLLECTION, nfxCollections } from '../iroh/collections.js';
 import type { HelperReach, IrohHelper } from '../iroh/helper.js';
 import type { NfxIrohNode } from './iroh.js';
+import type { NfxServedStore, NfxServedVideo } from './served.js';
+import { servedKey, servesRendition } from './served.js';
 
 /** Imports in flight at once (the helper client allows 8 requests, the helper 16). */
 export const IMPORT_CONCURRENCY = 4;
 
-/** The slice of `@sovit/seeder`'s `NfxStore` this serves from. */
-export interface NfxIrohStore {
-  videos(): readonly NfxVideoRecord[];
-  file(video: nfx.VideoAddr, sha: string): NfxStoreFile | undefined;
-  path(video: nfx.VideoAddr, sha: string): string | undefined;
-}
+/** What this serves from: the NFX store as `./served.ts` views it (`servingView`). */
+export type NfxIrohStore = NfxServedStore;
 
 export interface NfxIrohSeedingDeps {
   readonly node: NfxIrohNode;
@@ -63,7 +63,8 @@ export interface NfxIrohSeedingDeps {
 export const irohTag = (root: string, n: string): string => `nfx/${root}/${n}`;
 
 interface Served {
-  readonly root: string;
+  /** `servedKey`: its root and the renditions served. */
+  readonly key: string;
   /** The node's reach when its tickets were made (they embed its addresses). */
   readonly reach: HelperReach;
   /** Collection id → ticket: `meta` first, then the renditions in the hash list's order. */
@@ -96,7 +97,7 @@ export class NfxIrohSeeding {
   private readonly served = new Map<string, Served>();
   /** sha256 → BLAKE3 of the files the current helper has imported. */
   private readonly blake = new Map<string, string>();
-  /** `<video> <root>` of the videos the current helper will not serve. */
+  /** `<video> <servedKey>` of the videos the current helper will not serve. */
   private readonly refused = new Set<string>();
   private readonly offGeneration: () => void;
 
@@ -185,7 +186,8 @@ export class NfxIrohSeeding {
     const epoch = this.epoch;
     if (!this.on) return;
     // Nothing stored and nothing to stop serving: no helper is needed yet.
-    if (this.served.size === 0 && this.d.store.videos().length === 0) return;
+    const all = this.d.store.served();
+    if (this.served.size === 0 && all.length === 0) return;
     const helper = await this.d.node.start();
     if (helper === null || epoch !== this.epoch) return;
     const generation = this.d.node.generation;
@@ -202,9 +204,11 @@ export class NfxIrohSeeding {
     } catch {
       return; // restarting or stopped: a restart kicks the next pass
     }
-    const stored = new Map(this.d.store.videos().map((r) => [r.video, r] as const));
+    const stored = new Map(all.map((r) => [r.video, r] as const));
     for (const [video, s] of [...this.served]) {
-      if (stored.get(video)?.root === s.root) continue;
+      const now = stored.get(video);
+      if (now !== undefined && servedKey(now) === s.key) continue;
+      // Gone, or holding another set of renditions (NFX-18): its old collections go.
       this.served.delete(video);
       for (const tag of s.tags) await helper.untag(tag).catch(() => 0);
     }
@@ -212,7 +216,7 @@ export class NfxIrohSeeding {
       if (epoch !== this.epoch || this.d.node.generation !== generation) return;
       const s = this.served.get(r.video);
       if (s !== undefined && sameReach(s.reach, reach)) continue;
-      const key = `${r.video} ${r.root}`;
+      const key = `${r.video} ${servedKey(r)}`;
       if (this.refused.has(key)) continue;
       try {
         this.served.set(r.video, await this.serve(helper, r, reach, epoch));
@@ -238,7 +242,7 @@ export class NfxIrohSeeding {
 
   private async serve(
     helper: IrohHelper,
-    r: NfxVideoRecord,
+    r: NfxServedVideo,
     reach: HelperReach,
     epoch: number,
   ): Promise<Served> {
@@ -259,22 +263,30 @@ export class NfxIrohSeeding {
     for (const f of list.files)
       if (f.role === 'playlist' && !playlists.has(f.sha256))
         playlists.set(f.sha256, await this.read(video.value, f.sha256));
+    // A kept video lists every playlist in its meta files, so every collection resolves; only
+    // `meta` and the renditions it holds are served.
     const collections = nfxCollections(r.root, list, (sha) => playlists.get(sha));
     if (!collections.ok) throw new NotServable(`a playlist: ${collections.error.reason}`);
+    // `nfxCollections` puts `meta` first, then the renditions in the hash list's order; a tag
+    // keeps that position, so a rendition's tag is the same whatever else is held.
+    const wanted = collections.value
+      .map((c, i) => [c, i === 0 ? META_COLLECTION : `r${String(i - 1)}`] as const)
+      .filter(([c], i) => i === 0 || servesRendition(r.renditions, c.id));
     const sizes = new Map(r.files.map((f) => [f.sha256, f.size] as const));
-    const shas = [...new Set(collections.value.flatMap((c) => c.members))];
+    const shas = [...new Set(wanted.flatMap(([c]) => c.members))];
+    if (!shas.every((sha) => sizes.has(sha)))
+      throw new NotServable('a collection names a file the video does not serve');
     await this.importAll(helper, video.value, shas, sizes, epoch);
 
     const tickets: (readonly [string, string])[] = [];
     const tags: string[] = [];
-    for (const [i, c] of collections.value.entries()) {
+    for (const [c, n] of wanted) {
       if (epoch !== this.epoch) throw new Overtaken();
-      // `nfxCollections` puts `meta` first.
-      const tag = irohTag(r.root, i === 0 ? META_COLLECTION : `r${String(i - 1)}`);
+      const tag = irohTag(r.root, n);
       tickets.push([c.id, await this.ticket(helper, c, tag, reach)]);
       tags.push(tag);
     }
-    return { root: r.root, reach, tickets, tags };
+    return { key: servedKey(r), reach, tickets, tags };
   }
 
   /** A whole stored file of `video`: its hash list or a playlist (at most 16 MiB). */

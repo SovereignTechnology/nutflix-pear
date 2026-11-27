@@ -398,8 +398,11 @@ class FakeNode {
   }
 }
 
-function store(videos: TestNfxVideo[]): NfxIrohStore & { records: NfxVideoRecord[] } {
-  const records = videos.map((v) => ({
+/** A video record, kept by some renditions (NFX-18) when `renditions` names them. */
+type TestRecord = NfxVideoRecord & { renditions?: 'all' | readonly string[] };
+
+function store(videos: TestNfxVideo[]): NfxIrohStore & { records: TestRecord[] } {
+  const records: TestRecord[] = videos.map((v) => ({
     video: v.video,
     root: v.root,
     segs: String(v.segs),
@@ -409,7 +412,7 @@ function store(videos: TestNfxVideo[]): NfxIrohStore & { records: NfxVideoRecord
   const byVideo = new Map(videos.map((v) => [v.video, v] as const));
   return {
     records,
-    videos: () => records,
+    served: () => records.map((r) => ({ ...r, renditions: r.renditions ?? 'all' })),
     file: (video, sha): NfxStoreFile | undefined => {
       const bytes = byVideo.get(video.toString())?.files.get(sha);
       if (bytes === undefined) return undefined;
@@ -459,6 +462,33 @@ describe('NfxRtcSeeding (#89)', () => {
     // A pass with nothing new serves nothing again.
     await again(s);
     expect(helper.serves).toHaveLength(2);
+    await s.close();
+  });
+
+  it('NFX-18: serves a kept video by the renditions it holds, and again when it holds another', async () => {
+    const node = new FakeNode();
+    const st = store([v]);
+    st.records[0] = { ...st.records[0]!, renditions: ['720p'] };
+    const s = new NfxRtcSeeding({
+      node: node as unknown as NfxRtcNode,
+      store: st,
+      logger: silentLogger,
+    });
+    await start(s);
+    const helper = node.helper!;
+    expect(helper.serves.map((x) => x.swarm)).toEqual([addr(v).webStreamSwarmId('720p')]);
+    expect(s.swarms(v.video)).toEqual([addr(v).webStreamSwarmId('720p')]);
+    // The same set: nothing again.
+    await again(s);
+    expect(helper.serves).toHaveLength(1);
+    // It holds 360p too: the old table goes, both are served.
+    st.records[0] = { ...st.records[0], renditions: ['360p', '720p'] };
+    await again(s);
+    expect(helper.unserves).toEqual([addr(v).webStreamSwarmId('720p')]);
+    expect(helper.serves.slice(1).map((x) => x.swarm)).toEqual([
+      addr(v).webStreamSwarmId('360p'),
+      addr(v).webStreamSwarmId('720p'),
+    ]);
     await s.close();
   });
 

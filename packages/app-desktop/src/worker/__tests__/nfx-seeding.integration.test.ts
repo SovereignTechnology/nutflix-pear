@@ -132,6 +132,31 @@ describe('NfxSeeding (NFX-12 over HyperDHT)', () => {
     expect(await s.endpoint(SEEDER_NOSTR)).toBeNull();
   });
 
+  it('NFX-18: listens on a DHT node handed over later (an app with no mint)', async () => {
+    const dht = await node();
+    const { source, shas } = memorySource([new Uint8Array([1, 2, 3])]);
+    let asked = 0;
+    const s = new NfxSeeding(
+      {
+        dht: () => {
+          asked += 1;
+          return Promise.resolve(dht);
+        },
+        keyPair: () => Promise.resolve(DHT.keyPair()),
+        source,
+        logger: silentLogger,
+      },
+      NS,
+    );
+    cleanups.push(() => s.close());
+    await s.set(true);
+    expect(s.serving).toBe(true);
+    expect(asked).toBe(1);
+    expect(shas).toHaveLength(1);
+    await s.set(false);
+    expect(s.serving).toBe(false);
+  });
+
   it('settles on/off races in call order and stays off once closed', async () => {
     const { s } = await seeding([new Uint8Array(10)]);
     void s.set(true);

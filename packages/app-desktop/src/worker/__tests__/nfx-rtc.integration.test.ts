@@ -52,7 +52,7 @@ describe.skipIf(HELPER === '' && !IN_CI)('#89: the WebRTC side, worker to worker
       for (const [sha, bytes] of v.files) await writeFile(join(root, 'files', sha), bytes);
       const record = { video: v.video, root: v.root, segs: String(v.segs), files: [], addedAt: 0 };
       const store: NfxIrohStore = {
-        videos: () => [record],
+        served: () => [{ ...record, renditions: 'all' }],
         file: (_video, sha): NfxStoreFile | undefined => {
           const bytes = v.files.get(sha);
           return bytes === undefined

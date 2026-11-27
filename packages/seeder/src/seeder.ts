@@ -70,6 +70,12 @@ export interface SeederDeps {
    * (cut 'local', no ban) until it drains.
    */
   readonly accepting?: () => boolean;
+  /**
+   * NFX-18: the NFX store, already loaded (`<dataDir>/nfx`). An app opens it before it knows
+   * whether it has a mint, so that it keeps and serves videos without one; the seeder then takes
+   * it as is and counts it in its one disk cap. Absent: the seeder opens and loads its own.
+   */
+  readonly nfx?: NfxStore;
 }
 
 interface EngineConfigLike {
@@ -276,23 +282,21 @@ export class Seeder {
       crypto: deps.crypto,
       dataDir: config.dataDir,
     });
-    const nfxStore = new NfxStore({ fs: deps.fs, crypto: deps.crypto, dataDir: config.dataDir });
+    const given = deps.nfx;
+    const nfxStore =
+      given ?? new NfxStore({ fs: deps.fs, crypto: deps.crypto, dataDir: config.dataDir });
     await banList.load();
     await index.load();
     await corePolicies.load();
-    await nfxStore.load();
+    // A store given is loaded already, and its owner logged what the load found.
+    if (given === undefined) await nfxStore.load();
     if (banList.corruptOnLoad)
       log.error('ban list on disk was unreadable; starting with an empty list');
     if (index.corruptOnLoad)
       log.error('CAS index on disk was unreadable; starting with an empty index');
     if (corePolicies.corruptOnLoad)
       log.error('core policies on disk were unreadable; starting with none');
-    if (nfxStore.corruptOnLoad)
-      log.error('NFX store index on disk was unreadable; set aside, starting with no NFX videos');
-    if (nfxStore.loadError !== null)
-      log.error('NFX store could not load; NFX is off', { error: nfxStore.loadError });
-    if (nfxStore.droppedOnLoad > 0)
-      log.warn('NFX videos dropped at load', { dropped: nfxStore.droppedOnLoad });
+    if (given === undefined) logNfxLoad(nfxStore, log);
     if (corePolicies.dropped > 0)
       log.warn('malformed core policies on disk were dropped', { dropped: corePolicies.dropped });
 
@@ -894,4 +898,18 @@ export class Seeder {
       }
     }
   }
+}
+
+/** What an NFX store's load found, logged once by whoever loaded it. */
+export function logNfxLoad(store: NfxStore, log: Logger): void {
+  if (store.corruptOnLoad)
+    log.error('NFX store index on disk was unreadable; set aside, starting with no NFX videos');
+  if (store.loadError !== null)
+    log.error('NFX store could not load; NFX is off', { error: store.loadError });
+  if (store.droppedOnLoad > 0)
+    log.warn('NFX videos dropped at load', { dropped: store.droppedOnLoad });
+  if (store.keptCorruptOnLoad)
+    log.error('NFX kept-video list on disk was unreadable; set aside, starting with none kept');
+  if (store.keptDroppedOnLoad > 0)
+    log.warn('NFX kept videos dropped at load', { dropped: store.keptDroppedOnLoad });
 }

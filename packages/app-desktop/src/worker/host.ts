@@ -35,8 +35,19 @@ import type {
   VideoManifest,
 } from '@sovit/core';
 import { MAX_IMAGE_BYTES, manifest, media } from '@sovit/core';
-import type { LogLevel, Logger, SeedCore } from '@sovit/seeder';
-import { NFX_STORE_DIR, Seeder, fromHex, toHex } from '@sovit/seeder';
+import type { Keyring, LogLevel, Logger, NfxDht, SeedCore } from '@sovit/seeder';
+import {
+  DiskCap,
+  NFX_STORE_DIR,
+  NfxStore,
+  Seeder,
+  fromHex,
+  keyringOf,
+  logNfxLoad,
+  openCorestoreKeyring,
+  resolveConfig,
+  toHex,
+} from '@sovit/seeder';
 
 import { fromHex as hexToBytes } from '../ipc/codec.js';
 import { IpcError } from '../ipc/errors.js';
@@ -90,6 +101,7 @@ import type { NfxRtcConfig } from './nfx/rtc-node.js';
 import { NFX_RTC_DIR, NfxRtcNode } from './nfx/rtc-node.js';
 import { NfxRtcSeeding } from './nfx/rtc-seeding.js';
 import { NfxSeeding } from './nfx/seeding.js';
+import { servingView } from './nfx/served.js';
 import { NFX_PLAY_DIR, NfxWatching } from './nfx/watching.js';
 import { NFX_DEFAULT_NAMESPACE } from './studio/nfx.js';
 import { runWorkerUpload } from './studio/upload.js';
@@ -140,6 +152,12 @@ export interface WorkerHostOptions {
    * mock payments). Programmatic only — never reachable over IPC, never set by `entry.ts`.
    */
   readonly testBootstrap?: readonly BootstrapNode[];
+  /**
+   * TESTS ONLY (programmatic, never over IPC): the serving iroh node's tickets name this host's
+   * LAN and loopback addresses too, for tests that dial it with no relay. A user's node never
+   * does (NFX-18).
+   */
+  readonly testIrohLocalAddrs?: boolean;
   readonly now?: () => number;
   /**
    * TESTS ONLY (programmatic, never over IPC): shorter bounds for an image read
@@ -238,11 +256,18 @@ export class WorkerHost {
   private seeding: WorkerInit['seeding'] = { enabled: false, diskCapBytes: 0 };
   /** Slice 5b: `Settings.nfx.enabled`, as the host last said. */
   private nfxEnabled = false;
-  /** Slice 5b: NFX-12 seeding of the store's NFX videos (with the net). */
+  /**
+   * NFX-18: the NFX store (`<storage>/seeder/nfx`), opened before the payment providers: whole
+   * videos and kept ones, with a mint or without. With one the seeder holds the same object.
+   */
+  private nfxStore: NfxStore | null = null;
+  /** NFX-18: the serving keys, from the seeder's Corestore (its own, or the directory alone). */
+  private keyring: Keyring | null = null;
+  /** Slice 5b: NFX-12 seeding of the store's NFX videos (NFX-18: with a mint or without). */
   private nfxSeeding: NfxSeeding | null = null;
   /** Slice 5e-3: `Settings.nfx.irohRelays`, as the host last said. */
   private nfxIrohRelays: readonly IrohRelayUrl[] = [];
-  /** Slice 5e-3: NFX-06 seeding of the same videos (with the net and an iroh helper). */
+  /** Slice 5e-3: NFX-06 seeding of the same videos (with an iroh helper). */
   private nfxIroh: NfxIrohSeeding | null = null;
   /** Slice 5d: free NFX play sessions (with or without the net). */
   private nfxWatch: NfxWatching | null = null;
@@ -252,7 +277,7 @@ export class WorkerHost {
   private nfxRtc: NfxRtcNode | null = null;
   /** #89: `nfx.configure`'s `rtc`, as the host last said (`null`: off). */
   private nfxRtcWire: NfxRtcConfigWire | null = null;
-  /** #89: seeding the stored NFX videos to browsers (with the net and the WebRTC node). */
+  /** #89: seeding the stored NFX videos to browsers (with the WebRTC node). */
   private nfxRtcSeeding: NfxRtcSeeding | null = null;
   private readonly sessions = new Map<string, Session>();
   private readonly corePolicies = new Map<CoreKeyHex, PricePolicy>();
@@ -288,6 +313,8 @@ export class WorkerHost {
   /** Test / diagnostics hooks (read-only views). */
   get internals(): {
     readonly seeder: Seeder | null;
+    /** NFX-18: the NFX store, with a mint (the seeder's) or without. */
+    readonly nfxStore: NfxStore | null;
     readonly node: PeerNode | null;
     readonly payer: ViewerPayer | null;
     readonly credit: CreditPool | null;
@@ -299,6 +326,7 @@ export class WorkerHost {
   } {
     return {
       seeder: this.net?.seeder ?? null,
+      nfxStore: this.nfxStore,
       node: this.net?.node ?? null,
       payer: this.net?.payer ?? null,
       credit: this.net?.credit ?? null,
@@ -509,6 +537,15 @@ export class WorkerHost {
       logger: log,
     });
 
+    // NFX-18: the NFX store before the providers, so an app with no mint keeps and serves what
+    // its user watches too. With a mint the seeder takes it as is, in its one disk cap.
+    const seederDir = fs.join(a.storage, 'seeder');
+    await fs.mkdir(seederDir, { recursive: true });
+    const nfxStore = new NfxStore({ fs, crypto: sodiumCrypto, dataDir: seederDir });
+    await nfxStore.load();
+    logNfxLoad(nfxStore, log);
+    this.nfxStore = nfxStore;
+
     let providers: WorkerProviders | undefined;
     const ctx: ProviderContext = { storage: a.storage };
     if (dev?.mocks === true) {
@@ -548,6 +585,17 @@ export class WorkerHost {
     }
     if (providers === undefined) {
       log.warn(MISSING_PROVIDERS_REASON);
+      // NFX-18: no mint, no seeder, still a seeder of NFX videos: the store under its own cap,
+      // its keys from the seeder's Corestore directory (the keys a later run with a mint
+      // derives), its listener on the watching side's DHT node.
+      nfxStore.attachCap(new DiskCap(a.seeding.diskCapBytes, nfxStore.totalBytes()));
+      const corestore = resolveConfig(
+        { dataDir: seederDir, diskCapBytes: a.seeding.diskCapBytes },
+        (...p) => fs.join(...p),
+      ).storageDir;
+      this.keyring = await openCorestoreKeyring(corestore);
+      this.serveNfx(a, nfxStore, this.keyring, () => this.nfxWatch?.dht() ?? null, tmpDir, log);
+      log.info('worker initialised without a mint: NFX only', { port: server.port });
       return;
     }
 
@@ -575,6 +623,7 @@ export class WorkerHost {
         crypto: sodiumCrypto,
         logger: log,
         ...(providers.accepting === undefined ? {} : { accepting: providers.accepting }),
+        nfx: nfxStore,
       },
     );
     const keyPair = await seeder.blobs.store.createKeyPair('nutflix-desktop-swarm');
@@ -625,13 +674,39 @@ export class WorkerHost {
     seeder.start();
     node.start();
     this.net = { providers, seeder, node, payer, credit, record };
+    this.keyring = keyringOf(seeder.blobs.store);
+    this.serveNfx(a, nfxStore, this.keyring, () => node.dht, tmpDir, log);
+    // ADR 0015: our own profile core (avatar, thumbnails) is served free while seeding.
+    this.ownProfile().catch(() => {
+      log.warn('the profile core could not be opened');
+    });
+    log.info('worker initialised', { seeding: a.seeding.enabled, port: server.port });
+
+    if (dev?.fixtures === true && bootstrap !== null) void this.startFixtures(bootstrap);
+    // ADR 0017: show whether this build's worker finds its DLEQ thread (only a runtime that has
+    // threads — Bare — can say; the check logs one line).
+    if (dev?.fixtures === true && runtime.dleqThread !== undefined)
+      this.devDleq = this.startDevDleqCheck(runtime.dleqThread, log);
+  }
+
+  /**
+   * NFX seeding from `store`, with a mint or without (NFX-18): over HyperDHT on `dht`, over iroh
+   * with a helper, to browsers over WebRTC; each only while seeding and NFX are on
+   * (`applyNfxSeeding`). Whole videos serve every rendition, kept ones those they hold.
+   */
+  private serveNfx(
+    a: WorkerInit,
+    store: NfxStore,
+    keyring: Keyring,
+    dht: () => NfxDht | null | Promise<NfxDht | null>,
+    tmpDir: string,
+    log: Logger,
+  ): void {
+    const { runtime } = this.o;
+    const fs = runtime.seederFs;
+    const serving = servingView(store);
     this.nfxSeeding = new NfxSeeding(
-      {
-        dht: () => node.dht,
-        keyPair: (name) => seeder.blobs.store.createKeyPair(name),
-        source: seeder.nfx.source(),
-        logger: log,
-      },
+      { dht, keyPair: (name) => keyring.keyPair(name), source: store.source(), logger: log },
       NFX_DEFAULT_NAMESPACE,
     );
     // Slice 5e-3 (ADR 0021): with a helper, over iroh as well. Its store is a cache under `tmp/`
@@ -647,30 +722,20 @@ export class WorkerHost {
             isExecutable: (p) => runtime.isExecutable(p),
             stateDir: fs.join(tmpDir, NFX_IROH_DIR),
             rmTree: (p) => runtime.mediaFs(a.storage).rm(p, { recursive: true }),
-            keyPair: (name) => seeder.blobs.store.createKeyPair(name),
+            keyPair: (name) => keyring.keyPair(name),
+            ...(this.o.testIrohLocalAddrs === true ? { localAddrs: true } : {}),
             logger: log,
           },
           NFX_DEFAULT_NAMESPACE,
         ),
-        store: seeder.nfx,
+        store: serving,
         logger: log,
       });
     // #89: and to browsers over WebRTC, from the same store, while WebRTC is on.
     if (this.nfxRtc !== null)
-      this.nfxRtcSeeding = new NfxRtcSeeding({ node: this.nfxRtc, store: seeder.nfx, logger: log });
+      this.nfxRtcSeeding = new NfxRtcSeeding({ node: this.nfxRtc, store: serving, logger: log });
     // Listening announces on the DHT, which can take a while: `ready` does not wait for it.
     void this.applyNfxSeeding();
-    // ADR 0015: our own profile core (avatar, thumbnails) is served free while seeding.
-    this.ownProfile().catch(() => {
-      log.warn('the profile core could not be opened');
-    });
-    log.info('worker initialised', { seeding: a.seeding.enabled, port: server.port });
-
-    if (dev?.fixtures === true && bootstrap !== null) void this.startFixtures(bootstrap);
-    // ADR 0017: show whether this build's worker finds its DLEQ thread (only a runtime that has
-    // threads — Bare — can say; the check logs one line).
-    if (dev?.fixtures === true && runtime.dleqThread !== undefined)
-      this.devDleq = this.startDevDleqCheck(runtime.dleqThread, log);
   }
 
   private async startDevDleqCheck(
@@ -1274,7 +1339,7 @@ export class WorkerHost {
   /** Slice 5b: what the store holds, for the host's beacons (a `segs` past 2^53 is skipped). */
   private nfxVideos(): NfxStoredVideoWire[] {
     const out: NfxStoredVideoWire[] = [];
-    for (const r of this.net?.seeder.nfx.videos() ?? []) {
+    for (const r of this.nfxStore?.videos() ?? []) {
       const segs = Number(r.segs);
       if (!Number.isSafeInteger(segs) || segs < 1) continue;
       out.push({ video: r.video, root: r.root as Sha256Hex, segs });
@@ -1387,10 +1452,11 @@ export class WorkerHost {
       await Promise.all([...this.sessions.keys()].map((sid) => this.closeSession(sid)));
       await this.net?.payer.flush().catch(() => undefined);
       await this.live?.server.close();
+      // Slice 5b: the NFX-12 listener lives on the swarm's DHT, or (NFX-18, no mint) on the
+      // watching side's own node, so it closes first.
+      await this.nfxSeeding?.close();
       // Slice 5d: NFX play dials from the swarm's DHT (or its own node, destroyed here).
       await this.nfxWatch?.shutdown();
-      // Slice 5b: the NFX-12 listener lives on the swarm's DHT, so it closes first.
-      await this.nfxSeeding?.close();
       // Slice 5e-3: the iroh helper (its stdin ends, it exits), before the store it reads.
       await this.nfxIroh?.close();
       // #89: the WebRTC helper too (its connections close), before the store it reads.
@@ -1409,6 +1475,10 @@ export class WorkerHost {
       }
       await this.fixtures?.close().catch(() => undefined);
       await this.net?.seeder.close();
+      // NFX-18: what kept videos were last used, then the no-mint keyring's Corestore (the
+      // seeder's own store closed with the seeder; `keyringOf` leaves it to it).
+      await this.nfxStore?.flushKept().catch(() => undefined);
+      await this.keyring?.close().catch(() => undefined);
       this.net?.providers.close?.();
       await this.testnet?.destroy().catch(() => undefined);
     })();

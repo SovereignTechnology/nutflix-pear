@@ -14,7 +14,7 @@
 export const PACKAGE = '@sovit/seeder' as const;
 
 // Façade
-export { Seeder } from './seeder.js';
+export { Seeder, logNfxLoad } from './seeder.js';
 export type { SeederDeps, SeederEvent, SeederStats } from './seeder.js';
 export { resolveConfig } from './config.js';
 export type { ResolvedSeederConfig, SeederConfig } from './config.js';

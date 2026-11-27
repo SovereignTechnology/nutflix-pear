@@ -63,7 +63,8 @@ function helper(name, children, events) {
     },
     file: helperFile,
     stateDir: `${work}/${name}`,
-    init: { relays: [] },
+    // No relay: the two helpers meet over loopback, which the helper hands out only when asked.
+    init: { relays: [], localAddrs: true },
     restart: { minMs: 50, maxMs: 200 },
     onEvent: (e) => {
       events.push({ helper: name, ...e });
