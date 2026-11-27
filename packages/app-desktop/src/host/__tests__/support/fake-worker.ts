@@ -265,6 +265,15 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
       case 'nfx.play.addresses':
       case 'play.addresses':
         return Promise.resolve({ addresses: [] });
+      // NFX-18: a keep begins and nothing is listed, unless a test sets a handler.
+      case 'nfx.play.keep':
+        return Promise.resolve({ state: 'filling' });
+      case 'nfx.keep.resume':
+        return Promise.resolve(undefined);
+      case 'nfx.keep.list':
+        return Promise.resolve({ videos: [] });
+      case 'nfx.keep.drop':
+        return Promise.resolve({ dropped: false });
       // #89: the fake has no WebRTC side; it answers like a real one with WebRTC off.
       case 'nfx.rtc.answer':
       case 'nfx.rtc.offer':

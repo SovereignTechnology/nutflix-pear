@@ -244,6 +244,87 @@ export interface NfxHeldWire {
   readonly named: WireMap<string, number>;
 }
 
+/** NFX-18 (plan P3): why a video is kept, as the store records it. */
+export type NfxKeepReasonWire = 'watched' | 'downloaded';
+export const NFX_KEEP_REASONS: readonly NfxKeepReasonWire[] = ['watched', 'downloaded'];
+
+/** NFX-18: what `nfx.play.keep` found: stored whole, the rendition held, or being fetched. */
+export type NfxKeepStateWire = 'whole' | 'held' | 'filling';
+
+/** NFX-18: why a keep job stopped short. Short constants, never peer data. */
+export type NfxKeepFailure =
+  /** No source served a file. */
+  | 'fetch'
+  /** None of the sources given is one this worker can ask. */
+  | 'sources'
+  /** A file is larger than this app keeps. */
+  | 'too-large'
+  /** The files do not fit in the disk cap. */
+  | 'disk-cap'
+  /** The hash list, the rendition or a file is not what the manifest says. */
+  | 'invalid'
+  /** Another rendition of the video is being fetched. */
+  | 'busy'
+  /** The store refused or could not write. */
+  | 'store';
+
+export const NFX_KEEP_FAILURES: readonly NfxKeepFailure[] = [
+  'fetch',
+  'sources',
+  'too-large',
+  'disk-cap',
+  'invalid',
+  'busy',
+  'store',
+];
+
+/**
+ * NFX-18: a keep job in this worker run: fetching; waiting (in line, for its play to close, for
+ * the hour's budget, or for NFX to be on); done; or failed, with why.
+ */
+export type NfxKeepJobWire =
+  | { readonly state: 'fetching' | 'waiting' | 'held' }
+  | { readonly state: 'failed'; readonly error: NfxKeepFailure };
+
+/** NFX-18: the most kept videos one `nfx.keep.list` lists (the most recently used first). */
+export const MAX_NFX_KEPT_VIDEOS = 4096;
+
+/** NFX-18: a rendition being fetched, and how many of its files (meta included) are on disk. */
+export interface NfxKeptFillingWire {
+  readonly rendition: string;
+  readonly done: number;
+  readonly total: number;
+}
+
+/** NFX-18: a video this node keeps by rendition (the store's kept record, and its job). */
+export interface NfxKeptVideoWire {
+  /** `<namespace>:<video-id>` (NFX-01). */
+  readonly video: string;
+  readonly root: Sha256Hex;
+  readonly segs: number;
+  /** The renditions held whole, which the store serves (at most `MAX_NFX_HELD_RENDITIONS`). */
+  readonly held: readonly string[];
+  /** The rendition being fetched, if any. */
+  readonly filling: NfxKeptFillingWire | null;
+  /** Each reason once, never none. */
+  readonly reasons: readonly NfxKeepReasonWire[];
+  /** Its job in this run; `null`: none (a filling one waits for `nfx.keep.resume`). */
+  readonly job: NfxKeepJobWire | null;
+}
+
+/**
+ * NFX-18: go on fetching a kept video's filling rendition (after a restart, or after a failed
+ * job), from these sources, named as `nfx.play.open` names them. At least one source.
+ */
+export interface NfxKeepResumeArgs {
+  readonly video: string;
+  readonly root: Sha256Hex;
+  readonly segs: number;
+  readonly rendition: string;
+  readonly peers: readonly NfxHyperdhtEndpointWire[];
+  readonly iroh: readonly NfxIrohEndpointWire[];
+}
+
 /** Slice 5d: one rendition of an NFX video, as the player's quality menu needs it. */
 export interface NfxRenditionWire {
   readonly id: string;
@@ -368,6 +449,35 @@ export interface WorkerMethodTable {
   'nfx.play.addresses': [
     args: { readonly sid: SessionId },
     result: { readonly addresses: readonly PlaySourceAddress[] },
+  ];
+  /**
+   * NFX-18 (plan P3): keep the rendition the session plays, for `reason`. For `watched` the worker
+   * checks again that the session has been open a minute and its player has read a minute of
+   * media (`invalid-argument` if not). A video not kept yet takes one of the hour's keeps
+   * (`rate-limited` when none is left). The keep begins at once; the session's spooled files are
+   * kept when it closes, and the rest are fetched after that from the session's sources.
+   */
+  'nfx.play.keep': [
+    args: { readonly sid: SessionId; readonly reason: NfxKeepReasonWire },
+    result: { readonly state: NfxKeepStateWire },
+  ];
+  /**
+   * NFX-18: go on fetching a kept video's filling rendition from these sources. A filling one is
+   * never resumed by the worker alone; one already running takes the new sources for its next try.
+   */
+  'nfx.keep.resume': [args: NfxKeepResumeArgs, result: undefined];
+  /** NFX-18: the videos kept by rendition, with their jobs. */
+  'nfx.keep.list': [
+    args: Record<string, never>,
+    result: { readonly videos: readonly NfxKeptVideoWire[] },
+  ];
+  /**
+   * NFX-18: drop one reason a video is kept; with none left it goes, its job first, and its files
+   * that nothing else names. `dropped: false` when it was not kept for that reason.
+   */
+  'nfx.keep.drop': [
+    args: { readonly video: string; readonly reason: NfxKeepReasonWire },
+    result: { readonly dropped: boolean },
   ];
   /**
    * #89 (ADR 0023): the host's signaling hands the worker's WebRTC side a remote offer for an
@@ -607,6 +717,11 @@ export type WorkerEvent =
    * connections from the start again. The host forgets every `peer` id it holds.
    */
   | { readonly op: 'ev'; readonly e: 'nfx.rtc.reset' }
+  /**
+   * NFX-18: a kept video's record or job changed (a keep began, a file arrived, the job finished
+   * or failed, a reason was dropped); `nfx.keep.list` says how. At most once a second per video.
+   */
+  | { readonly op: 'ev'; readonly e: 'nfx.keep.changed'; readonly video: string }
   /** Already redacted by the worker's logger. */
   | { readonly op: 'ev'; readonly e: 'log'; readonly level: WorkerLogLevel; readonly msg: string };
 export type WorkerEventName = WorkerEvent['e'];

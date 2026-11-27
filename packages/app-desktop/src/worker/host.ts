@@ -38,6 +38,7 @@ import { MAX_IMAGE_BYTES, manifest, media } from '@sovit/core';
 import type { Keyring, LogLevel, Logger, NfxDht, SeedCore } from '@sovit/seeder';
 import {
   DiskCap,
+  KeepBudget,
   NFX_STORE_DIR,
   NfxStore,
   Seeder,
@@ -97,6 +98,7 @@ import type { IrohHelper } from './iroh/helper.js';
 import { HelperError } from './iroh/helper.js';
 import { NFX_IROH_DIR, NFX_IROH_WATCH_DIR, NfxIrohNode } from './nfx/iroh.js';
 import { NfxIrohSeeding } from './nfx/iroh-seeding.js';
+import { NfxKeeping } from './nfx/keeping.js';
 import type { NfxRtcConfig } from './nfx/rtc-node.js';
 import { NFX_RTC_DIR, NfxRtcNode } from './nfx/rtc-node.js';
 import { NfxRtcSeeding } from './nfx/rtc-seeding.js';
@@ -271,6 +273,8 @@ export class WorkerHost {
   private nfxIroh: NfxIrohSeeding | null = null;
   /** Slice 5d: free NFX play sessions (with or without the net). */
   private nfxWatch: NfxWatching | null = null;
+  /** NFX-18: keep jobs for what is watched, on while NFX is (with or without the net). */
+  private nfxKeeping: NfxKeeping | null = null;
   /** Slice 5e-4: the iroh node play sessions dial from (ephemeral id; with an iroh helper). */
   private nfxIrohWatch: NfxIrohNode | null = null;
   /** #89: the WebRTC node (with an iroh helper), off until the host turns WebRTC on. */
@@ -385,6 +389,8 @@ export class WorkerHost {
         this.nfxEnabled = req.a.enabled;
         this.nfxIrohRelays = req.a.irohRelays;
         this.nfxRtcWire = req.a.rtc ?? null;
+        // NFX-18: keeping runs while NFX is on, whatever the seeding switch says.
+        this.nfxKeeping?.setOn(this.nfxEnabled);
         // Slice 5e-4: the watching node too (a change of relays stops its helper). #89: and the
         // WebRTC node (a change of STUN servers restarts it).
         await Promise.all([
@@ -411,6 +417,15 @@ export class WorkerHost {
         return this.watching().stats(req.a.sid);
       case 'nfx.play.addresses':
         return { addresses: await this.watching().addresses(req.a.sid) };
+      case 'nfx.play.keep':
+        return this.keeping().keepPlay(this.watching().keepView(req.a.sid), req.a.reason);
+      case 'nfx.keep.resume':
+        this.keeping().resume(req.a);
+        return undefined;
+      case 'nfx.keep.list':
+        return { videos: this.keeping().list() };
+      case 'nfx.keep.drop':
+        return { dropped: await this.keeping().drop(req.a.video, req.a.reason) };
       case 'nfx.rtc.answer':
         return this.rtcStep(req.a.swarm, (h) => h.rtcAnswer(req.a.swarm, req.a.offer));
       case 'nfx.rtc.offer':
@@ -522,7 +537,7 @@ export class WorkerHost {
     // Slice 5d: before the providers, which free NFX play does not need. The swarm's DHT and the
     // seeder's key derivation are read when a session dials, so a worker with payment providers
     // dials from its swarm and one without dials from a node of its own (`nfx/watching.ts`).
-    this.nfxWatch = new NfxWatching({
+    const watch = new NfxWatching({
       iroh: this.nfxIrohWatch,
       rtc: this.nfxRtc,
       swarmDht: () => this.net?.node.dht ?? null,
@@ -535,7 +550,13 @@ export class WorkerHost {
       createHttpServer: runtime.createHttpServer,
       randomHex,
       logger: log,
+      // NFX-18: how long a play has been open, and when keeping must yield to playback.
+      now: runtime.monotonicNow,
+      onChange: () => {
+        this.nfxKeeping?.wake();
+      },
     });
+    this.nfxWatch = watch;
 
     // NFX-18: the NFX store before the providers, so an app with no mint keeps and serves what
     // its user watches too. With a mint the seeder takes it as is, in its one disk cap.
@@ -545,6 +566,26 @@ export class WorkerHost {
     await nfxStore.load();
     logNfxLoad(nfxStore, log);
     this.nfxStore = nfxStore;
+    // NFX-18: keep jobs, with the hour's budget saved beside the store's records
+    // (`<storage>/seeder/nfx/keep-budget.json`). A filling keep waits for `nfx.keep.resume`.
+    const budget = new KeepBudget({
+      fs,
+      crypto: sodiumCrypto,
+      dir: fs.join(seederDir, NFX_STORE_DIR),
+    });
+    await budget.load();
+    this.nfxKeeping = new NfxKeeping({
+      store: nfxStore,
+      budget,
+      fetcherFor: (sources) => watch.fetcherFor(sources),
+      playing: () => watch.size > 0,
+      spooled: (video, sha) => watch.spooled(video, sha),
+      changed: (video) => {
+        this.o.emit({ op: 'ev', e: 'nfx.keep.changed', video });
+      },
+      logger: log,
+      on: this.nfxEnabled,
+    });
 
     let providers: WorkerProviders | undefined;
     const ctx: ProviderContext = { storage: a.storage };
@@ -930,6 +971,13 @@ export class WorkerHost {
     const watch = this.nfxWatch;
     if (watch === null) fail('backend-down', 'worker is not initialised');
     return watch;
+  }
+
+  /** NFX-18: the keep jobs (made by `init`, once the NFX store loaded). */
+  private keeping(): NfxKeeping {
+    const keeping = this.nfxKeeping;
+    if (keeping === null) fail('backend-down', 'worker is not initialised');
+    return keeping;
   }
 
   /**
@@ -1452,6 +1500,9 @@ export class WorkerHost {
       await Promise.all([...this.sessions.keys()].map((sid) => this.closeSession(sid)));
       await this.net?.payer.flush().catch(() => undefined);
       await this.live?.server.close();
+      // NFX-18: keep jobs stop (fillings stay, to be resumed) before the fetchers they use go,
+      // and the budget is saved. Plays closing below still hand their spools to the store.
+      await this.nfxKeeping?.close();
       // Slice 5b: the NFX-12 listener lives on the swarm's DHT, or (NFX-18, no mint) on the
       // watching side's own node, so it closes first.
       await this.nfxSeeding?.close();
