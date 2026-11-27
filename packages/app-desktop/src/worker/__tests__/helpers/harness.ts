@@ -189,6 +189,7 @@ export function startWorker(
       | 'logLevel'
       | 'providers'
       | 'testBootstrap'
+      | 'testIrohLocalAddrs'
       | 'imageTimeoutMs'
       | 'reportWaitMs'
       | 'unpaidFlushMs'
@@ -269,6 +270,7 @@ export function startWorker(
     ...(opts.logLevel !== undefined ? { logLevel: opts.logLevel } : {}),
     ...(opts.providers !== undefined ? { providers: opts.providers } : {}),
     ...(opts.testBootstrap !== undefined ? { testBootstrap: opts.testBootstrap } : {}),
+    ...(opts.testIrohLocalAddrs === true ? { testIrohLocalAddrs: true } : {}),
     ...(opts.imageTimeoutMs !== undefined ? { imageTimeoutMs: opts.imageTimeoutMs } : {}),
     ...(opts.reportWaitMs !== undefined ? { reportWaitMs: opts.reportWaitMs } : {}),
     ...(opts.unpaidFlushMs !== undefined ? { unpaidFlushMs: opts.unpaidFlushMs } : {}),

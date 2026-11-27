@@ -168,7 +168,13 @@ function helperFor(flags, relays) {
     spawn: (file, a) => spawn(file, [...a], { stdio: ['pipe', 'pipe', 'pipe'] }),
     file: need(flags, 'helper'),
     stateDir: join(need(flags, 'state'), 'helper'),
-    init: { relays, ...(typeof ca === 'string' && ca !== '' ? { relayCas: [ca] } : {}) },
+    // The lab's "public" network is 10.200.0.0/24 (nat/run.sh), not global, so the helper hands
+    // out its addresses only when asked (NFX-18's default hides non-global ones).
+    init: {
+      relays,
+      localAddrs: true,
+      ...(typeof ca === 'string' && ca !== '' ? { relayCas: [ca] } : {}),
+    },
     restart: false,
     onEvent: (e) => {
       if (e.type === 'stderr') process.stderr.write(`helper: ${e.line}\n`);

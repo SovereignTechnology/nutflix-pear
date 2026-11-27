@@ -59,6 +59,11 @@ export interface NfxIrohNodeDeps {
    * serving node's. Absent: an ephemeral node (the watching one), a fresh key at every start.
    */
   readonly keyPair?: (name: string) => Promise<PeerKeyPair>;
+  /**
+   * TESTS ONLY: tickets name this host's LAN and loopback addresses too (`HelperInit.localAddrs`).
+   * Never set for a user's node (NFX-18).
+   */
+  readonly localAddrs?: boolean;
   /** How the logs name it (`serving`, `watching`). */
   readonly role?: string;
   readonly logger: Logger;
@@ -156,10 +161,11 @@ export class NfxIrohNode {
         spawn: this.d.spawn,
         file: this.d.file,
         stateDir: this.d.stateDir,
-        init:
-          secret === undefined
-            ? { relays: [...this.relays] }
-            : { relays: [...this.relays], secret },
+        init: {
+          relays: [...this.relays],
+          ...(secret === undefined ? {} : { secret }),
+          ...(this.d.localAddrs === true ? { localAddrs: true } : {}),
+        },
         onEvent: (e) => {
           this.onEvent(helper, node, e);
         },

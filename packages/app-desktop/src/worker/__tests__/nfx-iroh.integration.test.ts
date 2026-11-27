@@ -9,6 +9,8 @@
  *
  * Also: serving stops when NFX goes off, and a worker restarted over the same storage serves the
  * same collections from the same node id (its key is derived from the Corestore primary key).
+ * The direct dials need `testIrohLocalAddrs`: without it (a user's node, NFX-18) neither the
+ * beacon endpoint nor a ticket names a LAN or loopback address.
  *
  * Skipped where no helper is built (a developer's machine); FAILS in CI without one, so it can
  * never pass by being skipped.
@@ -72,15 +74,17 @@ describe.skipIf(HELPER === '' && !IN_CI)('slice 5e-3: NFX seeding over iroh', ()
 
   /**
    * A worker with (mock) payment providers, so with a seeder; seeding and NFX on, the helper
-   * given, and the test video in its NFX store (a put of a stored video is a no-op).
+   * given, and the test video in its NFX store (a put of a stored video is a no-op). Its tickets
+   * name this host's local addresses unless `localAddrs` is false (the client dials directly).
    */
-  async function start(): Promise<WorkerClient> {
+  async function start(localAddrs = true): Promise<WorkerClient> {
     await current?.close();
     const w = startWorker({
       hub,
       logLevel: 'info',
       testBootstrap: testnet.bootstrap,
       providers: () => devMockProviders({ hub, label }),
+      testIrohLocalAddrs: localAddrs,
     });
     current = w;
     await w.call('init', {
@@ -225,5 +229,115 @@ describe.skipIf(HELPER === '' && !IN_CI)('slice 5e-3: NFX seeding over iroh', ()
       return out;
     };
     expect(await hashes(second)).toEqual(await hashes(first));
+  });
+
+  it("NFX-18: a user's node names no LAN or loopback address in its endpoint or tickets", async () => {
+    expect(HELPER, MISSING).not.toBe('');
+    const ep = await irohEndpoint(await start(false));
+    const c = await client();
+    const named = [...ep.addrs];
+    for (const [, ticket] of ep.tickets.$map) named.push(...(await c.ticket(ticket)).addrs);
+    expect(named.filter(notGlobal)).toEqual([]);
+    // With the switch (every other test here) the direct dials above work.
+  });
+});
+
+/**
+ * IPv4 outside global unicast: `rtc/candidates.rs` `v4_global`, negated, range by range.
+ */
+function v4NotGlobal(host: string): boolean {
+  const [a = 0, b = 0, c = 0] = host.split('.').map(Number);
+  return (
+    a === 0 || // "this network"
+    a === 10 || // private
+    (a === 100 && b >= 64 && b < 128) || // shared address space (CGNAT, tailnets)
+    a === 127 || // loopback
+    (a === 169 && b === 254) || // link-local
+    (a === 172 && b >= 16 && b < 32) || // private
+    (a === 192 && b === 0 && c === 0) || // IETF protocol assignments
+    (a === 192 && b === 0 && c === 2) || // documentation
+    (a === 192 && b === 168) || // private
+    (a === 198 && (b === 18 || b === 19)) || // benchmarking
+    (a === 198 && b === 51 && c === 100) || // documentation
+    (a === 203 && b === 0 && c === 113) || // documentation
+    a >= 224 // multicast, reserved, broadcast
+  );
+}
+
+/** An IPv6 address's eight segments (any textual form, dotted tail included). */
+function v6Segments(host: string): number[] {
+  const n = new URL(`http://[${host}]`).hostname.slice(1, -1); // canonical: hex only
+  const [head = '', tail] = n.split('::');
+  const h = head === '' ? [] : head.split(':');
+  const t = tail === undefined || tail === '' ? [] : tail.split(':');
+  const fill = tail === undefined ? [] : Array<string>(8 - h.length - t.length).fill('0');
+  return [...h, ...fill, ...t].map((x) => parseInt(x, 16));
+}
+
+/**
+ * `ip:port` or `[ip6]:port` that the helper's rule (`rtc/candidates.rs` `allowed`, private
+ * addresses not allowed) rejects: outside IPv4 global unicast (an IPv4-mapped IPv6 address by
+ * the IPv4 rule, as `allowed` maps it) or outside 2000::/3 less its documentation prefixes.
+ */
+function notGlobal(addr: string): boolean {
+  const host = addr.startsWith('[') ? addr.slice(1, addr.indexOf(']')) : addr.split(':')[0]!;
+  if (!host.includes(':')) return v4NotGlobal(host);
+  const s = v6Segments(host);
+  if (s.slice(0, 5).every((x) => x === 0) && s[5] === 0xffff)
+    return v4NotGlobal(`${s[6]! >> 8}.${s[6]! & 255}.${s[7]! >> 8}.${s[7]! & 255}`);
+  const s0 = s[0]!;
+  return !(
+    (s0 & 0xe000) === 0x2000 &&
+    !(s0 === 0x2001 && s[1] === 0x0db8) &&
+    (s0 & 0xfff0) !== 0x3ff0
+  );
+}
+
+describe("notGlobal, the test's copy of candidates::allowed", () => {
+  it('rejects what the helper rejects and keeps what it keeps', () => {
+    const rejected = [
+      '0.1.2.3:1',
+      '10.0.0.1:1',
+      '100.64.0.3:1',
+      '127.0.0.1:1',
+      '169.254.169.254:1',
+      '172.16.0.1:1',
+      '192.0.0.1:1234',
+      '192.0.2.1:1',
+      '192.168.8.1:1',
+      '198.18.0.1:1234',
+      '198.19.255.255:1',
+      '198.51.100.7:1',
+      '203.0.113.9:1',
+      '224.0.0.1:1',
+      '255.255.255.255:1',
+      '[::1]:1',
+      '[::]:1',
+      '[fe80::1]:1',
+      '[fd00::1]:1',
+      '[2001:db8::1]:1',
+      '[3ff0::1]:1',
+      '[3fff:ffff::1]:1',
+      '[::ffff:192.168.1.1]:1',
+      '[::ffff:a00:1]:1',
+      '[ff02::1]:1',
+    ];
+    const kept = [
+      '1.1.1.1:1',
+      '8.8.8.8:443',
+      '100.63.255.255:1',
+      '100.128.0.1:1',
+      '172.32.0.1:1',
+      '192.0.1.1:1',
+      '198.20.0.1:1',
+      '203.0.114.1:1',
+      '223.255.255.255:1',
+      '[2606:4700::1111]:1',
+      '[2001:db9::1]:1',
+      '[3fef::1]:1',
+      '[::ffff:8.8.8.8]:1',
+    ];
+    expect(rejected.filter((a) => !notGlobal(a))).toEqual([]);
+    expect(kept.filter(notGlobal)).toEqual([]);
   });
 });

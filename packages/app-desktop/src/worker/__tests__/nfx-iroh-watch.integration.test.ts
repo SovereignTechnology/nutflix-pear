@@ -78,6 +78,8 @@ describe.skipIf(HELPER === '' && !IN_CI)('slice 5e-4: NFX play over iroh', () =>
       logLevel: 'info',
       testBootstrap: testnet.bootstrap,
       providers: () => devMockProviders({ hub, label }),
+      // No relay: the watcher dials this host's own addresses.
+      testIrohLocalAddrs: true,
     });
     teardown.push(() => w.close());
     await w.call('init', {

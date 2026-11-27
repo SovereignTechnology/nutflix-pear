@@ -23,6 +23,8 @@ use iroh_blobs::store::GcConfig;
 use iroh_blobs::ticket::BlobTicket;
 use iroh_blobs::{BlobFormat, BlobsProtocol, Hash, HashAndFormat};
 
+use crate::rtc::candidates;
+
 /// How long `init` waits for the home relay before answering (nfxd waits as long).
 pub const ONLINE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Upper bound for dialling a peer (nfx-node's `CONNECT_TIMEOUT`).
@@ -40,7 +42,25 @@ pub struct Node {
     store: Store,
     relays: Vec<RelayUrl>,
     relay_only: bool,
+    /// `init`'s `local_addrs`: non-global direct addresses are handed out too.
+    local_addrs: bool,
     blobs_dir: PathBuf,
+}
+
+/// `addr` with its relays and only its global direct addresses, by the rule the WebRTC side
+/// shows its own candidates by ([`candidates::allowed`]): LAN, loopback, link-local, CGNAT and
+/// documentation addresses, port 0, and any transport this build does not know are dropped.
+/// A peer still reaches a seeder behind a NAT through its relay, and iroh's hole punching
+/// learns the rest once connected; what is handed out (a beacon, a ticket) names no host on
+/// the user's network.
+#[must_use]
+pub fn only_global(addr: EndpointAddr) -> EndpointAddr {
+    let kept = addr.addrs.into_iter().filter(|t| match t {
+        TransportAddr::Relay(_) => true,
+        TransportAddr::Ip(ip) => ip.port() != 0 && candidates::allowed(ip.ip(), false),
+        _ => false,
+    });
+    EndpointAddr::from_parts(addr.id, kept)
 }
 
 /// Where this node can be reached, as a beacon's iroh endpoint carries it (NFX-03 §4).
@@ -180,6 +200,7 @@ impl Node {
         relays: Vec<RelayUrl>,
         relay_only: bool,
         portmapper: bool,
+        local_addrs: bool,
         relay_cas: Vec<Vec<u8>>,
     ) -> Result<Self, String> {
         let mut builder = Endpoint::builder(presets::Minimal);
@@ -228,6 +249,7 @@ impl Node {
             store,
             relays,
             relay_only,
+            local_addrs,
             blobs_dir,
         };
         if !node.relays.is_empty() {
@@ -242,8 +264,18 @@ impl Node {
         self.router.endpoint()
     }
 
-    pub fn reach(&self) -> Reach {
+    /// This node's address as it is handed out: [`only_global`] unless `local_addrs`.
+    fn handed_out(&self) -> EndpointAddr {
         let addr = self.endpoint().addr();
+        if self.local_addrs {
+            addr
+        } else {
+            only_global(addr)
+        }
+    }
+
+    pub fn reach(&self) -> Reach {
+        let addr = self.handed_out();
         Reach {
             node: hex_id(&addr.id),
             relay: addr
@@ -336,7 +368,7 @@ impl Node {
             .set(tag, HashAndFormat::hash_seq(added.hash))
             .await
             .map_err(|e| e.to_string())?;
-        let ticket = BlobTicket::new(self.endpoint().addr(), added.hash, BlobFormat::HashSeq);
+        let ticket = BlobTicket::new(self.handed_out(), added.hash, BlobFormat::HashSeq);
         Ok((added.hash, ticket))
     }
 
@@ -443,15 +475,106 @@ mod tests {
         assert_eq!(p.relay.as_deref(), Some("relay.example.net"));
     }
 
+    /// NFX-18: relays and global addresses stay; every other direct address goes.
+    #[test]
+    fn only_global_keeps_relays_and_global_addresses() {
+        // A key made at run time: no key material in the source.
+        let mut seed = [0u8; 32];
+        getrandom::fill(&mut seed).unwrap();
+        let id = SecretKey::from(seed).public();
+        let relay: RelayUrl = "https://relay.example.net/".parse().unwrap();
+        let ip = |s: &str| TransportAddr::Ip(s.parse().unwrap());
+        let kept = [
+            TransportAddr::Relay(relay),
+            ip("8.8.8.8:4433"),
+            ip("[2606:4700::1111]:4433"),
+        ];
+        let dropped = [
+            "10.0.0.5:4433",
+            "172.20.1.1:4433",
+            "192.168.8.2:4433",
+            "127.0.0.1:4433",
+            "169.254.169.254:80",
+            "100.64.0.3:4433",
+            "8.8.8.8:0",
+            "[::1]:4433",
+            "[fe80::1]:4433",
+            "[fd00::1]:4433",
+            "[::ffff:192.168.1.1]:4433",
+            "[2001:db8::1]:4433",
+        ];
+        let seen = EndpointAddr::from_parts(
+            id,
+            kept.iter().cloned().chain(dropped.iter().map(|s| ip(s))),
+        );
+        assert_eq!(only_global(seen), EndpointAddr::from_parts(id, kept));
+    }
+
+    /// NFX-18: unless asked, neither `addr` nor a ticket names a non-global direct address.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_hands_out_local_addresses_only_when_asked() {
+        let dir = std::env::temp_dir().join(format!("iroh-helper-local-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let global = |a: &String| {
+            let a: SocketAddr = a.parse().unwrap();
+            a.port() != 0 && candidates::allowed(a.ip(), false)
+        };
+        for local_addrs in [false, true] {
+            let node = Node::spawn(
+                &dir.join(local_addrs.to_string()),
+                None,
+                vec![],
+                false,
+                false,
+                local_addrs,
+                vec![],
+            )
+            .await
+            .unwrap();
+            let own: Vec<String> = node
+                .endpoint()
+                .addr()
+                .ip_addrs()
+                .map(ToString::to_string)
+                .collect();
+            let reach = node.reach();
+            let file = dir.join(format!("f-{local_addrs}"));
+            std::fs::write(&file, b"nfx").unwrap();
+            let (hash, _) = node.import(file).await.unwrap();
+            let (_, ticket) = node.seq(&[hash], "test/local").await.unwrap();
+            let parts = decode_ticket(&ticket.to_string()).unwrap();
+            if local_addrs {
+                // Every local address the endpoint has is handed out (a CI host has some).
+                for a in own.iter().filter(|a| !global(a)) {
+                    assert!(reach.addrs.contains(a), "{a} not in {:?}", reach.addrs);
+                    assert!(parts.addrs.contains(a), "{a} not in {:?}", parts.addrs);
+                }
+            } else {
+                assert!(
+                    reach.addrs.iter().all(global),
+                    "{:?} (host: {own:?})",
+                    reach.addrs
+                );
+                assert!(
+                    parts.addrs.iter().all(global),
+                    "{:?} (host: {own:?})",
+                    parts.addrs
+                );
+            }
+            node.close().await;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Two nodes on one machine, no relay: the dialler's selected path is the other's socket.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_direct_connection_reports_its_remote_address() {
         let dir = std::env::temp_dir().join(format!("iroh-helper-path-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let a = Node::spawn(&dir.join("a"), None, vec![], false, false, vec![])
+        let a = Node::spawn(&dir.join("a"), None, vec![], false, false, false, vec![])
             .await
             .unwrap();
-        let b = Node::spawn(&dir.join("b"), None, vec![], false, false, vec![])
+        let b = Node::spawn(&dir.join("b"), None, vec![], false, false, false, vec![])
             .await
             .unwrap();
         let port = b
@@ -499,9 +622,17 @@ mod tests {
         let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
         std::fs::write(&file, &bytes).unwrap();
 
-        let node = Node::spawn(&dir.join("state"), None, vec![], false, false, vec![])
-            .await
-            .unwrap();
+        let node = Node::spawn(
+            &dir.join("state"),
+            None,
+            vec![],
+            false,
+            false,
+            false,
+            vec![],
+        )
+        .await
+        .unwrap();
         let (hash, size) = node.import(file.clone()).await.unwrap();
         assert_eq!(size, bytes.len() as u64);
         node.seq(&[hash], "test/one").await.unwrap();

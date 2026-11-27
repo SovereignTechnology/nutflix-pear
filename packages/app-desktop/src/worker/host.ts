@@ -140,6 +140,12 @@ export interface WorkerHostOptions {
    * mock payments). Programmatic only — never reachable over IPC, never set by `entry.ts`.
    */
   readonly testBootstrap?: readonly BootstrapNode[];
+  /**
+   * TESTS ONLY (programmatic, never over IPC): the serving iroh node's tickets name this host's
+   * LAN and loopback addresses too, for tests that dial it with no relay. A user's node never
+   * does (NFX-18).
+   */
+  readonly testIrohLocalAddrs?: boolean;
   readonly now?: () => number;
   /**
    * TESTS ONLY (programmatic, never over IPC): shorter bounds for an image read
@@ -648,6 +654,7 @@ export class WorkerHost {
             stateDir: fs.join(tmpDir, NFX_IROH_DIR),
             rmTree: (p) => runtime.mediaFs(a.storage).rm(p, { recursive: true }),
             keyPair: (name) => seeder.blobs.store.createKeyPair(name),
+            ...(this.o.testIrohLocalAddrs === true ? { localAddrs: true } : {}),
             logger: log,
           },
           NFX_DEFAULT_NAMESPACE,
