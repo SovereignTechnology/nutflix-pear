@@ -12,9 +12,9 @@ for what does not work yet, see the README's [known limitations](../README.md#kn
   time), finds free videos through the network's own relay (`relay.nutflix.xyz`) before your read
   relays, and changes the default relays (`relay.damus.io` and `nos.lol` leave the read relays;
   signaling goes to `relay.nutflix.xyz` first). Electron is 45.3.1 and the iroh helper's lock is
-  iroh 1.4.1. The interop jobs (exit, NAT matrix, the app trading with headless Chromium) still
-  judge the app against nfx 0.1.2's nfxd (nfx 491d35e), as for 0.1.3; they have not been moved to
-  nfx 0.1.4's. 0.1.3 (2026-11-17) made free video work with no setup: NFX on by default on
+  iroh 1.4.1. The interop jobs (exit, NAT matrix, the app trading with headless Chromium) judged
+  0.1.4 against nfx 0.1.2's nfxd (nfx 491d35e), as for 0.1.3; since that release they judge the app
+  against nfx 0.1.4's (226fd79). 0.1.3 (2026-11-17) made free video work with no setup: NFX on by default on
   `nfx:testnet:1`'s public relays, trading video with web browsers over WebRTC signaled over Nostr
   (ADR 0023), one size by default with the creator picking others (issue #97). 0.1.2
   (2026-11-07) added Home's Network tab; 0.1.1 (2026-11-06) brought free video over NFX; 0.1.0
