@@ -31,8 +31,13 @@ export type {
 export { CasIndex, CAS_INDEX_FILE } from './store/cas-index.js';
 export type { CasEntry } from './store/cas-index.js';
 export { DiskCap } from './store/disk-cap.js';
-export { NfxStore, NFX_MAX_READ_BYTES, NFX_STORE_DIR } from './nfx-store/index.js';
+export { NfxStore, NFX_KEPT_FILE, NFX_MAX_READ_BYTES, NFX_STORE_DIR } from './nfx-store/index.js';
 export type {
+  NfxKeepBegin,
+  NfxKeepError,
+  NfxKeepReason,
+  NfxKeepResult,
+  NfxKeptRecord,
   NfxPutError,
   NfxPutResult,
   NfxPutVideo,
@@ -41,6 +46,35 @@ export type {
   NfxStoredFile,
   NfxVideoRecord,
 } from './nfx-store/index.js';
+export {
+  DEFAULT_KEEP_BYTES_PER_HOUR,
+  DEFAULT_KEEP_STARTS_PER_HOUR,
+  KEEP_BUDGET_FILE,
+  KeepBudget,
+  keepRendition,
+  keyringOf,
+  MAX_KEY_NAME,
+  openCorestoreKeyring,
+} from './nfx-keep/index.js';
+export type {
+  KeepBudgetOptions,
+  KeepFetch,
+  KeepHeld,
+  KeepJobInput,
+  KeepJobResult,
+  KeepProgress,
+  KeepSignal,
+  KeyDeriver,
+  Keyring,
+} from './nfx-keep/index.js';
+export {
+  boundHost,
+  hideLocalAddressesOn,
+  hidesLocalAddresses,
+  isLoopbackTestnet,
+  localAddressesByBind,
+} from './net/no-local-addresses.js';
+export type { BindableNode, BootstrapNode, HyperdhtNode } from './net/no-local-addresses.js';
 
 // Network / sessions
 export { PeerSession } from './net/peer-session.js';

@@ -38,6 +38,7 @@ export const bareSeederFs: SeederFs = {
   readFile: async (p) => bytes(await fs.promises.readFile(p)),
   writeFile: (p, data) => fs.promises.writeFile(p, data),
   rename: (from, to) => fs.promises.rename(from, to),
+  readdir: (p) => fs.promises.readdir(p),
   unlink: (p) => fs.promises.unlink(p),
   mkdir: async (p, opts) => {
     await fs.promises.mkdir(p, { recursive: opts?.recursive ?? false });
