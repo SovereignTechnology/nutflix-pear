@@ -117,6 +117,8 @@ declare module 'corestore' {
     ready(): Promise<void>;
     close(): Promise<void>;
     get(opts: CorestoreGetOptions): Hypercore;
+    /** A key pair derived by name from this store's primary key: the same pair every run. */
+    createKeyPair(name: string): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }>;
     /**
      * Boolean → returns the raw side of a fresh Noise stream to pipe somewhere; a stream
      * with a `noiseStream` (e.g. a hyperswarm connection) → attaches to it and returns it.
@@ -182,6 +184,7 @@ declare module 'hyperblobs' {
 declare module 'hyperswarm' {
   import type { EventEmitter } from 'node:events';
   import type { ReplicationStream } from 'hypercore';
+  import type DHT from 'hyperdht';
 
   export interface PeerInfo {
     readonly publicKey: Uint8Array;
@@ -203,6 +206,8 @@ declare module 'hyperswarm' {
     readonly bootstrap?: readonly { host: string; port: number }[];
     /** Return `true` to REJECT the connection. Must be synchronous. */
     readonly firewall?: (remotePublicKey: Uint8Array) => boolean;
+    /** A node to use instead of a new one (then `bootstrap` is not read); the swarm destroys it. */
+    readonly dht?: DHT;
   }
 
   export interface SwarmConnection extends ReplicationStream {
@@ -253,6 +258,8 @@ declare module 'hyperdht' {
      * return `true` to REJECT. Only the first argument is used here.
      */
     readonly firewall?: (remotePublicKey: Uint8Array) => boolean | Promise<boolean>;
+    /** Default `true`: every handshake reply carries this machine's local IPv4 addresses. */
+    readonly shareLocalAddress?: boolean;
   }
 
   /** `lib/server.js` `Server`: listens on one key pair. */
@@ -264,6 +271,8 @@ declare module 'hyperdht' {
 
   export interface ConnectOptions {
     readonly keyPair?: KeyPair;
+    /** Default `true`: the first handshake carries this machine's local IPv4 addresses. */
+    readonly localConnection?: boolean;
   }
 
   class DHT {
