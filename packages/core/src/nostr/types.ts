@@ -58,6 +58,11 @@ export interface PoolLike {
   ): Unsubscribe;
   publish(relays: readonly RelayUrl[], event: NostrEvent): Promise<readonly PublishResult[]>;
   close(): void;
+  /**
+   * Which of `relays` failed their last connection attempt and have not connected since (ADR 0026).
+   * A pool that does not track it leaves this out; callers then assume every relay answered.
+   */
+  unreachable?(relays: readonly RelayUrl[]): readonly RelayUrl[];
 }
 
 /** Why an incoming object was dropped at the verification boundary. */

@@ -8,9 +8,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NostrEvent, NostrFilter, RelayUrl, UnixSeconds } from '../../contracts/index.js';
 import { NostrClient } from '../client.js';
+import { timeCursor } from '../cursor.js';
 import { FakeRelayPool } from '../fake-relay.js';
 import { NfxCatalog } from '../nfx-catalog.js';
-import { nfxVideoMatchesText, scanNfxVideos, searchNfxVideosRouted } from '../nfx-feeds.js';
+import {
+  NFX_SCAN_PAGE,
+  nfxVideoMatchesText,
+  scanNfxVideos,
+  searchNfxVideosRouted,
+} from '../nfx-feeds.js';
 import { RelaySearchSupport, nip11Url, relayInfoSupportsSearch } from '../relay-info.js';
 import type { PoolLike } from '../types.js';
 import { T0, TestSigner, sign } from './helpers.js';
@@ -245,6 +251,78 @@ describe('search routed by NIP-50 support', () => {
     expect(second.next).toBeUndefined();
   });
 
+  it('a scan that read a full page and matched nothing still bounds the cursor: an older match there is reached (CodeRabbit, pear #157)', async () => {
+    const r = relays([SEARCHING, STOCK]);
+    const creator = new TestSigner();
+    // The NIP-50 relay: one old match. The stock relay: a full scan page of newer non-matches,
+    // then a match below it.
+    const old = await store(
+      r.of(SEARCHING),
+      creator,
+      manifest('video-old0', T0 - 5000, 'Lagrange far'),
+    );
+    for (let i = 0; i < NFX_SCAN_PAGE; i++) {
+      await store(
+        r.of(STOCK),
+        creator,
+        manifest(`video-${String(i).padStart(4, '0')}`, T0 - 10 - i, 'Hohmann'),
+      );
+    }
+    const near = await store(
+      r.of(STOCK),
+      creator,
+      manifest('video-near', T0 - 60 - NFX_SCAN_PAGE, 'Lagrange near'),
+    );
+    const c = client(r.pool, [SEARCHING, STOCK]);
+    const found: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 10; i++) {
+      const page = await searchNfxVideosRouted(
+        c,
+        NS,
+        'lagrange',
+        {},
+        { supports: nip50([SEARCHING]), limit: 1, ...(cursor === undefined ? {} : { cursor }) },
+      );
+      found.push(...page.items.map((v) => v.eventId));
+      if (page.next === undefined) break;
+      cursor = page.next;
+    }
+    expect(found).toEqual([near.id, old.id]);
+  });
+
+  it('a relay that caps answers at a scan page still continues a scan whose cursor skips ids (CodeRabbit, pear #157)', async () => {
+    const r = relays([STOCK]);
+    const creator = new TestSigner();
+    // The cursor already passed `top`, so the scan asks for NFX_SCAN_PAGE + 1 manifests.
+    const top = await store(r.of(STOCK), creator, manifest('video-top0', T0 - 1, 'Hohmann'));
+    for (let i = 0; i < NFX_SCAN_PAGE; i++) {
+      await store(
+        r.of(STOCK),
+        creator,
+        manifest(`video-${String(i).padStart(4, '0')}`, T0 - 10 - i, 'Hohmann'),
+      );
+    }
+    const match = await store(
+      r.of(STOCK),
+      creator,
+      manifest('video-deep', T0 - 60 - NFX_SCAN_PAGE, 'Lagrange'),
+    );
+    const capped: PoolLike = {
+      ...r.pool,
+      query: async (rs, filter) => (await r.pool.query(rs, filter)).slice(0, NFX_SCAN_PAGE),
+    };
+    const c = client(capped, [STOCK]);
+    const found: string[] = [];
+    let cursor: string | undefined = timeCursor(T0 - 1, [top.id]);
+    for (let i = 0; i < 5 && cursor !== undefined; i++) {
+      const page = await scanNfxVideos(c, NS, 'lagrange', {}, { limit: 1, cursor });
+      found.push(...page.items.map((v) => v.eventId));
+      cursor = page.next;
+    }
+    expect(found).toEqual([match.id]);
+  });
+
   it("fails only when every relay set does; one that fails leaves the other's results", async () => {
     const r = relays([SEARCHING, STOCK]);
     const creator = new TestSigner();
@@ -299,7 +377,7 @@ describe('search routed by NIP-50 support', () => {
     ).toBe(true);
   });
 
-  describe('a scoped relay that lists NIP-50 is searched first (ADR 0020, 2026-11-19)', () => {
+  describe('a scoped relay that lists NIP-50 is searched with the read relays at once (ADR 0026)', () => {
     const scopedFirst = (
       r: ReturnType<typeof relays>,
       supports: (relay: RelayUrl) => Promise<boolean>,
@@ -311,7 +389,7 @@ describe('search routed by NIP-50 support', () => {
         { searchSupport: supports },
       );
 
-    it('with `search`; a full page there asks no read relay, nor their NIP-11', async () => {
+    it('with `search`; a full scoped page still takes a newer match from the read relays', async () => {
       const r = relays([SEARCHING, STOCK, SCOPED]);
       const creator = new TestSigner();
       for (let i = 0; i < 20; i++)
@@ -325,10 +403,20 @@ describe('search routed by NIP-50 support', () => {
       const page = await scopedFirst(r, supports).search({ text: 'lagrange' });
       expect(page.items).toHaveLength(20);
       expect(page.next).toBeDefined();
-      expect(supports.mock.calls.map(([u]) => u)).toEqual([SCOPED]);
-      expect(r.asked.every((a) => a.relay === SCOPED)).toBe(true);
+      expect(page.items[0]?.title).toBe('Lagrange elsewhere');
+      expect(supports.mock.calls.map(([u]) => u)).toEqual(
+        expect.arrayContaining([SCOPED, SEARCHING]),
+      );
       const manifests = r.asked.filter((a) => a.filter.kinds?.includes(38504) === true);
-      expect(manifests.every((a) => a.filter.search === 'lagrange')).toBe(true);
+      expect(
+        manifests
+          .filter((a) => a.relay === SCOPED || a.relay === SEARCHING)
+          .every((a) => a.filter.search === 'lagrange'),
+      ).toBe(true);
+      expect(manifests.some((a) => a.relay === SEARCHING)).toBe(true);
+      expect(
+        manifests.filter((a) => a.relay === STOCK).every((a) => a.filter.search === undefined),
+      ).toBe(true);
     });
 
     it('a short page is merged with the read relays’ search: one per address, the newest revision, the scoped copy on a tie', async () => {
