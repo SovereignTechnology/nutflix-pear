@@ -32,7 +32,13 @@ import {
   metainfoXml,
 } from '../freedesktop.ts';
 import { APP } from '../identity.ts';
-import { RPMBUILD_DEFINES, rpmRequires, rpmSpec } from '../maker-linux.ts';
+import {
+  LinuxDebMaker,
+  LinuxRpmMaker,
+  RPMBUILD_DEFINES,
+  rpmRequires,
+  rpmSpec,
+} from '../maker-linux.ts';
 import { PKG_DIR, REPO_ROOT } from '../stage.ts';
 
 const has = (bin: string): boolean => spawnSync('which', [bin]).status === 0;
@@ -179,6 +185,22 @@ describe('the metainfo (AppStream)', () => {
       expect(df.stdout + df.stderr).not.toMatch(/error/i);
     },
   );
+});
+
+describe("the makers survive Forge's clone() (pear #165: desktop-linux arm64)", () => {
+  // Forge's make step clones every maker: `new this.constructor(config, platformsToMakeOn)`.
+  const files = { metainfo: '<component/>', icon: '/nonexistent/icon.png' };
+  it.each([
+    ['deb', () => new LinuxDebMaker({ options: { name: APP.name } }, files)],
+    ['rpm', () => new LinuxRpmMaker({ options: { name: APP.name } }, files)],
+  ] as const)('%s: the clone keeps the freedesktop files, the config and its class', (_, make) => {
+    const maker = make();
+    const copy = maker.clone();
+    expect(copy).toBeInstanceOf(maker.constructor);
+    expect(copy).not.toBe(maker);
+    expect(copy.freedesktop).toBe(files);
+    expect(copy.freedesktop.icon).toBe('/nonexistent/icon.png');
+  });
 });
 
 describe('the .rpm spec and rpmbuild macros', () => {

@@ -55,10 +55,25 @@ const debRename = (dest: string): string =>
 
 export class LinuxDebMaker extends MakerDeb {
   readonly freedesktop: FreedesktopFiles;
+  /** Kept for `clone()`: maker-base's own copy is private. */
+  private readonly linuxConfig: MakerDebConfig;
 
   constructor(config: MakerDebConfig, freedesktop: FreedesktopFiles) {
     super(config);
+    this.linuxConfig = config;
     this.freedesktop = freedesktop;
+  }
+
+  /**
+   * Forge clones each maker before it makes (maker-base `clone()`: `new this.constructor(
+   * configOrConfigFetcher, platformsToMakeOn)`). That would hand this constructor
+   * `platformsToMakeOn` as `freedesktop`, and `make()` then failed on `files.icon` (pear #165,
+   * desktop-linux arm64). Clone with both arguments, and the platforms.
+   */
+  override clone(): LinuxDebMaker {
+    const copy = new LinuxDebMaker(this.linuxConfig, this.freedesktop);
+    copy.platformsToMakeOn = this.platformsToMakeOn;
+    return copy;
   }
 
   override async make({ dir, makeDir, targetArch }: MakerOptions): Promise<string[]> {
@@ -204,10 +219,25 @@ const rpmRename = (dest: string): string =>
 
 export class LinuxRpmMaker extends MakerRpm {
   readonly freedesktop: FreedesktopFiles;
+  /** Kept for `clone()`: maker-base's own copy is private. */
+  private readonly linuxConfig: MakerRpmConfig;
 
   constructor(config: MakerRpmConfig, freedesktop: FreedesktopFiles) {
     super(config);
+    this.linuxConfig = config;
     this.freedesktop = freedesktop;
+  }
+
+  /**
+   * Forge clones each maker before it makes (maker-base `clone()`: `new this.constructor(
+   * configOrConfigFetcher, platformsToMakeOn)`). That would hand this constructor
+   * `platformsToMakeOn` as `freedesktop`, and `make()` then failed on `files.icon` (pear #165,
+   * desktop-linux arm64). Clone with both arguments, and the platforms.
+   */
+  override clone(): LinuxRpmMaker {
+    const copy = new LinuxRpmMaker(this.linuxConfig, this.freedesktop);
+    copy.platformsToMakeOn = this.platformsToMakeOn;
+    return copy;
   }
 
   override async make({ dir, makeDir, targetArch }: MakerOptions): Promise<string[]> {
