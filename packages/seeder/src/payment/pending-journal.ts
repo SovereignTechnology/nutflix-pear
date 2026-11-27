@@ -6,6 +6,12 @@
  *   - One line per PAY added (`{"a": …}`) or gone (`{"d": key}`), after a header line. It is
  *     appended durably before the engine's synchronous `persistPending` hook returns, so before
  *     the ACK.
+ *   - A write that fails is retried by the next one. The engine swallows the hook's error and
+ *     still acknowledges the PAY (a failing disk must not stop payments), so the journal must not
+ *     count a line as written until it is: what it believes is on disk moves only after the write
+ *     returned. A failed append may have left a torn line, so the retry is a rewrite of the whole
+ *     journal (atomic), never another append after the tear. Until that retry succeeds the PAY is
+ *     in memory only, and a restart loses it.
  *   - Compacted (rewritten atomically as just the live PAYs) once it holds more than
  *     `JOURNAL_COMPACT_FACTOR` lines per live PAY (and at least 64). Disk traffic stays
  *     proportional to changes, not to the queue: a whole-file rewrite per change is quadratic
@@ -113,8 +119,14 @@ export interface JournalIo {
  * state, before anything else is accepted).
  */
 export class PendingJournalCore {
+  /** What the file holds, as far as this process knows: it moves only after a write returned. */
   private live = new Map<string, PendingPay>();
   private lines = 0;
+  /**
+   * A write failed, so the next one replaces the file: after a failed append the file may end in
+   * a torn line, and after a failed rewrite the host may no longer be able to append.
+   */
+  private mustRewrite = false;
 
   constructor(
     private readonly io: JournalIo,
@@ -128,7 +140,10 @@ export class PendingJournalCore {
     return this.live.size;
   }
 
-  /** `persistPending`: append what changed since the last snapshot, compact if due. Throws. */
+  /**
+   * `persistPending`: append what changed since the last write that succeeded, compact if due.
+   * Throws when the write fails; the same lines are then written by the next call.
+   */
   persist(items: readonly PendingPay[]): void {
     const next = new Map<string, PendingPay>();
     for (const it of items) next.set(journalKey(it), it);
@@ -144,19 +159,36 @@ export class PendingJournalCore {
         out += `${JSON.stringify({ a: it })}\n`;
         n++;
       }
-    this.live = next;
-    if (n === 0) return;
-    if (this.lines + n > Math.max(64, JOURNAL_COMPACT_FACTOR * next.size)) {
-      this.compact();
+    if (n === 0 && !this.mustRewrite) return;
+    if (this.mustRewrite || this.lines + n > Math.max(64, JOURNAL_COMPACT_FACTOR * next.size)) {
+      this.rewrite(next);
       return;
     }
-    this.io.append(out);
+    try {
+      this.io.append(out);
+    } catch (err) {
+      this.mustRewrite = true;
+      throw err;
+    }
+    this.live = next;
     this.lines += n;
   }
 
   /** Rewrite the journal as just the live PAYs. */
   compact(): void {
-    this.io.rewrite(journalText(this.live.values()));
-    this.lines = this.live.size;
+    this.rewrite(this.live);
+  }
+
+  /** Replace the file with `items`. Atomic: when it throws, the old file and this state stand. */
+  private rewrite(items: Map<string, PendingPay>): void {
+    try {
+      this.io.rewrite(journalText(items.values()));
+    } catch (err) {
+      this.mustRewrite = true;
+      throw err;
+    }
+    this.live = items;
+    this.lines = items.size;
+    this.mustRewrite = false;
   }
 }
