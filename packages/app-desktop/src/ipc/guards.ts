@@ -676,6 +676,12 @@ export const isNfxPlayStats: Guard<NfxPlayStats> = obj<
     verified: isCount,
     refused: isCount,
     bandwidthEstimate: num(0, 1e12),
+    // Contracts v20 (ADR 0025): where segments come from. This app's worker reports none (it
+    // fetches from no origin); the guard is here because the wire type is the contract's.
+    transport: obj(
+      { source: oneOf(['peers-then-https', 'peers-only', 'https-first'] as const) },
+      { rescues: isCount, webrtc: oneOf(['ok', 'blocked'] as const) },
+    ),
   },
 );
 

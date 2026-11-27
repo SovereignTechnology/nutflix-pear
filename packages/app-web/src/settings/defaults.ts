@@ -39,6 +39,13 @@ export const WEB_MESH_RELAYS: readonly RelayUrl[] = Object.freeze([
 /** At most this many signaling relays (contracts v18, nfx's library). */
 export const WEB_MAX_MESH_RELAYS: typeof MAX_NFX_MESH_RELAYS = 8;
 
+/**
+ * Where a play takes its media segments from (ADR 0025): the mesh's peers first, and an HTTPS
+ * origin only as a rescue, for a segment no peer delivers in time. The maintainer's decision of
+ * 2026-11-26; `peers-only` follows once plays from peers alone are measured to be reliable.
+ */
+export const WEB_SEGMENT_SOURCE = 'peers-then-https' as const;
+
 /** The HTTPS origin tried after every origin the beacons name (ADR 0022 item 5). */
 export const WEB_FALLBACK_ORIGIN = 'https://web.nutflix.xyz/o';
 

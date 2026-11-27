@@ -38,6 +38,8 @@
  *     which the page met over strfry (it sent kind-25050 events there, and spoke to no tracker).
  *     Stats for nerds (ADR 0024) then names that peer: a connected WebRTC row with bytes, whose
  *     address (loopback, direct) appears only behind the switch, which is off again on reopening.
+ *     It also says segments come from peers first (ADR 0025), and its "No HTTPS" switch makes the
+ *     play peers only, keeps that choice in the browser's settings, and turns back.
  *  5. Held renditions (pear #97, nfx #83): the fifth video plays past 5 s with nothing refused, as
  *     360p alone (no quality picker), and the page never asks nfxd C's origin for a 720p file
  *     (playlist, init or segment), so it never gets a 404.
@@ -1056,6 +1058,9 @@ async function main(): Promise<void> {
 
     // 4. The origin refuses every segment from now on; the rest comes from nfxd A's mesh endpoint.
     const times = segmentTimes(lead);
+    // ADR 0025: peers first, so the origin should have served few segments, or none (recorded,
+    // not required: a mesh endpoint that takes longer than the wait to connect is rescued).
+    const originSegmentsBeforeCut = g.served.size;
     g.block();
     const t0 = await videoTime(page);
     // What the origin had served when it went: nothing after this point can come from it.
@@ -1113,6 +1118,48 @@ async function main(): Promise<void> {
       undefined,
       { timeout: 15_000, polling: 250 },
     );
+    // ADR 0025: the panel says segments come from peers first, and its "No HTTPS" switch makes
+    // the play peers only, keeps the choice in this browser, and turns back.
+    const segmentsFrom = (): Promise<string> =>
+      page.evaluate(
+        () =>
+          [...document.querySelectorAll('[data-testid="nerd-stats"] .nf-nerd__rows tr')]
+            .find((r) => r.querySelector('th')?.textContent === 'Segments from')
+            ?.querySelector('td')?.textContent ?? '',
+      );
+    const keptPeersOnly = (): Promise<boolean> =>
+      page.evaluate((key) => {
+        const s = JSON.parse(localStorage.getItem(key) ?? '{}') as {
+          settings?: { nfx?: { peersOnly?: boolean } };
+        };
+        return s.settings?.nfx?.peersOnly === true;
+      }, SETTINGS_KEY);
+    const waitSegmentsFrom = (re: RegExp): Promise<unknown> =>
+      page.waitForFunction(
+        (source) =>
+          new RegExp(source).test(
+            [...document.querySelectorAll('[data-testid="nerd-stats"] .nf-nerd__rows tr')]
+              .find((r) => r.querySelector('th')?.textContent === 'Segments from')
+              ?.querySelector('td')?.textContent ?? '',
+          ),
+        re.source,
+        { timeout: 10_000, polling: 250 },
+      );
+    await waitSegmentsFrom(/^peers first, HTTPS only as a rescue \(\d+ rescued\)$/);
+    const peersFirst = await segmentsFrom();
+    const noHttps = nerd.getByRole('checkbox', { name: 'No HTTPS' });
+    if ((await noHttps.isChecked()) || (await keptPeersOnly()))
+      throw new Error('the No HTTPS switch was on before anyone turned it on');
+    await noHttps.check();
+    await waitSegmentsFrom(/^peers only \(HTTPS off\)$/);
+    await nerd.getByTestId('nerd-https-off').waitFor({ timeout: 5_000 });
+    if (!(await keptPeersOnly())) throw new Error('the No HTTPS choice was not kept');
+    await noHttps.uncheck();
+    await waitSegmentsFrom(/^peers first, HTTPS only as a rescue/);
+    await nerd.getByTestId('nerd-https-off').waitFor({ state: 'detached', timeout: 5_000 });
+    if (await keptPeersOnly())
+      throw new Error('the No HTTPS choice stayed after it was turned off');
+    results['peersFirst'] = { segmentsFrom: peersFirst, originSegmentsBeforeCut };
     if (
       (await addressSwitch.isChecked()) ||
       (await nerd.locator('.nf-nerd__addr').count()) > 0 ||

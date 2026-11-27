@@ -11,6 +11,7 @@ import type {
   NfxOpenOptions,
   NfxPlayerEvent,
   NfxPlayerLib,
+  NfxSegmentSource,
 } from '../../nfx-lib.js';
 
 export interface FakeOpen {
@@ -35,6 +36,10 @@ export class FakeLibSession implements NfxLibSession {
   peerAddresses: NfxLibPeerAddress[] | null = null;
   addressCalls = 0;
   addresses?: () => Promise<NfxLibPeerAddress[]>;
+  /** nfx 0109: the segment sources this session was switched to, in order. */
+  readonly segmentSources: NfxSegmentSource[] = [];
+  /** Set to make the next `setSegmentSource` throw, as the library does for a value it refuses. */
+  refuseSegmentSource = false;
   readonly #emit: (e: NfxPlayerEvent) => void;
 
   constructor(emit: (e: NfxPlayerEvent) => void) {
@@ -53,6 +58,12 @@ export class FakeLibSession implements NfxLibSession {
       return Promise.resolve([...(this.peerAddresses ?? [])]);
     };
     return this;
+  }
+
+  setSegmentSource(source: NfxSegmentSource): void {
+    if (this.refuseSegmentSource)
+      throw new TypeError('nfx: segmentSource peers-only needs signaling');
+    this.segmentSources.push(source);
   }
 
   setLevel(index: number): void {

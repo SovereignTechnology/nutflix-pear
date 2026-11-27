@@ -298,6 +298,139 @@ describe('WebNfxSession', () => {
     expect(s.problems).toHaveLength(4);
   });
 
+  it('v20: a blocked mesh is a peers problem; waiting for a peer is told, and its end', async () => {
+    const player = new FakeNfxPlayer();
+    const { s } = session(player);
+    let told = 0;
+    s.onChange(() => {
+      told += 1;
+    });
+    attach(s, document.createElement('video'));
+    await tick();
+    const lib = player.last.session;
+    expect(s.waiting).toBeNull();
+    lib.emit({ type: 'mesh', state: 'blocked', why: 'WebRTC gathered no network candidate' });
+    expect(s.problems).toEqual([
+      { kind: 'peers', message: 'WebRTC gathered no network candidate' },
+    ]);
+    expect(told).toBe(1);
+    lib.emit({ type: 'waiting', reason: 'no-peer', peers: 0 });
+    expect(s.waiting).toBe('no-peer');
+    lib.emit({ type: 'waiting', reason: 'no-peer', peers: 0 });
+    expect(told).toBe(2);
+    lib.emit({ type: 'waiting', reason: 'slow', peers: 2 });
+    expect(s.waiting).toBe('slow');
+    lib.emit({ type: 'rescue', url: 'https://o.example/o/x.m4s' });
+    expect(told).toBe(3);
+    lib.emit({ type: 'resumed' });
+    expect(s.waiting).toBeNull();
+    expect(told).toBe(4);
+    expect(s.problems).toHaveLength(1);
+    expect(
+      (['waiting', 'resumed', 'rescue'] as const).map((type) =>
+        problemOf(
+          type === 'waiting'
+            ? { type, reason: 'slow', peers: 1 }
+            : type === 'rescue'
+              ? { type, url: 'x' }
+              : { type },
+        ),
+      ),
+    ).toEqual([null, null, null]);
+  });
+
+  it('ADR 0025: the segment source goes to the player with the mesh, and not without one', async () => {
+    const player = new FakeNfxPlayer();
+    const make = (meshRelays: string[]): WebNfxSession =>
+      new WebNfxSession({
+        videoId: ADDR,
+        manifestJson: '{"kind":38504}',
+        origins: [{ url: 'https://o.example/o' }],
+        meshRelays,
+        segmentSource: 'peers-then-https',
+        iceServers: [],
+        player: () => player.init().then(() => player),
+      });
+    attach(make(['wss://relay.example']), document.createElement('video'));
+    await tick();
+    expect(player.last.options.signaling).toEqual({
+      kind: 'nostr',
+      relays: ['wss://relay.example'],
+    });
+    expect(player.last.options.segmentSource).toBe('peers-then-https');
+    attach(make([]), document.createElement('video'));
+    await tick();
+    expect(player.last.options.signaling).toBeUndefined();
+    expect(player.last.options.segmentSource).toBeUndefined();
+  });
+
+  it('v20: the No HTTPS switch tells the player, is kept, and starts the next open with it', async () => {
+    const player = new FakeNfxPlayer();
+    const kept: boolean[] = [];
+    const s = new WebNfxSession({
+      videoId: ADDR,
+      manifestJson: '{"kind":38504}',
+      origins: [{ url: 'https://o.example/o' }],
+      meshRelays: ['wss://relay.example'],
+      segmentSource: 'peers-then-https',
+      onPeersOnly: (on) => kept.push(on),
+      iceServers: [],
+      player: () => player.init().then(() => player),
+    });
+    let told = 0;
+    s.onChange(() => {
+      told += 1;
+    });
+    // Before the player opened: nothing to tell yet, but the choice holds.
+    await s.setPeersOnly?.(true);
+    expect(kept).toEqual([true]);
+    expect(told).toBe(1);
+    const detach = attach(s, document.createElement('video'));
+    await tick();
+    expect(player.last.options.segmentSource).toBe('peers-only');
+    const lib = player.last.session;
+    await s.setPeersOnly?.(false);
+    expect(lib.segmentSources).toEqual(['peers-then-https']);
+    await s.setPeersOnly?.(true);
+    expect(lib.segmentSources).toEqual(['peers-then-https', 'peers-only']);
+    expect(kept).toEqual([true, false, true]);
+    // A value the player refuses is not kept.
+    lib.refuseSegmentSource = true;
+    await expect(s.setPeersOnly?.(false)).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(kept).toEqual([true, false, true]);
+    detach();
+    attach(s, document.createElement('video'));
+    await tick();
+    expect(player.last.options.segmentSource).toBe('peers-only');
+    await s.close();
+    await expect(s.setPeersOnly?.(false)).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('v20: no switch without a mesh, or without a segment source to switch', () => {
+    const player = new FakeNfxPlayer();
+    const base = {
+      videoId: ADDR,
+      manifestJson: '{"kind":38504}',
+      origins: [{ url: 'https://o.example/o' }],
+      iceServers: [],
+      player: () => player.init().then(() => player),
+    };
+    expect(
+      new WebNfxSession({ ...base, meshRelays: [], segmentSource: 'peers-then-https' })
+        .setPeersOnly,
+    ).toBeUndefined();
+    expect(
+      new WebNfxSession({ ...base, meshRelays: ['wss://relay.example'] }).setPeersOnly,
+    ).toBeUndefined();
+    expect(
+      typeof new WebNfxSession({
+        ...base,
+        meshRelays: ['wss://relay.example'],
+        segmentSource: 'peers-only',
+      }).setPeersOnly,
+    ).toBe('function');
+  });
+
   it('v15: a refusal at open is a stopped problem; nothing is told after close', async () => {
     const player = new FakeNfxPlayer();
     player.refuse =

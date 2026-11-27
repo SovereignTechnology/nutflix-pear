@@ -117,6 +117,24 @@ describe('stats for nerds: the model', () => {
     expect(statRows(null, null)).toEqual([]);
   });
 
+  it('v20 rows: where segments come from, and a blocked WebRTC', () => {
+    const row = (transport: NonNullable<typeof STATS.transport>): Record<string, string> =>
+      Object.fromEntries(statRows({ ...STATS, transport }, null));
+    expect(Object.fromEntries(statRows(STATS, null))['Segments from']).toBeUndefined();
+    expect(row({ source: 'peers-then-https', rescues: 2, webrtc: 'ok' })).toMatchObject({
+      'Segments from': 'peers first, HTTPS only as a rescue (2 rescued)',
+    });
+    expect(row({ source: 'peers-then-https' })['Segments from']).toBe(
+      'peers first, HTTPS only as a rescue (0 rescued)',
+    );
+    expect(row({ source: 'peers-only' })['Segments from']).toBe('peers only (HTTPS off)');
+    expect(row({ source: 'https-first' })['Segments from']).toBe('HTTPS first, peers for the rest');
+    expect(row({ source: 'peers-only', webrtc: 'ok' })['WebRTC']).toBeUndefined();
+    expect(row({ source: 'peers-then-https', webrtc: 'blocked' })['WebRTC']).toBe(
+      'blocked in this browser: no peer can connect',
+    );
+  });
+
   it('sources and the paid seeders, as text', () => {
     const rows = sourceRows(STATS.sources);
     expect(rows.map((r) => [r.source, r.id, r.via, r.down, r.up, r.files, r.connected])).toEqual([
@@ -216,6 +234,46 @@ function Harness({
     onClose: () => undefined,
   });
 }
+
+describe('stats for nerds: the No HTTPS switch (v20)', () => {
+  const panel = (peersOnly: Parameters<typeof NerdStats>[0]['peersOnly']): ReactElement =>
+    createElement(NerdStats, {
+      rows: [],
+      sources: [],
+      canShowAddresses: false,
+      showAddresses: false,
+      addresses: new Map(),
+      onShowAddresses: () => undefined,
+      peersOnly,
+      onClose: () => undefined,
+    });
+
+  it('is not drawn for a play with no such choice', () => {
+    mounted = render(panel(undefined));
+    expect(mounted.container.querySelector('[data-testid="nerd-peers-only"]')).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="nerd-https-off"]')).toBeNull();
+  });
+
+  it('shows the play’s state, asks for a change, and says what HTTPS off means', () => {
+    const asked: boolean[] = [];
+    mounted = render(panel({ on: false, onChange: (on) => asked.push(on) }));
+    const off = mounted.get('[data-testid="nerd-peers-only"]') as HTMLInputElement;
+    expect(off.checked).toBe(false);
+    expect(mounted.container.textContent).toContain('No HTTPS');
+    expect(mounted.container.querySelector('[data-testid="nerd-https-off"]')).toBeNull();
+    click(off);
+    expect(asked).toEqual([true]);
+    mounted.unmount();
+    mounted = render(panel({ on: true, onChange: (on) => asked.push(on) }));
+    const on = mounted.get('[data-testid="nerd-peers-only"]') as HTMLInputElement;
+    expect(on.checked).toBe(true);
+    expect(mounted.get('[data-testid="nerd-https-off"]').textContent).toContain(
+      'HTTPS is off: the video comes from peers only',
+    );
+    click(on);
+    expect(asked).toEqual([true, false]);
+  });
+});
 
 describe('stats for nerds: the panel', () => {
   it('addresses are off when it opens, asked only while on, and off again on reopen', async () => {

@@ -65,6 +65,26 @@ describe('stats for nerds on a web play (contracts v19)', () => {
     expect(stats.sources.some((s) => s.kind === 'origin')).toBe(false);
   });
 
+  it('v20: says where segments come from, the rescues, and a blocked WebRTC; nothing before nfx 0109', () => {
+    const base = { engine: 'test', origin: 'https://o.example', verified: 0, rejected: [] };
+    expect(playStats({ ...base, mesh: { ...MESH } }).transport).toBeUndefined();
+    expect(playStats({ ...base, mesh: null }).transport).toBeUndefined();
+    expect(
+      playStats({
+        ...base,
+        mesh: { ...MESH, source: 'peers-then-https', rescues: 3, webrtc: 'ok' },
+      }).transport,
+    ).toEqual({ source: 'peers-then-https', rescues: 3, webrtc: 'ok' });
+    expect(
+      playStats({ ...base, mesh: { ...MESH, source: 'peers-only', rescues: 0, webrtc: 'blocked' } })
+        .transport,
+    ).toEqual({ source: 'peers-only', rescues: 0, webrtc: 'blocked' });
+    // The check has not ended: nothing is claimed either way.
+    expect(
+      playStats({ ...base, mesh: { ...MESH, source: 'https-first', webrtc: 'unknown' } }).transport,
+    ).toEqual({ source: 'https-first' });
+  });
+
   it('maps the origin and each mesh peer, open first as the library ordered them', () => {
     const s = playStats({
       engine: 'hls.js 1.7.4 + p2p-media-loader 4.0.0',

@@ -28,6 +28,12 @@ export interface NerdStatsProps {
   /** Addresses by `NerdSourceRow.key`, while shown. */
   readonly addresses: ReadonlyMap<string, PlaySourceAddress>;
   readonly onShowAddresses: (on: boolean) => void;
+  /**
+   * v20 (ADR 0025): the switch that turns HTTPS off for the play's segments. Absent: the play
+   * has no such choice, and no switch is drawn.
+   */
+  readonly peersOnly?:
+    { readonly on: boolean; readonly onChange: (on: boolean) => void } | undefined;
   readonly onClose: () => void;
   readonly className?: string | undefined;
 }
@@ -39,6 +45,7 @@ export function NerdStats({
   showAddresses,
   addresses,
   onShowAddresses,
+  peersOnly,
   onClose,
   className,
 }: NerdStatsProps): ReactElement {
@@ -81,6 +88,22 @@ export function NerdStats({
             Show addresses
           </label>
         ) : null}
+        {peersOnly !== undefined ? (
+          <label
+            className="nf-nerd__switch"
+            title="Take the video from peers only. The start of each video still loads a few small files over HTTPS."
+          >
+            <input
+              type="checkbox"
+              data-testid="nerd-peers-only"
+              checked={peersOnly.on}
+              onChange={(e) => {
+                peersOnly.onChange(e.currentTarget.checked);
+              }}
+            />{' '}
+            No HTTPS
+          </label>
+        ) : null}
         <button type="button" className="nf-nerd__button" onClick={copy}>
           Copy
         </button>
@@ -93,6 +116,12 @@ export function NerdStats({
           ×
         </button>
       </div>
+      {peersOnly?.on === true ? (
+        <p className="nf-nerd__banner" role="note" data-testid="nerd-https-off">
+          HTTPS is off: the video comes from peers only and waits when none delivers. The start of
+          each video still loads a few small files over HTTPS.
+        </p>
+      ) : null}
       {withAddresses ? (
         <p className="nf-nerd__banner" role="note">
           Addresses visible: these are other people&apos;s IP addresses. Don&apos;t share

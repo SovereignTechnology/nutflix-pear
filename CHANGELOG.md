@@ -7,6 +7,22 @@ All notable changes to the Nutflix desktop app are recorded here. The format fol
 
 ## [Unreleased]
 
+### Changed
+
+- **The web client takes its video from peers first** (ADR 0025, the maintainer's decision of
+  2026-11-26). On web.nutflix.xyz and the nsite, each segment comes over WebRTC from a peer that
+  holds it, and over HTTPS only as a rescue, when no peer delivers it in time. Stats for nerds
+  says where segments come from and how many were rescued. A browser that cannot connect to
+  peers (its WebRTC is off or kept to a proxy) is told so under the player, and a play that waits
+  for a peer says "Waiting for peers…". The desktop app is unchanged.
+
+### Added
+
+- **A "No HTTPS" switch in stats for nerds, on the web client** (ADR 0025). On, the video comes
+  from peers only: nothing more is fetched over HTTPS for it, and playback waits when no peer
+  delivers. It takes effect at once and is remembered in that browser. The start of each video
+  still loads a few small files over HTTPS; that goes away when nfx can send them over WebRTC.
+
 ## [0.1.4] - 2026-11-26
 
 A local key can be created in the desktop app at last, stats for nerds in every player, free

@@ -32,6 +32,19 @@
 # pins (on PATH, so wasm-pack downloads nothing). esbuild and typescript come from
 # web/player/package-lock.json. Node 22.
 #
+# 481bb30 is nfx #126's squash merge on main (decision record 0109). Since 4b6095c the library:
+#   #122, #123  nfxd only (a failed link's stage in its log; nostr-sdk 0.45.6); the library's
+#               source did not change.
+#   #125, #128  nfxd and nfx-node only (a fetch test; only public addresses published directly).
+#   #126        `open()` takes `segmentSource` (`peers-then-https`: each segment from a peer that
+#               holds it, HTTPS only as a counted rescue; `peers-only`; `https-first`, the default)
+#               and `peerWaitMs`; `Session.setSegmentSource` changes it while a play runs; a check
+#               at the start of a session says when the browser's WebRTC gathers no UDP candidate
+#               (the `mesh` event, `MeshStats.webrtc`); the events `waiting`, `resumed` and
+#               `rescue`; `MeshStats.source`, `rescues`, `waiting`, `startup`. This site passes
+#               `peers-then-https` since this pin, and its "No HTTPS" switch `peers-only` (ADR 0025).
+#   Its source sha256 is the archive's since the rename (above); the library tar is d84dcffe….
+#
 # 4b6095c is nfx #119's squash merge on main (NFX-17 seeder lookup, and failover; after 0.1.4). Since 059364f the library:
 #   #117/#118  STUN from the creator's beacon and the relays a page signals through only (NFX-10 §1).
 #   #119       fetches every file from all the sources it knows, one source's bytes per file, leaving
@@ -74,7 +87,7 @@
 # tar, whose bytes differ between 1.34 and 1.35: GitHub's ubuntu-24.04 runner and a Kata VM give the
 # same tar, e43bc98a…. The web-site workflow (.github/workflows/web-site.yml) builds it again on
 # every run and fails unless it matches.
-nfx 4b6095c2aea7f05e7ee384c478fb59857b4eac1d d97fac943b4b0589904ede177009843879d9762e41e0fd78da8a8c91bc826cce 93f8f13de0975d299602a7abfcb1d1e211158c68e0e944f2397a05766b08e1ad
+nfx 481bb305d73eecffeb7352bc4f12e47347d53e77 6d7cdc36a9dbc7c0f0f5f2d3276342a96af160cf440daffab30352248f145bc6 d84dcffe58852b776c32c991cca4e01be3478a1bea9004151faf74df00c8b5a6
 tool rust 1.98.0
 tool wasm-pack 0.15.1 410101009739b9d01c7d5affaaad6e9c9a24b4cba6791a4805db8e89b9bf7af2
 tool wasm-bindgen 0.2.128 b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f

@@ -69,10 +69,12 @@ import { WebAdapterError, fail, unsupported } from '../errors.js';
 import { canonicalNfxAddress } from './address.js';
 import type { NfxPlayerLib } from '../nfx-lib.js';
 import {
+  DEFAULT_WEB_NFX,
   WEB_FALLBACK_ORIGIN,
   WEB_ICE_SERVERS,
   WEB_MESH_RELAYS,
   WEB_NFX_NETWORK,
+  WEB_SEGMENT_SOURCE,
 } from '../settings/defaults.js';
 import type { WebSettingsStore } from '../settings/store.js';
 import { beaconEndpoints, playOrigins } from './endpoints.js';
@@ -369,6 +371,11 @@ export class WebNetworkAdapter implements NetworkAdapter {
       renditions:
         allowed === undefined || rendition === undefined ? allowed : preferring(allowed, rendition),
       meshRelays: this.#settings().nfx?.meshRelays ?? WEB_MESH_RELAYS,
+      // ADR 0025: peers first; peers only where the viewer switched HTTPS off (stats for nerds).
+      segmentSource: this.#settings().nfx?.peersOnly === true ? 'peers-only' : WEB_SEGMENT_SOURCE,
+      onPeersOnly: (on) => {
+        this.#keepPeersOnly(on);
+      },
       iceServers: WEB_ICE_SERVERS,
       pin: rendition,
       player: () => this.#playerReady(),
@@ -490,6 +497,16 @@ export class WebNetworkAdapter implements NetworkAdapter {
       return Promise.resolve(this.#o.settings.update(patch));
     } catch (e) {
       return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  /** The switch in stats for nerds, kept for later plays (contracts v20). Best effort. */
+  #keepPeersOnly(on: boolean): void {
+    const { peersOnly: _was, ...nfx } = this.#settings().nfx ?? DEFAULT_WEB_NFX;
+    try {
+      this.#o.settings.update({ nfx: on ? { ...nfx, peersOnly: true } : nfx });
+    } catch {
+      // Not saved (the browser's storage refused): the choice still holds for this play.
     }
   }
 
