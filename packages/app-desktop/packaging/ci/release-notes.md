@@ -1,11 +1,12 @@
-**Nutflix desktop for Linux (x86_64).** A peer-to-peer video player that pays seeders in Cashu ecash, and plays free videos over the NFX network, on by default on its test network's public relays, sharing them with other apps and with web browsers. It is experimental: read the [known limitations](https://github.com/SovereignTechnology/nutflix-pear#known-limitations) first.
+**Nutflix desktop for Linux (x86_64 and arm64).** A peer-to-peer video player that pays seeders in Cashu ecash, and plays free videos over the NFX network, on by default on its test network's public relays, sharing them with other apps and with web browsers. It is experimental: read the [known limitations](https://github.com/SovereignTechnology/nutflix-pear#known-limitations) first.
 
-| File                             | For                                                                                                                         |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `nutflix_<version>_amd64.deb`    | Debian and Ubuntu, including Ubuntu 24.04 and later (recommended)                                                           |
-| `Nutflix-<version>-x64.AppImage` | Other distributions. **Not for Ubuntu 24.04 or later**: it cannot start there without a user-namespace grant, so use the `.deb` |
+| File                                                                    | For                                                                                                                         |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `nutflix_<version>_amd64.deb`, `nutflix_<version>_arm64.deb`            | Debian and Ubuntu, including Ubuntu 24.04 and later (recommended)                                                           |
+| `nutflix-<version>-1.x86_64.rpm`, `nutflix-<version>-1.aarch64.rpm`     | Fedora, openSUSE and other rpm-based distributions                                                                          |
+| `Nutflix-<version>-x64.AppImage`, `Nutflix-<version>-arm64.AppImage`    | Other distributions. **Not for Ubuntu 24.04 or later**: it cannot start there without a user-namespace grant, so use the `.deb` |
 
-Install the `.deb` with `sudo apt install ./nutflix_<version>_amd64.deb` (the `./` matters), then run `nutflix`. Studio needs `ffmpeg` and `ffprobe` to transcode uploads (`sudo apt install ffmpeg`). There is no automatic update: install a new release by hand, and verify it first.
+`amd64`, `x86_64` and `x64` are 64-bit Intel and AMD PCs; `arm64` and `aarch64` are 64-bit ARM machines. Install the `.deb` with `sudo apt install ./nutflix_<version>_amd64.deb` (the `./` matters) or the `.rpm` with `sudo dnf install ./nutflix-<version>-1.x86_64.rpm` (`sudo zypper install` on openSUSE), then run `nutflix`. Studio needs `ffmpeg` and `ffprobe` to transcode uploads (`sudo apt install ffmpeg`, or your distribution's ffmpeg package). There is no automatic update: install a new release by hand, and verify it first.
 
 ## Verify before you install
 
@@ -20,7 +21,7 @@ To check the signature you need a checkout of this repository and Node 22.18 or 
 git clone https://github.com/SovereignTechnology/nutflix-pear.git && cd nutflix-pear
 npm ci --ignore-scripts
 node scripts/release-verify.mjs release-event.json nutflix_<version>_amd64.deb   # each file you downloaded
-node scripts/release-verify.mjs release-event.json --all <download-dir>           # needs both files
+node scripts/release-verify.mjs release-event.json --all <download-dir>           # needs every file
 ```
 
 It checks the signature, that the key is SovTech's, and every file's size and sha256. Keep the original file names. An older genuine release also verifies, so compare its version and date with the current notice on the relays.

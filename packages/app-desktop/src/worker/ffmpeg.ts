@@ -4,8 +4,9 @@
  * Order: the configured path (Settings; the host passes it) — and if that one does not work
  * the answer is `found: false` with that `path`, never a silent fallback, so Studio can say
  * "the path you set does not work" — else the first `ffmpeg` on `PATH` with an `ffprobe`
- * beside it. "Works" = executable AND `ffmpeg -version` exits 0 within a few seconds. The
- * version is the token after `ffmpeg version` on the first line, sanitised.
+ * beside it, else (Linux) the Flatpak build's `/app/bin/ffmpeg` (`FLATPAK_FFMPEG`). "Works" =
+ * executable AND `ffmpeg -version` exits 0 within a few seconds. The version is the token after
+ * `ffmpeg version` on the first line, sanitised.
  *
  * Runtime-neutral: the process runner, the PATH lookup and the executable check are injected
  * (`bare-subprocess` / `bare-os` / `bare-fs` in the worker; Node or fakes in tests).
@@ -63,6 +64,22 @@ export function pathCandidates(pathEnv: string | undefined, os: OsName): string[
   return out;
 }
 
+/**
+ * Where a Flatpak build of the app ships ffmpeg and ffprobe. In a Flatpak, `/app` is the app's
+ * own read-only prefix, and `/app/bin` is on the sandbox's PATH, but nothing guarantees that
+ * PATH reaches the worker (a launcher or the host's spawn may set its own), so it is also asked
+ * for by name, after PATH. Outside a Flatpak, `/app` at the filesystem root is root's to create,
+ * as `/usr/bin` is: no local user can plant an ffmpeg there.
+ */
+export const FLATPAK_FFMPEG = '/app/bin/ffmpeg';
+
+/** Where to look, in order, when no path is configured: `PATH`, then (Linux) `FLATPAK_FFMPEG`. */
+export function ffmpegCandidates(pathEnv: string | undefined, os: OsName): string[] {
+  const out = pathCandidates(pathEnv, os);
+  if (os === 'linux' && !out.includes(FLATPAK_FFMPEG)) out.push(FLATPAK_FFMPEG);
+  return out;
+}
+
 /** `ffmpeg version 6.1.1-3ubuntu5 Copyright …` → `6.1.1-3ubuntu5` (printable ASCII, capped). */
 export function parseFfmpegVersion(firstLine: string): string | undefined {
   const m = /^ffmpeg version (\S+)/.exec(firstLine.trim());
@@ -114,7 +131,7 @@ async function works(
   }
 }
 
-/** Probe the configured path, else `PATH`. Never throws. */
+/** Probe the configured path, else `PATH`, else (Linux) the Flatpak's `/app/bin`. Never throws. */
 export async function probeFfmpeg(
   deps: FfmpegProbeDeps,
   configured?: string,
@@ -133,7 +150,7 @@ export async function probeFfmpeg(
       paths: { ffmpeg: ok.ffmpeg, ffprobe: ok.ffprobe },
     };
   }
-  for (const candidate of pathCandidates(deps.pathEnv, os)) {
+  for (const candidate of ffmpegCandidates(deps.pathEnv, os)) {
     const ok = await works(deps, candidate);
     if (ok === null) continue;
     return {

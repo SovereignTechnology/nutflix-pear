@@ -6,15 +6,29 @@
 export const APP = {
   /** Package, executable and Linux binary name. */
   name: 'nutflix',
-  /** Human-facing name: window class, bundle, installer, artifact prefix. */
+  /**
+   * Human-facing name: bundle, installer, artifact prefix. Electron names the app after it, so
+   * userData stays `~/.config/Nutflix` whatever `appId` is (ADR 0017, amendment 2026-11-26).
+   */
   productName: 'Nutflix',
-  /** macOS bundle id / Windows AppUserModelID base (ADR 0017: a question for Cameron). */
-  appId: 'xyz.sovit.nutflix',
+  /**
+   * The reverse-DNS app id (the maintainer, 2026-11-26; ADR 0017 Q1): the Linux desktop-file id,
+   * the AppStream id, the Wayland app_id and X11 WM_CLASS (through the staged package.json's
+   * `desktopName`), and the macOS bundle id. Was `xyz.sovit.nutflix`.
+   */
+  appId: 'pro.sovtech.Nutflix',
   description: 'Nostr-native peer-to-peer video, paid per block with Cashu ecash',
   author: 'SovTech',
-  /** Debian `Maintainer:` (the repo's commit identity; ADR 0017 open question). */
-  maintainer: 'SovTech <git@sovit.xyz>',
+  /**
+   * Debian `Maintainer:` and rpm `Packager:`, the UID planned for the key that will sign the
+   * package repositories (the maintainer, 2026-11-26; ADR 0017 Q1).
+   * Was `SovTech <git@sovit.xyz>`.
+   */
+  maintainer: 'SovTech <git@sovtech.pro>',
   license: 'AGPL-3.0-or-later',
+  homepage: 'https://github.com/SovereignTechnology/nutflix-pear',
+  /** The AppStream `<developer id>`: sovtech.pro, reversed. */
+  developerId: 'pro.sovtech',
 } as const;
 
 /**

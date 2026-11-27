@@ -26,7 +26,7 @@ supersedes it.
 | [0014](0014-wallet-journal-nut09.md)                 | A lost mint answer loses nothing: a write-ahead journal and NUT-09 restore | Accepted                                                 |
 | [0015](0015-images-over-pear.md)                     | Thumbnails and avatars over Pear                                          | Accepted                                                  |
 | [0016](0016-nut13-seed-backup.md)                    | A wallet rebuilt from twelve words: NUT-13 seed backup                    | Accepted                                                  |
-| [0017](0017-packaging.md)                            | Packaging: Electron Forge, fuses, asar and Nostr-signed releases          | Accepted; shipped as desktop 0.1.0 (.deb and AppImage)    |
+| [0017](0017-packaging.md)                            | Packaging: Electron Forge, fuses, asar and Nostr-signed releases          | Accepted; shipped as desktop 0.1.0 (.deb and AppImage); amended 2026-11-26 (.rpm, arm64, app id) |
 | [0018](0018-one-peer-routing.md)                     | One seeder per block, credit per seeder window                            | Accepted                                                  |
 | [0019](0019-scope-pear-desktop-only.md)              | Scope: Pear/desktop only; the web portal is out                           | Accepted; scope amended by 0020; web ruling reversed in part by 0022 |
 | [0020](0020-speak-nfx.md)                            | Speak NFX beside the legacy protocol                                      | Accepted; "does not speak iroh" amended by 0021; "no web portal" by 0022 |

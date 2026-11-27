@@ -6,7 +6,14 @@ import { describe, expect, it } from 'vitest';
 import type { Guard } from '../../ipc/protocol.js';
 import { validateWorkerResult } from '../../ipc/worker-guards.js';
 import type { FfmpegProbeDeps } from '../ffmpeg.js';
-import { parseFfmpegVersion, pathCandidates, probeFfmpeg, siblingFfprobe } from '../ffmpeg.js';
+import {
+  FLATPAK_FFMPEG,
+  ffmpegCandidates,
+  parseFfmpegVersion,
+  pathCandidates,
+  probeFfmpeg,
+  siblingFfprobe,
+} from '../ffmpeg.js';
 import { nodeRuntime } from './helpers/harness.js';
 
 const isStatus = validateWorkerResult['studio.ffmpeg'] as Guard<unknown>;
@@ -81,6 +88,45 @@ describe('ffmpeg probe (ADR 0005: the system ffmpeg)', () => {
     expect(r.status).toEqual({ found: false, path: '/opt/ff/ffmpeg', os: 'linux' });
     expect(r.paths).toBeNull();
     expect(isStatus(r.status)).toBe(true);
+  });
+
+  // A Flatpak build ships ffmpeg in its own /app/bin (ADR 0017, amendment 2026-11-26).
+  it("Linux: after PATH, the Flatpak build's /app/bin/ffmpeg; once, and on Linux only", async () => {
+    expect(FLATPAK_FFMPEG).toBe('/app/bin/ffmpeg');
+    expect(ffmpegCandidates('/usr/local/bin:/usr/bin', 'linux')).toEqual([
+      '/usr/local/bin/ffmpeg',
+      '/usr/bin/ffmpeg',
+      '/app/bin/ffmpeg',
+    ]);
+    expect(ffmpegCandidates(undefined, 'linux')).toEqual(['/app/bin/ffmpeg']);
+    expect(ffmpegCandidates('/app/bin:/usr/bin', 'linux')).toEqual([
+      '/app/bin/ffmpeg',
+      '/usr/bin/ffmpeg',
+    ]);
+    expect(ffmpegCandidates('/usr/bin', 'macos')).toEqual(['/usr/bin/ffmpeg']);
+    expect(ffmpegCandidates('C:\\ff', 'windows')).toEqual(['C:\\ff\\ffmpeg.exe']);
+    // PATH has none (the worker's PATH may lack /app/bin): found in the Flatpak's prefix.
+    const d = fake(['/app/bin/ffmpeg', '/app/bin/ffprobe'], () => ({ exitCode: 0, out: V }));
+    const r = await probeFfmpeg(d);
+    expect(r.status).toEqual({
+      found: true,
+      path: '/app/bin/ffmpeg',
+      os: 'linux',
+      version: '6.1.1-3ubuntu5',
+    });
+    expect(r.paths).toEqual({ ffmpeg: '/app/bin/ffmpeg', ffprobe: '/app/bin/ffprobe' });
+    expect(d.calls).toEqual(['/app/bin/ffmpeg -hide_banner -version']);
+    // A working ffmpeg on PATH still wins, and a configured path never falls back to it.
+    const both = fake(
+      ['/usr/bin/ffmpeg', '/usr/bin/ffprobe', '/app/bin/ffmpeg', '/app/bin/ffprobe'],
+      () => ({ exitCode: 0, out: V }),
+    );
+    expect((await probeFfmpeg(both)).status.path).toBe('/usr/bin/ffmpeg');
+    const configured = await probeFfmpeg(
+      fake(['/app/bin/ffmpeg', '/app/bin/ffprobe'], () => ({ exitCode: 0, out: V })),
+      '/opt/ff/ffmpeg',
+    );
+    expect(configured.status).toEqual({ found: false, path: '/opt/ff/ffmpeg', os: 'linux' });
   });
 
   it('spawn failures and missing binaries are "not found", never a throw', async () => {

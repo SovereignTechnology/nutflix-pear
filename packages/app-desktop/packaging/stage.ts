@@ -3,7 +3,8 @@
  * as-is (asar on, packager's prune off). Layout — the same as `dist/`, so main's path logic is
  * unchanged, except the worker:
  *
- *   package.json              name, productName, version, main, "type": "module"
+ *   package.json              name, productName, version, main, "type": "module", desktopName
+ *                             (the desktop-file id: Electron's Wayland app_id and WM_CLASS)
  *   main/main.js              Electron main, bundled (src/main + src/ipc only; `electron` external)
  *   host/main.js              the host utilityProcess, bundled WITH its npm code (@sovit/core,
  *                             cashu-ts, nostr-tools…) so the money and signer code the host runs
@@ -54,6 +55,7 @@ import {
   type ClosureEntry,
   type Lockfile,
 } from './closure.ts';
+import { DESKTOP_FILE } from './freedesktop.ts';
 import {
   APP,
   NOT_SHIPPED,
@@ -768,6 +770,10 @@ export async function stageApp(o: StageOptions): Promise<StageReport> {
         license: APP.license,
         main: 'main/main.js',
         type: 'module',
+        // Electron (Linux) sets the window's Wayland app_id and X11 WM_CLASS from it, minus
+        // `.desktop`, so they match the desktop file every Linux package installs
+        // (freedesktop.ts). It never moves userData, which follows productName.
+        desktopName: DESKTOP_FILE,
         // Read by Forge to pick the Electron version; dropped from the packaged copy.
         devDependencies: { electron: electron.version },
       },

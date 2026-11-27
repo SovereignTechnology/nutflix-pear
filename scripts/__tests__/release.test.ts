@@ -467,18 +467,24 @@ describe('scripts/release-manifest.mjs — one release, only this make (independ
 
   // Cameron, 2026-10-02: 0.1.0 is Linux only, released from GitHub Actions on `desktop-v*`
   // tags into a DRAFT GitHub release; PRs that touch the packaging run the build as a dry run.
-  it('the GitHub release workflow: one manifest after the Linux job; only a tag-only draft job writes', async () => {
+  // Since the 2026-11-26 amendment: x64 and arm64, each on its own runner, .deb + .rpm + AppImage.
+  it('the GitHub release workflow: one manifest after the Linux jobs; only a tag-only draft job writes', async () => {
     const wf = readFileSync(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
     const code = wf
       .split('\n')
       .filter((l) => !/^\s*#/.test(l))
       .join('\n');
     expect(code).toMatch(/^on:\n {2}push:\n {4}tags: \['desktop-v\*'\]\n {2}pull_request:\n/m);
-    // ONE manifest run, over the Linux list, after the Linux job.
+    // ONE manifest run, over both arches' Linux lists, after the Linux jobs (one per arch).
+    const { BUILD_ARCHES } = await packaging<IdentityLib>('identity.ts');
     const runs = code.match(/node scripts\/release-manifest\.mjs[^\n]*(?:\n\s+--[^\n]*)*/g) ?? [];
     expect(runs).toHaveLength(1);
-    expect(runs[0]).toContain('--made packages/app-desktop/out/make/linux-x64.artifacts.json');
+    for (const arch of BUILD_ARCHES)
+      expect(runs[0], arch).toContain(
+        `--made packages/app-desktop/out/make/linux-${arch}.artifacts.json`,
+      );
     expect(code).toMatch(/^ {2}desktop-release-manifest:\n {4}needs: \[desktop-linux\]\n/m);
+    expect(code).toMatch(/ {10}pattern: desktop-linux-\*\n {10}merge-multiple: true\n/);
     // A tag must name the version being built.
     expect(code).toContain('"$GITHUB_REF_NAME" != "desktop-v$v"');
     // Read-only by default; write only in draft-release, only on a tag push, only a draft, and
@@ -498,23 +504,44 @@ describe('scripts/release-manifest.mjs — one release, only this make (independ
     expect(code.match(/persist-credentials: false/g)?.length).toBe(
       code.match(/uses: actions\/checkout@/g)?.length,
     );
-    // The runtime it fetches is checked against the maker's own pin.
+    // One matrix entry per build arch, each natively on its own runner, with the runtime it
+    // fetches checked against the maker's own pin for that arch.
     const { APPIMAGE_RUNTIMES } = (await import(
       /* @vite-ignore */ join(repoRoot, 'packages', 'app-desktop', 'packaging', 'maker-appimage.ts')
     )) as { APPIMAGE_RUNTIMES: Record<string, { asset: string; sha256: string }> };
-    const x64 = APPIMAGE_RUNTIMES['x64'];
-    expect(code).toContain(`releases/download/20251108/${x64?.asset ?? '?'}`);
+    const runner: Record<string, string> = { x64: 'ubuntu-24.04', arm64: 'ubuntu-24.04-arm' };
+    for (const arch of BUILD_ARCHES) {
+      const pin = APPIMAGE_RUNTIMES[arch];
+      expect(code, arch).toContain(
+        [
+          `          - arch: ${arch}`,
+          `            runner: ${runner[arch] ?? '?'}`,
+          `            appimage-runtime: ${pin?.asset ?? '?'}`,
+          `            appimage-runtime-sha256: ${pin?.sha256 ?? '?'}`,
+        ].join('\n'),
+      );
+    }
+    expect(code.match(/^ {10}- arch: /gm)).toHaveLength(BUILD_ARCHES.length);
+    expect(code).toContain('    runs-on: ${{ matrix.runner }}\n');
     expect(code).toContain(
-      `echo '${x64?.sha256 ?? '?'}  packages/app-desktop/out/appimage-runtime/`,
+      '"https://github.com/AppImage/type2-runtime/releases/download/20251108/$APPIMAGE_RUNTIME"',
+    );
+    expect(code).toContain(
+      'echo "$APPIMAGE_RUNTIME_SHA256  packages/app-desktop/out/appimage-runtime/$APPIMAGE_RUNTIME"',
     );
     // Slice 5e-5: the app ships the iroh helper built in this job, from this commit and its
     // Cargo.lock, with the crate's pinned toolchain, and never from a cache.
     expect(code).toContain('grep -qx "channel = \\"${RUST_VERSION}\\"" crates/iroh-helper/');
     expect(code).toContain('cargo build --release --locked');
     expect(code).toMatch(
-      /make -- --platform linux --arch x64 --targets deb,appimage \\\n\s+--iroh-helper "\$GITHUB_WORKSPACE\/crates\/iroh-helper\/target\/release\/nutflix-iroh-helper"/,
+      /make -- --platform linux --arch "\$ARCH" --targets deb,rpm,appimage \\\n\s+--iroh-helper "\$GITHUB_WORKSPACE\/crates\/iroh-helper\/target\/release\/nutflix-iroh-helper"/,
     );
     expect(code).not.toContain('actions/cache@');
+    // Every artifact of every arch is attached to the draft (SHA256SUMS covers the same set).
+    for (const glob of ['deb/*/*.deb', 'rpm/*/*.rpm', 'appimage/*/*.AppImage']) {
+      expect(code, glob).toContain(`packages/app-desktop/out/make/${glob}\n`);
+      expect(draft, glob).toContain(`release-files/make/${glob} \\\n`);
+    }
   });
 });
 
@@ -547,11 +574,12 @@ const installerStaging = (root: string): string[] =>
   readdirSync(root).filter((n) => n.startsWith('electron-installer-'));
 
 /**
- * The file names the four configured makers write for `version` on every build arch: Squirrel's
+ * The file names the five configured makers write for `version` on every build arch: Squirrel's
  * `setupExe` from the Forge config, the dmg maker with hdiutil stubbed, and — when `real` — the
- * real deb maker (electron-installer-debian, dpkg + fakeroot) and the real AppImage maker
- * (mksquashfs, a fixture runtime) run over a minimal packaged tree with the staged package.json's
- * fields (stage.ts: no Debian `revision`). The makers' temp files go to `<work>/tmp`.
+ * real deb maker (electron-installer-debian, dpkg + fakeroot), the real rpm maker
+ * (electron-installer-redhat, rpmbuild) and the real AppImage maker (mksquashfs, a fixture
+ * runtime) run over a minimal packaged tree with the staged package.json's fields (stage.ts: no
+ * Debian or rpm `revision`). The makers' temp files go to `<work>/tmp`.
  */
 async function makerNames(version: string, work: string, real: boolean): Promise<string[]> {
   // electron-installer-common stages each .deb in tmp.dir() and removes it only in tmp's
@@ -576,7 +604,9 @@ async function makeNames(version: string, work: string, real: boolean): Promise<
   mkdirSync(join(app, 'resources', 'app'), { recursive: true });
   writeFileSync(join(app, APP.name), '#!/bin/sh\n');
   chmodSync(join(app, APP.name), 0o755);
-  writeFileSync(join(app, 'version'), '44.2.0');
+  writeFileSync(join(app, 'chrome-sandbox'), 'helper');
+  chmodSync(join(app, 'chrome-sandbox'), 0o755);
+  writeFileSync(join(app, 'version'), '45.3.1');
   writeFileSync(join(app, 'LICENSE'), 'license');
   writeFileSync(join(app, 'LICENSES.chromium.html'), 'licenses');
   writeFileSync(
@@ -596,12 +626,12 @@ async function makeNames(version: string, work: string, real: boolean): Promise<
   writeFileSync(join(work, 'rt'), runtime);
   const names = new Set<string>();
   for (const arch of BUILD_ARCHES) {
-    const [sq, dmg, deb, appimage] = makers({
+    const [sq, dmg, deb, appimage, rpm] = makers({
       version,
       electronChecksums: {},
       appImageRuntimeDir: work,
     }) as MakerLike[];
-    for (const mk of [sq, dmg, deb, appimage]) await mk!.prepareConfig(arch);
+    for (const mk of [sq, dmg, deb, appimage, rpm]) await mk!.prepareConfig(arch);
     names.add(String(sq!.config['setupExe']));
     const make = (mk: MakerLike, targetPlatform: string): Promise<string[]> =>
       mk.make({
@@ -618,6 +648,7 @@ async function makeNames(version: string, work: string, real: boolean): Promise<
     for (const out of await make(stubbedDmg, 'darwin')) names.add(basename(out));
     if (!real) continue;
     for (const out of await make(deb!, 'linux')) names.add(basename(out));
+    for (const out of await make(rpm!, 'linux')) names.add(basename(out));
     const fixtureAppImage = new MakerAppImage({
       ...appimage!.config,
       runtimes: {
@@ -657,6 +688,17 @@ describe('scripts/release-manifest.mjs — exact maker names (verifier, round 2)
       'Nutflix-0.1.0-amd64.AppImage', // the Debian arch name on a Forge shape
       'nutflix_0.1.0_x64.deb', // and the other way round
       'Nutflix-0.1.0-x64.deb',
+      // The .rpm: rpm's own arch names, revision 1 only, its prerelease form, and Forge's arm64.
+      'nutflix-0.1.0-1.x64.rpm',
+      'nutflix-0.1.0-1.arm64.rpm',
+      'nutflix-0.1.0-1.amd64.rpm',
+      'nutflix-0.1.0-2.x86_64.rpm',
+      'nutflix-0.1.0.rc.1-1.x86_64.rpm',
+      'nutflix-0.1.0-1.x86_64.rpm.sig',
+      'Nutflix-0.1.0-1.x86_64.rpm',
+      'nutflix_0.1.0-1.x86_64.rpm',
+      'nutflix-0.1.0-1.noarch.rpm',
+      'nutflix-0.1.0-1.src.rpm',
       'Other-0.1.0-x64.AppImage',
       'nutflix-0.1.0-x64.AppImage',
       'Nutflix_0.1.0_amd64.deb',
@@ -672,6 +714,8 @@ describe('scripts/release-manifest.mjs — exact maker names (verifier, round 2)
       'nutflix_0.1.0_amd64.deb',
       'nutflix_0.1.0_arm64.deb',
       'Nutflix-0.1.0-Setup.exe',
+      'nutflix-0.1.0-1.x86_64.rpm',
+      'nutflix-0.1.0-1.aarch64.rpm',
     ])
       expect(m.nameCarriesVersion(n, '0.1.0'), n).toBe(true);
     // A prerelease release is matched whole as well: its names carry exactly its version.
@@ -714,6 +758,9 @@ describe('scripts/release-manifest.mjs — exact maker names (verifier, round 2)
     const { debianArch } = (await import('@electron-forge/maker-deb')) as unknown as {
       debianArch: (a: string) => string;
     };
+    const { rpmArch } = (await import('@electron-forge/maker-rpm')) as unknown as {
+      rpmArch: (a: string) => string;
+    };
     // cli.ts builds only BUILD_ARCHES, and each has a pinned AppImage runtime.
     expect([...BUILD_ARCHES].sort()).toEqual(Object.keys(APPIMAGE_RUNTIMES).sort());
     expect([...m.ARTIFACT_SHAPES].map((s) => s.maker).sort()).toEqual([...TARGETS].sort());
@@ -738,6 +785,13 @@ describe('scripts/release-manifest.mjs — exact maker names (verifier, round 2)
       prefix: `${APP.productName}-`,
       tails: ['-Setup.exe'],
     });
+    // maker-linux.ts keeps rpm's arch names (x86_64, aarch64) and the installer's revision 1.
+    expect(shape('rpm')).toEqual({
+      maker: 'rpm',
+      prefix: `${APP.name}-`,
+      tails: BUILD_ARCHES.map((a) => `-1.${rpmArch(a)}.rpm`),
+    });
+    expect(BUILD_ARCHES.map((a) => rpmArch(a))).toEqual(['x86_64', 'aarch64']);
     // Why a name then matches only an artifact made for exactly this version: prefix + X + tail
     // = prefix' + V + tail' with X ≠ V needs one prefix to start another or one tail to end another.
     const prefixes = [...new Set(m.ARTIFACT_SHAPES.map((s) => s.prefix))];
@@ -766,8 +820,10 @@ describe('scripts/release-manifest.mjs — exact maker names (verifier, round 2)
     for (const n of rc) expect(m.nameCarriesVersion(n, '0.1.0'), n).toBe(false);
   });
 
-  it.runIf(process.platform === 'linux' && ['mksquashfs', 'dpkg', 'fakeroot'].every(hasBin))(
-    'accepts exactly what the four makers write, no more (real deb and AppImage makers)',
+  it.runIf(
+    process.platform === 'linux' && ['mksquashfs', 'dpkg', 'fakeroot', 'rpmbuild'].every(hasBin),
+  )(
+    'accepts exactly what the five makers write, no more (real deb, rpm and AppImage makers)',
     async () => {
       const m = await lib<ManifestLib>('release-manifest.mjs');
       // Verifier, round 3: electron-installer-common stages each .deb in tmp.dir() and removes
@@ -778,15 +834,20 @@ describe('scripts/release-manifest.mjs — exact maker names (verifier, round 2)
       const before = new Set(installerStaging(realTmp));
       const written = await makerNames('0.1.0', dir, true);
       expect(written).toEqual([...m.releaseArtifactNames('0.1.0')].sort(byteOrder));
-      expect(written).toHaveLength(7);
+      expect(written).toHaveLength(9);
       // A prerelease: electron-installer-debian writes its Debian form (`0.1.0~rc.1`), and `~`
-      // is not a safe artifact name, so the manifest refuses that .deb (fails closed; ADR 0017
-      // §8). Everything else it writes is accepted for that version and refused for 0.1.0.
+      // is not a safe artifact name, so the manifest refuses that .deb; electron-installer-redhat
+      // writes its rpm form (`0.1.0.rc.1`), which carries no version, so the manifest refuses
+      // that .rpm (both fail closed; ADR 0017 §8). Everything else it writes is accepted for that
+      // version and refused for 0.1.0.
       const rc = await makerNames('0.1.0-rc.1', dir, true);
       const debs = rc.filter((n) => n.endsWith('.deb'));
       expect(debs).toEqual(['nutflix_0.1.0~rc.1_amd64.deb', 'nutflix_0.1.0~rc.1_arm64.deb']);
       for (const n of debs) expect(m.SAFE_NAME.test(n), n).toBe(false);
-      for (const n of rc.filter((x) => !x.endsWith('.deb')))
+      const rpms = rc.filter((n) => n.endsWith('.rpm'));
+      expect(rpms).toEqual(['nutflix-0.1.0.rc.1-1.aarch64.rpm', 'nutflix-0.1.0.rc.1-1.x86_64.rpm']);
+      for (const n of rpms) expect(m.nameCarriesVersion(n, '0.1.0-rc.1'), n).toBe(false);
+      for (const n of rc.filter((x) => !x.endsWith('.deb') && !x.endsWith('.rpm')))
         expect(m.nameCarriesVersion(n, '0.1.0-rc.1'), n).toBe(true);
       for (const n of rc) expect(m.nameCarriesVersion(n, '0.1.0'), n).toBe(false);
       for (const n of written) expect(m.nameCarriesVersion(n, '0.1.0-rc.1'), n).toBe(false);
@@ -795,15 +856,15 @@ describe('scripts/release-manifest.mjs — exact maker names (verifier, round 2)
       const ours = `-${process.pid}-`;
       const left = installerStaging(realTmp).filter((n) => !before.has(n));
       expect(left.filter((n) => n.includes(ours))).toEqual([]);
-      // Not vacuous: the four .debs (two arches, two versions) were staged in the test's own
-      // dir, under this pid, which afterEach's cleanup removes; and TMPDIR is restored.
+      // Not vacuous: the four .debs and four .rpms (two arches, two versions) were staged in the
+      // test's own dir, under this pid, which afterEach's cleanup removes; and TMPDIR is restored.
       const staged = installerStaging(join(dir, 'tmp'));
-      expect(staged).toHaveLength(4);
+      expect(staged).toHaveLength(8);
       for (const n of staged) expect(n).toContain(ours);
       expect(process.env['TMPDIR']).toBe(tmpdirEnv);
       expect(Object.hasOwn(process.env, 'TMPDIR')).toBe(tmpdirEnv !== undefined);
     },
-    60_000,
+    180_000,
   );
 });
 

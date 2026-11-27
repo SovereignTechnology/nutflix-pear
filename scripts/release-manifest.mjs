@@ -36,7 +36,8 @@
 //   A directory contributes every file under it with a release extension (.deb .AppImage
 //   .dmg .exe .msix .zip .rpm); anything else is skipped (and listed on stderr).
 //   Every artifact name must be exactly one a maker writes for this version (ARTIFACT_SHAPES:
-//   `Nutflix-0.1.0-x64.AppImage`, `nutflix_0.1.0_amd64.deb`, `Nutflix-0.1.0-Setup.exe` …), so a
+//   `Nutflix-0.1.0-x64.AppImage`, `nutflix_0.1.0_amd64.deb`, `nutflix-0.1.0-1.x86_64.rpm`,
+//   `Nutflix-0.1.0-Setup.exe` …), so a
 //   stale artifact of another version left in out/make, a prerelease one included, is refused,
 //   not signed. A name cannot tell two builds of the SAME version apart: that takes --made.
 //   --out defaults to packages/app-desktop/out/release (gitignored); --version to
@@ -248,14 +249,18 @@ export function readMadeList(file, version) {
  * scripts/__tests__/release.test.ts to packages/app-desktop/packaging and to the real makers:
  *   appimage  maker-appimage.ts  `${productName}-${version}-${arch}.AppImage`
  *   dmg       maker-dmg.ts       `${productName}-${version}-${arch}.dmg`
- *   deb       @electron-forge/maker-deb (electron-installer-debian's default name, no revision)
+ *   deb       maker-linux.ts     electron-installer-debian's default name, no revision:
  *                                `${name}_${version}_${debianArch(arch)}.deb`
+ *   rpm       maker-linux.ts     `${name}-${version}-${revision}.${rpmArch(arch)}.rpm`, revision 1
+ *                                (electron-installer-redhat's default), rpm's arch names
  *   squirrel  forge-config.ts    `setupExe: ${productName}-${version}-Setup.exe`
  * `arch` is one of identity.ts BUILD_ARCHES (x64, arm64), the only ones cli.ts builds. No prefix
  * starts another and no tail ends another, so a name matches only an artifact made for exactly
  * this version. Squirrel's RELEASES and .nupkg are not release artifacts.
  * electron-installer-debian writes a prerelease in Debian form (`0.1.0-rc.1` → `0.1.0~rc.1`),
- * which SAFE_NAME refuses: a prerelease's .deb cannot be released yet (fails closed; ADR 0017 §8).
+ * which SAFE_NAME refuses, and electron-installer-redhat in rpm form (`0.1.0.rc.1`), a name that
+ * carries no version: a prerelease's .deb and .rpm cannot be released yet (fails closed; ADR 0017
+ * §8).
  */
 export const ARTIFACT_SHAPES = Object.freeze([
   Object.freeze({
@@ -274,6 +279,11 @@ export const ARTIFACT_SHAPES = Object.freeze([
     tails: Object.freeze(['_amd64.deb', '_arm64.deb']),
   }),
   Object.freeze({ maker: 'squirrel', prefix: 'Nutflix-', tails: Object.freeze(['-Setup.exe']) }),
+  Object.freeze({
+    maker: 'rpm',
+    prefix: 'nutflix-',
+    tails: Object.freeze(['-1.x86_64.rpm', '-1.aarch64.rpm']),
+  }),
 ]);
 
 /** Every name a maker writes for `version` (none for a malformed version). */

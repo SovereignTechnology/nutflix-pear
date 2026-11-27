@@ -24,7 +24,8 @@ import type { ResolvedForgeConfig } from '@electron-forge/shared-types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { madeList, parseCli, writeMadeList } from '../cli.ts';
-import { LINUX_ICON, TARGETS, forgeConfig, makers } from '../forge-config.ts';
+import { LINUX_ICON, TARGETS, forgeConfig, freedesktopFiles, makers } from '../forge-config.ts';
+import type { FreedesktopFiles } from '../freedesktop.ts';
 import { assertAppFuses } from '../fuses.ts';
 import {
   MADE_LIST_SCHEMA,
@@ -76,6 +77,8 @@ describe('forgeConfig', () => {
     expect(p.prune).toBe(false);
     expect(p.executableName).toBe('nutflix');
     expect(p.name).toBe('Nutflix');
+    // The app id (the maintainer, 2026-11-26; ADR 0017 Q1), the macOS bundle id among others.
+    expect(p.appBundleId).toBe('pro.sovtech.Nutflix');
     // Every Electron zip checked against the lockfile-pinned electron package's sha256 list.
     expect(p.download).toEqual({
       checksums: { 'electron-v44.2.0-linux-x64.zip': 'ab'.repeat(32) },
@@ -100,8 +103,9 @@ describe('forgeConfig', () => {
       ['dmg', ['darwin']],
       ['deb', ['linux']],
       ['appimage', ['linux']],
+      ['rpm', ['linux']],
     ]);
-    expect(TARGETS).toEqual(['squirrel', 'dmg', 'deb', 'appimage']);
+    expect(TARGETS).toEqual(['squirrel', 'dmg', 'deb', 'appimage', 'rpm']);
     const only = makers({
       version: '0.1.0',
       electronChecksums: {},
@@ -134,29 +138,48 @@ describe('forgeConfig', () => {
   });
 
   // ADR 0017 Q2 (Cameron, 2026-10-02): a neutral placeholder icon until a brand one exists.
-  it('both Linux makers carry the placeholder icon, a 512x512 PNG', async () => {
-    interface Prepared {
-      prepareConfig(a: string): Promise<void>;
-    }
-    const [deb, appimage] = makers({
+  // Since 2026-11-26 every Linux maker installs it, with the same metainfo (freedesktop.ts).
+  it('every Linux maker installs the placeholder icon, a 512x512 PNG, and the same metainfo', async () => {
+    const [deb, appimage, rpm] = makers({
       version: '0.1.0',
       electronChecksums: {},
       appImageRuntimeDir: '/rt',
-      targets: ['deb', 'appimage'],
+      targets: ['deb', 'appimage', 'rpm'],
     }) as unknown as [
-      Prepared & { config: { options: Record<string, unknown> } },
-      Prepared & { config: Record<string, unknown> },
+      { freedesktop: FreedesktopFiles },
+      { config: { freedesktop: FreedesktopFiles }; prepareConfig(a: string): Promise<void> },
+      { freedesktop: FreedesktopFiles },
     ];
-    await deb.prepareConfig('x64');
     await appimage.prepareConfig('x64');
-    expect(deb.config.options['icon']).toBe(LINUX_ICON);
-    expect(appimage.config['icon']).toBe(LINUX_ICON);
+    const files = freedesktopFiles();
+    expect(files.icon).toBe(LINUX_ICON);
+    for (const f of [deb.freedesktop, appimage.config.freedesktop, rpm.freedesktop])
+      expect(f).toEqual(files);
     const png = readFileSync(LINUX_ICON);
     expect(png.subarray(0, 8)).toEqual(
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     );
     expect(png.toString('latin1', 12, 16)).toBe('IHDR');
     expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([512, 512]);
+  });
+
+  it('the .deb carries the release identity: Maintainer, Homepage, and ffmpeg recommended', async () => {
+    const deb = makers({
+      version: '0.1.0',
+      electronChecksums: {},
+      appImageRuntimeDir: '/rt',
+      targets: ['deb'],
+    })[0] as unknown as {
+      config: { options: Record<string, unknown> };
+      prepareConfig(a: string): Promise<void>;
+    };
+    await deb.prepareConfig('x64');
+    expect(deb.config.options).toMatchObject({
+      name: 'nutflix',
+      maintainer: 'SovTech <git@sovtech.pro>',
+      homepage: 'https://github.com/SovereignTechnology/nutflix-pear',
+      recommends: ['ffmpeg'],
+    });
   });
 
   // Independent review: the old name said the sandbox setup was left to a decision; in fact the

@@ -22,6 +22,20 @@ One part of the decision differs from what was asked, with the maintainer's appr
 question 9, answered 2026-10-02): no Pear maker is used. The makers are Forge's own plus two
 in-repo ones, because Holepunch's AppImage maker adds `--no-sandbox` (§5).
 
+**Amended 2026-11-26 (the maintainer):** packages for Linux package managers.
+
+- The app id is `pro.sovtech.Nutflix` and the package maintainer `SovTech <git@sovtech.pro>`, the
+  UID planned for the key that will sign the package repositories (open question 1, revised).
+  The user's data stays in `~/.config/Nutflix`: Electron names that directory after the product
+  name, not the app id, so nothing migrates.
+- Every Linux package installs one desktop entry, one AppStream metainfo file and one icon, each
+  named after the app id, and the app's windows carry that id as their Wayland app_id and X11
+  `WM_CLASS` (§5, "Desktop integration").
+- A Linux `.rpm` joins the `.deb` and the AppImage, and all three are also built for arm64, each
+  arch natively on its own runner (§5, §9).
+- Studio also looks for ffmpeg in `/app/bin`, where a Flatpak build of the app would ship it.
+  No Flatpak or Snap is built yet.
+
 ## Context
 
 Nothing packaged the app before this. The dev build runs `dist/` through the `electron` npm
@@ -259,7 +273,8 @@ path) is still dropped.
 |---|---|---|
 | Windows `.exe` | `@electron-forge/maker-squirrel` (Squirrel.Windows `Nutflix-<version>-Setup.exe`, `noMsi`) | Windows (or wine + mono) |
 | macOS `.dmg` | **in-repo** `packaging/maker-dmg.ts`: empty `out/make/dmg/<arch>`, `ditto` the `.app`, add an `/Applications` link, `hdiutil create -format UDZO`. The argv is built without a shell | macOS |
-| Linux `.deb` | `@electron-forge/maker-deb` (electron-installer-debian) | Linux with `dpkg` and `fakeroot` |
+| Linux `.deb` | `@electron-forge/maker-deb` (electron-installer-debian) with its `make()` replaced: **in-repo** `packaging/maker-linux.ts` `LinuxDebMaker` (amendment 2026-11-26) | Linux with `dpkg` and `fakeroot` |
+| Linux `.rpm` | `@electron-forge/maker-rpm` (electron-installer-redhat) with its `make()` replaced: **in-repo** `packaging/maker-linux.ts` `LinuxRpmMaker` (amendment 2026-11-26) | Linux with `rpmbuild` |
 | Linux AppImage | **in-repo** `packaging/maker-appimage.ts` | Linux with `mksquashfs` |
 | `pear://` | the Pear CLI, from the artifacts above (§6) | any |
 
@@ -286,11 +301,51 @@ Why the in-repo makers:
   advisory. Under `ignore-scripts` it would also need two native modules (`macos-alias`,
   `fs-xattr`) built by hand. A compressed image holding the app and an `/Applications` link is
   all the release needs.
+- **`.deb` and `.rpm` (amendment 2026-11-26).** The installers name the desktop entry and the
+  icon after the package (`nutflix.desktop`, `/usr/share/pixmaps/nutflix.png`) and write no
+  metainfo, and Forge's rpm maker renames `aarch64` to `arm64` after its config is applied. So
+  `maker-linux.ts` runs the same pinned installers through subclasses that install the files of
+  "Desktop integration" below instead. Everything else is the installers' own code: the copy of
+  the packaged app, the setuid sandbox helper (§7), the `/usr/bin` link, the copyright file and
+  the dependencies Electron needs. The `.rpm` subclass writes its own spec and runs `rpmbuild`
+  itself, with these macros on its command line so no `~/.rpmmacros` can change them: a fixed
+  build host (`reproducible`), the build time and every file's mtime from `SOURCE_DATE_EPOCH`
+  (`use_source_date_epoch_as_buildtime`, `clamp_mtime_to_source_date_epoch`,
+  `source_date_epoch_from_changelog 0`), no `/usr/lib/.build-id` links, no debuginfo package, no
+  post-install processing (no strip), and an xz level 6 payload. It requires what
+  electron-installer-redhat lists for Electron, with openSUSE's names as alternatives for GTK 3
+  and libsecret, and recommends `/usr/bin/ffmpeg` (a file, so Fedora's `ffmpeg-free`, RPM
+  Fusion's `ffmpeg` and openSUSE's packages all satisfy it). It has no scriptlets.
+
+**Desktop integration (amendment 2026-11-26).** `packaging/freedesktop.ts` makes three files, and
+the `.deb`, the `.rpm` and the AppImage install the same three:
+
+| File | Path (`/usr` in the `.deb` and `.rpm`, `usr/` in the AppImage) |
+|---|---|
+| desktop entry | `share/applications/pro.sovtech.Nutflix.desktop` |
+| AppStream metainfo | `share/metainfo/pro.sovtech.Nutflix.metainfo.xml` |
+| icon (the 512 px placeholder, open question 2) | `share/icons/hicolor/512x512/apps/pro.sovtech.Nutflix.png` |
+
+- The desktop entry runs `nutflix %U` with no switches, names its icon `pro.sovtech.Nutflix` and
+  sets `StartupWMClass=pro.sovtech.Nutflix`. The AppImage adds `X-AppImage-Version` and also
+  carries the entry and the icon at its root, with `.DirIcon`, as the AppImage spec asks.
+- Electron 45 sets the Wayland app_id and the X11 `WM_CLASS` from the app's `desktopName`, minus
+  `.desktop`. The staged `package.json` carries `desktopName: "pro.sovtech.Nutflix.desktop"`, so
+  shells match the windows to the entry. Without it Electron 45 would use `nutflix`.
+- The metainfo (checked with `appstreamcli validate`) carries the id, CC0-1.0 metadata and the
+  repository's AGPL-3.0-or-later licence, the developer id `pro.sovtech`, the homepage, a
+  `desktop-id` launchable, an OARS 1.1 rating (`social-chat` intense, `social-info` moderate,
+  `money-purchasing` intense) and every dated release in `CHANGELOG.md`.
+- The `.deb` renames the entry and the icon of 0.1.4 and earlier (`nutflix.desktop`,
+  `/usr/share/pixmaps/nutflix.png`): an upgrade removes those, so a launcher pinned to the old
+  entry must be pinned again.
 
 Every artifact name carries the version, in one fixed shape per maker:
-`nutflix_<v>_<amd64|arm64>.deb`, `Nutflix-<v>-<x64|arm64>.AppImage`,
-`Nutflix-<v>-<x64|arm64>.dmg` and `Nutflix-<v>-Setup.exe`. The release manifest accepts exactly
-these names and refuses any other (§8). So a stale artifact of **another version**, a
+`nutflix_<v>_<amd64|arm64>.deb`, `nutflix-<v>-1.<x86_64|aarch64>.rpm` (amendment 2026-11-26),
+`Nutflix-<v>-<x64|arm64>.AppImage`, `Nutflix-<v>-<x64|arm64>.dmg` and `Nutflix-<v>-Setup.exe`.
+The release manifest accepts exactly these names and refuses any other (§8). A prerelease's
+`.deb` (`0.1.0~rc.1`) and `.rpm` (`0.1.0.rc.1`) carry the installers' forms of the version, and
+the manifest refuses both. So a stale artifact of **another version**, a
 prerelease one included, cannot be signed by accident. A name cannot tell two builds of the
 **same** version apart; only `--made` keeps an older same-version build out (§8).
 
@@ -361,6 +416,8 @@ Decided here:
   is Chromium's audited helper and the standard Electron/Chrome `.deb` layout, so the sandbox
   starts on Ubuntu 24.04 without an AppArmor profile. A setuid-root binary is still a choice
   worth the maintainer's explicit yes (open question 10).
+- **`.rpm` (amendment 2026-11-26).** The same helper, setuid root (4755) by the spec's own
+  `%install`, again with no scriptlet (open question 10's answer covers it).
 - **AppImage.** FUSE mounts the image `nosuid`, so the SUID helper cannot work. The sandbox then
   needs unprivileged user namespaces:
   - Debian, Fedora and Arch allow them;
@@ -532,6 +589,13 @@ publishes once the notice is signed. Only that job can write (`contents: write`)
 tag, and it runs no project code. A PR that touches the packaging runs the build and manifest
 as a dry run. The Windows and macOS jobs stay in the GitLab file for later.
 
+**Amended 2026-11-26:** `desktop-linux` is a matrix of two jobs, x64 on `ubuntu-24.04` and arm64
+on `ubuntu-24.04-arm`. Each builds the iroh helper natively for its own arch (never
+cross-compiled), fetches its own pinned AppImage runtime, and makes the `.deb`, the `.rpm` and
+the AppImage under `SOURCE_DATE_EPOCH` = the commit's time. The manifest job receives both
+trees and runs `release-manifest.mjs` once with both lists, so `SHA256SUMS`, the manifest and the
+draft release cover all six files.
+
 ## Consequences
 
 - F21's fuse half is closed for packaged builds, and the fuses are verified on every build.
@@ -557,6 +621,11 @@ as a dry run. The Windows and macOS jobs stay in the GitLab file for later.
 
 1. App id `xyz.sovit.nutflix` and the `.deb` maintainer `SovTech <git@sovit.xyz>`. Keep them?
    **Answered 2026-10-02 (the maintainer): keep both.**
+   **Revised 2026-11-26 (the maintainer):** the app id is `pro.sovtech.Nutflix` (the reverse of
+   sovtech.pro, the form Flathub and AppStream expect) and the maintainer `SovTech
+   <git@sovtech.pro>` (the UID planned for the package-repository signing key), for the `.deb`'s
+   `Maintainer` and the `.rpm`'s `Packager`. userData stays `~/.config/Nutflix` (Electron keys it on the product name), so
+   nothing migrates; the desktop entry and icon are renamed (§5, "Desktop integration").
 2. Brand icons: none exist in the repo. The installers currently show Electron's default icon.
    **Answered 2026-10-02 (the maintainer): a neutral placeholder icon** for 0.1.0, replaceable later
    without other changes.
@@ -620,6 +689,7 @@ as a dry run. The Windows and macOS jobs stay in the GitLab file for later.
     **Answered 2026-10-02 (the maintainer): accept the setuid helper.** It is what Chromium-based apps
     ship; the sandbox starts on Ubuntu 24.04 with no maintainer script, and an AppArmor profile
     would cover only AppArmor systems while adding a root postinst.
+    **Note 2026-11-26:** the `.rpm` installs the same helper the same way (§7).
 11. **`--enable-features` / `--disable-features` in a packaged build** (cross-lane review,
     round 4). Some Chromium features are sandbox layers (the network service's sandbox, for
     one), so `--disable-features=…` or `--enable-features=NetworkServiceInProcess…` on an

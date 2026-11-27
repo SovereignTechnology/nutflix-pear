@@ -2,12 +2,15 @@
  * The Electron Forge configuration (issue #6, ADR 0017), registered by `cli.ts` for the staged
  * app directory (Forge's virtual-config API) — the staged tree carries no config of its own.
  *
- * Targets (Cameron, 2026-09-24):
+ * Targets (Cameron, 2026-09-24; the .rpm added 2026-11-26):
  *   win32   Squirrel.Windows `Setup.exe`   @electron-forge/maker-squirrel   (Windows host or wine+mono)
  *   darwin  `.dmg`                          ./maker-dmg.ts (ditto + hdiutil) (macOS host)
- *   linux   `.deb`                          @electron-forge/maker-deb        (dpkg + fakeroot)
+ *   linux   `.deb`                          ./maker-linux.ts over @electron-forge/maker-deb (dpkg + fakeroot)
  *   linux   `.AppImage`                     ./maker-appimage.ts (pinned runtime + mksquashfs)
+ *   linux   `.rpm`                          ./maker-linux.ts over @electron-forge/maker-rpm (rpmbuild)
  *   pear:// the same artifacts, staged into a Hyperdrive by the Pear CLI (ADR 0017; not here)
+ * Every Linux package installs the same desktop entry, AppStream metainfo and icon, named after
+ * the app id (freedesktop.ts).
  *
  * Nothing is signed by the platform (Gatekeeper / SmartScreen warnings accepted for now); the
  * release is signed by the SovTech Nostr key over a manifest of sha256 sums
@@ -17,23 +20,36 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import MakerDeb from '@electron-forge/maker-deb';
 import MakerSquirrel from '@electron-forge/maker-squirrel';
 import type { ForgeConfig, ForgeConfigMaker } from '@electron-forge/shared-types';
 
+import { changelogReleases, metainfoXml, type FreedesktopFiles } from './freedesktop.ts';
 import { assertAppFuses, flipAppFuses, packagedBinary, type TargetPlatform } from './fuses.ts';
 import { APP, UNPACKED_DIRS } from './identity.ts';
 import { assertLayout } from './layout.ts';
 import { MakerAppImage } from './maker-appimage.ts';
 import { MakerDmg } from './maker-dmg.ts';
+import { LinuxDebMaker, LinuxRpmMaker } from './maker-linux.ts';
 
-export const TARGETS = ['squirrel', 'dmg', 'deb', 'appimage'] as const;
+export const TARGETS = ['squirrel', 'dmg', 'deb', 'appimage', 'rpm'] as const;
 
 /**
  * The Linux desktop icon (512×512 PNG): a neutral PLACEHOLDER until a brand icon exists
- * (Cameron, 2026-10-02, ADR 0017 Q2). Replacing this file is the whole change.
+ * (Cameron, 2026-10-02, ADR 0017 Q2). Replacing this file is the whole change. Every Linux
+ * package installs it as `hicolor/512x512/apps/<app id>.png` (freedesktop.ts).
  */
 export const LINUX_ICON = fileURLToPath(new URL('./icons/nutflix.png', import.meta.url));
+
+/** The repository's CHANGELOG.md: its dated releases are the metainfo's `<releases>`. */
+export const CHANGELOG = fileURLToPath(new URL('../../../CHANGELOG.md', import.meta.url));
+
+/** The metainfo and icon every Linux maker installs (freedesktop.ts). */
+export function freedesktopFiles(changelog: string = CHANGELOG): FreedesktopFiles {
+  return {
+    metainfo: metainfoXml(changelogReleases(readFileSync(changelog, 'utf8'))),
+    icon: LINUX_ICON,
+  };
+}
 export type Target = (typeof TARGETS)[number];
 
 export interface ForgeConfigOptions {
@@ -68,6 +84,7 @@ export function makers(o: ForgeConfigOptions): ForgeConfigMaker[] {
   if (!VERSION.test(o.version))
     throw new Error(`not a plain version: ${JSON.stringify(o.version)}`);
   const want = new Set<Target>(o.targets ?? TARGETS);
+  const freedesktop = freedesktopFiles();
   const all: Record<Target, ForgeConfigMaker> = {
     squirrel: new MakerSquirrel({
       name: APP.name,
@@ -79,36 +96,50 @@ export function makers(o: ForgeConfigOptions): ForgeConfigMaker[] {
       noMsi: true,
     }),
     dmg: new MakerDmg({ productName: APP.productName }),
-    deb: new MakerDeb({
-      options: {
-        name: APP.name,
-        productName: APP.productName,
-        genericName: 'Video player',
-        description: APP.description,
-        productDescription: `${APP.description}.`,
-        section: 'video',
-        priority: 'optional',
-        maintainer: APP.maintainer,
-        bin: APP.name,
-        icon: LINUX_ICON,
-        categories: ['AudioVideo', 'Video', 'Network'],
-        // Studio uploads transcode with the system ffmpeg (worker/ffmpeg.ts).
-        recommends: ['ffmpeg'],
-        // No maintainer scripts. Chromium's sandbox starts on Ubuntu ≥ 24 because the package
-        // itself ships `/usr/lib/nutflix/chrome-sandbox` setuid root (4755):
-        // electron-installer-common sets that mode while staging, and dpkg installs it as
-        // packaged. That SUID helper is Chromium's standard Linux layout, and an open question
-        // for Cameron (ADR 0017 §7). Never --no-sandbox.
+    deb: new LinuxDebMaker(
+      {
+        options: {
+          name: APP.name,
+          description: APP.description,
+          productDescription: `${APP.description}.`,
+          section: 'video',
+          priority: 'optional',
+          maintainer: APP.maintainer,
+          homepage: APP.homepage,
+          bin: APP.name,
+          // Studio uploads transcode with the system ffmpeg (worker/ffmpeg.ts).
+          recommends: ['ffmpeg'],
+          // No maintainer scripts. Chromium's sandbox starts on Ubuntu ≥ 24 because the package
+          // itself ships `/usr/lib/nutflix/chrome-sandbox` setuid root (4755):
+          // electron-installer-common sets that mode while staging, and dpkg installs it as
+          // packaged. That SUID helper is Chromium's standard Linux layout, and an open question
+          // for Cameron (ADR 0017 §7). Never --no-sandbox. The desktop entry, the metainfo and
+          // the icon come from freedesktop.ts, not from these options (maker-linux.ts).
+        },
       },
-    }),
+      freedesktop,
+    ),
     appimage: new MakerAppImage({
       runtimeDir: o.appImageRuntimeDir,
       executableName: APP.name,
       productName: APP.productName,
-      comment: APP.description,
-      categories: ['AudioVideo', 'Video', 'Network'],
-      icon: LINUX_ICON,
+      freedesktop,
     }),
+    // The same package as the .deb for rpm-based distributions: the same files, chrome-sandbox
+    // setuid root by file mode with no scriptlet, ffmpeg recommended (maker-linux.ts `rpmSpec`).
+    rpm: new LinuxRpmMaker(
+      {
+        options: {
+          name: APP.name,
+          description: APP.description,
+          productDescription: `${APP.description}.`,
+          license: APP.license,
+          homepage: APP.homepage,
+          bin: APP.name,
+        },
+      },
+      freedesktop,
+    ),
   };
   return TARGETS.filter((t) => want.has(t)).map((t) => all[t]);
 }

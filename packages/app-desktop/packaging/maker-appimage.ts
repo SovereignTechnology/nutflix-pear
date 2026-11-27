@@ -7,10 +7,10 @@
  *     (`continuous`) at build time, unverified, and pins Forge 7's maker-base, whose tree carries
  *     advisories (critical `tar`, `extract-zip`) the CI advisory gate refuses.
  * What an AppImage is: the type-2 runtime (a static ELF) followed by a squashfs image of an AppDir.
- * This maker builds the AppDir (`AppRun` → the Electron binary itself, no wrapper script; a
- * desktop entry), squashes it with the system `mksquashfs`, and prepends the runtime — a runtime
- * file placed by hand whose sha256 must equal the pin below, or the build fails. Nothing is
- * downloaded here.
+ * This maker builds the AppDir (`AppRun` → the Electron binary itself, no wrapper script; the
+ * desktop entry, AppStream metainfo and icon of freedesktop.ts, named after the app id),
+ * squashes it with the system `mksquashfs`, and prepends the runtime — a runtime file placed by
+ * hand whose sha256 must equal the pin below, or the build fails. Nothing is downloaded here.
  */
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -25,11 +25,19 @@ import {
   chmodSync,
   copyFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { MakerBase, type MakerOptions } from '@electron-forge/maker-base';
 import type { ForgePlatform } from '@electron-forge/shared-types';
+
+import {
+  DESKTOP_FILE,
+  ICON_FILE,
+  SHARE_PATHS,
+  desktopEntry,
+  type FreedesktopFiles,
+} from './freedesktop.ts';
 
 const run = promisify(execFile);
 
@@ -64,10 +72,8 @@ export interface MakerAppImageConfig {
   /** Binary name inside the packaged app (packager's `executableName`). */
   readonly executableName: string;
   readonly productName: string;
-  readonly comment: string;
-  readonly categories: readonly string[];
-  /** A PNG icon; optional (the repo has no brand icon yet — ADR 0017). */
-  readonly icon?: string;
+  /** The AppStream metainfo and the icon (freedesktop.ts); the desktop entry is made here. */
+  readonly freedesktop: FreedesktopFiles;
   /** Tests only: other pins (e.g. a fixture runtime). */
   readonly runtimes?: Readonly<Record<string, RuntimePin>>;
 }
@@ -99,29 +105,12 @@ export function pinnedRuntime(
   return bytes;
 }
 
-/** The AppDir's desktop entry. `Exec` is the binary itself: no wrapper, no extra switches. */
-export function desktopEntry(c: {
-  productName: string;
-  executableName: string;
-  comment: string;
-  categories: readonly string[];
-  version: string;
-  icon: boolean;
-}): string {
-  const lines = [
-    '[Desktop Entry]',
-    'Type=Application',
-    `Name=${c.productName}`,
-    `Comment=${c.comment}`,
-    `Exec=${c.executableName} %U`,
-    ...(c.icon ? [`Icon=${c.executableName}`] : []),
-    'Terminal=false',
-    `Categories=${c.categories.map((x) => `${x};`).join('')}`,
-    `X-AppImage-Version=${c.version}`,
-  ];
-  for (const l of lines)
-    if (/[\r\n]/.test(l)) throw new AppImageError('desktop entry values must be single lines');
-  return `${lines.join('\n')}\n`;
+/**
+ * The AppDir's desktop entry: freedesktop.ts's, plus the version AppImage tools read. `Exec` is
+ * the binary itself: no wrapper, no extra switches.
+ */
+export function appImageDesktopEntry(version: string): string {
+  return desktopEntry([`X-AppImage-Version=${version}`]);
 }
 
 /** `mksquashfs` argv: root-owned, no xattrs, fixed timestamps when SOURCE_DATE_EPOCH is set. */
@@ -166,14 +155,29 @@ export class MakerAppImage extends MakerBase<MakerAppImageConfig> {
     // Modes are kept (the Electron binary, chrome-sandbox, the unpacked `bare`).
     cpSync(dir, lib, { recursive: true, verbatimSymlinks: true });
     symlinkSync(join('usr', 'lib', c.executableName, c.executableName), join(appDir, 'AppRun'));
-    writeFileSync(
-      join(appDir, `${c.executableName}.desktop`),
-      desktopEntry({ ...c, version, icon: c.icon !== undefined }),
-    );
-    if (c.icon !== undefined) {
-      copyFileSync(c.icon, join(appDir, `${c.executableName}.png`));
-      symlinkSync(`${c.executableName}.png`, join(appDir, '.DirIcon'));
-    }
+    // The AppImage spec's top-level desktop entry and icon, named after the app id, and the same
+    // files where desktop integration and AppStream tools look inside `usr/share`.
+    const desktop = appImageDesktopEntry(version);
+    writeFileSync(join(appDir, DESKTOP_FILE), desktop);
+    copyFileSync(c.freedesktop.icon, join(appDir, ICON_FILE));
+    symlinkSync(ICON_FILE, join(appDir, '.DirIcon'));
+    const share = (rel: string): string => {
+      const f = join(appDir, 'usr', rel);
+      mkdirSync(dirname(f), { recursive: true, mode: 0o755 });
+      return f;
+    };
+    writeFileSync(share(SHARE_PATHS.desktop), desktop);
+    writeFileSync(share(SHARE_PATHS.metainfo), c.freedesktop.metainfo);
+    copyFileSync(c.freedesktop.icon, share(SHARE_PATHS.icon));
+    // Written and copied files follow the umask and the checkout's modes: 0644 whatever they were.
+    for (const f of [
+      join(appDir, DESKTOP_FILE),
+      join(appDir, ICON_FILE),
+      share(SHARE_PATHS.desktop),
+      share(SHARE_PATHS.metainfo),
+      share(SHARE_PATHS.icon),
+    ])
+      chmodSync(f, 0o644);
     // The times go as flags only: mksquashfs >= 4.6 also reads SOURCE_DATE_EPOCH and refuses it
     // together with -mkfs-time/-all-time; older ones ignore it. Same image either way.
     const { SOURCE_DATE_EPOCH: epoch, ...env } = process.env;
