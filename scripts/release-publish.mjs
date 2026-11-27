@@ -23,9 +23,10 @@
 // Usage (after `npm run build`: it loads @sovit/core's built signer):
 //   node scripts/release-publish.mjs <release-event.unsigned.json | release-event.json>
 //        --dir <dir with the downloaded artifacts> [--d <release>] [--dry-run]
-//   `--d nfx` signs NFX's own release notice (its nfxd and nfx-package tarball) instead of the
-//   desktop app's (`nutflix-desktop`, the default), and `--d nutflix-runtime` that app's, which
-//   goes to its own three relays (`relaysFor`); no other `d` is accepted.
+//   `--d nutflixd` signs the NFX node's release notice (its nutflixd and nutflix-package tarball;
+//   `--d nfx` for a release up to 0.1.4, when the node was nfxd) instead of the desktop app's
+//   (`nutflix-desktop`, the default), and `--d nutflix-runtime` that app's, which goes to its own
+//   three relays (`relaysFor`); no other `d` is accepted.
 import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import process from 'node:process';

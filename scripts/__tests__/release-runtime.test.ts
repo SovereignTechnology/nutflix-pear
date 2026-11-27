@@ -130,6 +130,9 @@ function writeFive(dir: string): string[] {
 const sign = (t: Ev, sk: Uint8Array): Ev =>
   finalizeEvent({ kind: t.kind, created_at: t.created_at, tags: t.tags, content: t.content }, sk);
 
+/** Every release that is not nutflix-runtime's: the desktop app, and the NFX node under both its names. */
+const OTHERS = ['nutflix-desktop', 'nfx', 'nutflixd'] as const;
+
 describe('the existing releases do not change', () => {
   // Written out from the code as it was before nutflix-runtime was added.
   const A = { name: 'Nutflix-0.1.0-x64.AppImage', sha256: 'a'.repeat(64), bytes: 10 };
@@ -155,7 +158,7 @@ describe('the existing releases do not change', () => {
     sig: '',
   });
 
-  it.each(['nutflix-desktop', 'nfx'])('%s: the same event, byte for byte', async (d) => {
+  it.each(OTHERS)('%s: the same event, byte for byte', async (d) => {
     const m = await load<Manifest>('release-manifest.mjs');
     const got = m.unsignedEvent({
       artifacts: [B, A],
@@ -167,7 +170,7 @@ describe('the existing releases do not change', () => {
     expect(JSON.stringify(got)).toBe(JSON.stringify(event(d)));
   });
 
-  it.each(['nutflix-desktop', 'nfx'])('%s refuses a versioned link', async (d) => {
+  it.each(OTHERS)('%s refuses a versioned link', async (d) => {
     const m = await load<Manifest>('release-manifest.mjs');
     expect(() =>
       m.unsignedEvent({
@@ -186,9 +189,10 @@ describe('the existing releases do not change', () => {
     expect(p.RELEASE_RELAYS).toEqual(before);
     expect(p.relaysFor('nutflix-desktop')).toBe(p.RELEASE_RELAYS);
     expect(p.relaysFor('nfx')).toBe(p.RELEASE_RELAYS);
+    expect(p.relaysFor('nutflixd')).toBe(p.RELEASE_RELAYS);
   });
 
-  it.each(['nutflix-desktop', 'nfx'])('%s still takes a regular file only', async (d) => {
+  it.each(OTHERS)('%s still takes a regular file only', async (d) => {
     const v = await load<Verify>('release-verify.mjs');
     const sk = generateSecretKey();
     const name = 'Nutflix-0.1.0-x64.AppImage';
@@ -205,7 +209,7 @@ describe('the existing releases do not change', () => {
     ).rejects.toThrow(/not a regular file/);
   });
 
-  it.each(['nutflix-desktop', 'nfx'])('%s publishes to its old relays', async (d) => {
+  it.each(OTHERS)('%s publishes to its old relays', async (d) => {
     const p = await load<Publish>('release-publish.mjs');
     const m = await load<Manifest>('release-manifest.mjs');
     const sk = generateSecretKey();
@@ -355,8 +359,7 @@ describe('a nutflix-runtime notice', () => {
     const c = await load<Verify>('release-verify.mjs');
     const sk = generateSecretKey();
     const ev = sign(m.unsignedEvent(input()), sk);
-    for (const d of ['nutflix-desktop', 'nfx'])
-      expect(() => c.checkEvent(ev, getPublicKey(sk), d)).toThrow(/not a /);
+    for (const d of OTHERS) expect(() => c.checkEvent(ev, getPublicKey(sk), d)).toThrow(/not a /);
     const nfx = sign(
       m.unsignedEvent({
         artifacts: [{ name: 'nfx.tar.gz', sha256: 'a'.repeat(64), bytes: 1 }],

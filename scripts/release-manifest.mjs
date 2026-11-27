@@ -71,12 +71,18 @@ export const RELEASE_NOTICE_KIND = 30071;
 export const RELEASE_D_TAG = 'nutflix-desktop';
 /**
  * Every release notice the SovTech key signs with these scripts, by its `d`: the desktop app,
- * NFX's own releases (its nfxd and nfx-package tarball, 2026-11-06), and nutflix-runtime. The verify
- * and publish scripts take one of these with `--d` (default the desktop's); any other `d` is
- * refused, and a notice for one product never verifies as another's.
+ * the NFX node's releases, and nutflix-runtime. The verify and publish scripts take one of these
+ * with `--d` (default the desktop's); any other `d` is refused, and a notice for one product never
+ * verifies as another's.
+ *
+ * The node has two: `nutflixd` from its 0.1.5 (nutflixd and nutflix-package, in
+ * nutflixd-<version>-linux-x64.tar.gz), and `nfx` up to 0.1.4, when the node was nfxd and its
+ * tarball nfx-<version>-linux-x64.tar.gz (2026-11-06). Both stay, so a notice already published
+ * still verifies, and neither verifies as the other.
  */
 export const RUNTIME_D_TAG = 'nutflix-runtime';
-export const RELEASE_D_TAGS = Object.freeze([RELEASE_D_TAG, 'nfx', RUNTIME_D_TAG]);
+export const NODE_D_TAG = 'nutflixd';
+export const RELEASE_D_TAGS = Object.freeze([RELEASE_D_TAG, 'nfx', NODE_D_TAG, RUNTIME_D_TAG]);
 /** nutflix-runtime's five targets, by the name a notice gives each (its `artifactName`). */
 export const RUNTIME_ARTIFACT_NAMES = Object.freeze([
   'Nutflix-darwin-arm64.app',

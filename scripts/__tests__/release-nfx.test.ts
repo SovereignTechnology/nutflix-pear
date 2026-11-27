@@ -66,10 +66,15 @@ function sign(t: Unsigned): { ev: unknown; pubkey: string } {
 }
 
 describe('the NFX release notice', () => {
-  it('the allow-list is the desktop app, NFX and nutflix-runtime, the desktop the default', async () => {
+  it('the allow-list is the desktop app, the NFX node (two names) and nutflix-runtime, the desktop the default', async () => {
     const m = await load<Manifest>('release-manifest.mjs');
     expect(m.RELEASE_D_TAG).toBe('nutflix-desktop');
-    expect([...m.RELEASE_D_TAGS]).toEqual(['nutflix-desktop', 'nfx', 'nutflix-runtime']);
+    expect([...m.RELEASE_D_TAGS]).toEqual([
+      'nutflix-desktop',
+      'nfx',
+      'nutflixd',
+      'nutflix-runtime',
+    ]);
   });
 
   it('release-template builds an nfx notice that verifies with --d nfx, file for file', async () => {
@@ -131,6 +136,38 @@ describe('the NFX release notice', () => {
     await expect(
       t.templateFor([tarball], { d: 'other', version: '0.1.0', commit: COMMIT, createdAt: 1 }),
     ).rejects.toThrow(/--d takes one of/);
+  });
+
+  // From its 0.1.5 the node is nutflixd, its tarball nutflixd-<version>-linux-x64.tar.gz and its
+  // notice d = nutflixd. A notice signed as `nfx` (0.1.4 and earlier) still verifies as `nfx`.
+  it('a nutflixd notice verifies with --d nutflixd, and never as nfx or the other way round', async () => {
+    const t = await load<Template>('release-template.mjs');
+    const v = await load<Verify>('release-verify.mjs');
+    const node = join(dir.dir, 'rel', 'nutflixd-0.1.5-linux-x64.tar.gz');
+    writeFileSync(node, 'the bytes of a later tarball');
+    const o = { version: '0.1.5', commit: COMMIT, createdAt: 1_795_000_000 };
+    const unsigned = await t.templateFor([node], { d: 'nutflixd', ...o });
+    expect(unsigned.tags.find((x) => x[0] === 'd')).toEqual(['d', 'nutflixd']);
+    const { ev, pubkey } = sign({ ...unsigned, pubkey: '' });
+    const r = await v.verifyRelease(ev, { files: [node], trustedPubkey: pubkey, d: 'nutflixd' });
+    expect(r).toMatchObject({ version: '0.1.5', d: 'nutflixd' });
+    expect(r.files.map((f) => f.name)).toEqual(['nutflixd-0.1.5-linux-x64.tar.gz']);
+    await expect(
+      v.verifyRelease(ev, { files: [node], trustedPubkey: pubkey, d: 'nfx' }),
+    ).rejects.toThrow(/not a nfx release \(d = "nutflixd"\)/);
+    await expect(v.verifyRelease(ev, { files: [node], trustedPubkey: pubkey })).rejects.toThrow(
+      /not a nutflix-desktop release \(d = "nutflixd"\)/,
+    );
+
+    const old = await t.templateFor([tarball], { d: 'nfx', ...o, version: '0.1.4' });
+    const signedOld = sign({ ...old, pubkey: '' });
+    await expect(
+      v.verifyRelease(signedOld.ev, {
+        files: [tarball],
+        trustedPubkey: signedOld.pubkey,
+        d: 'nutflixd',
+      }),
+    ).rejects.toThrow(/not a nutflixd release \(d = "nfx"\)/);
   });
 
   it('release-template refuses a short commit, a bad version, a missing file, and an existing output', () => {
