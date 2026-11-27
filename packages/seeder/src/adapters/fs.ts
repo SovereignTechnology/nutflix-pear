@@ -12,6 +12,7 @@ export interface SeederFs {
   readFile(path: string): Promise<Uint8Array>;
   writeFile(path: string, data: Uint8Array | string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  readdir(path: string): Promise<string[]>;
   unlink(path: string): Promise<void>;
   mkdir(path: string, opts?: { readonly recursive?: boolean }): Promise<void>;
   /** Resolves `null` when the path does not exist. */
