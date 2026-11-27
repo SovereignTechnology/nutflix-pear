@@ -1,6 +1,6 @@
 # Nutflix
 
-> **Source of truth:** [`nostr://npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx/git.sovit.xyz/nutflix-pear`](https://gitworkshop.dev/npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx/git.sovit.xyz/nutflix-pear) — issues and pull requests live there. This GitHub repository is a mirror; push to the Nostr remote, not here.
+> **Canonical copy:** [`nostr://npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx/git.sovit.xyz/nutflix-pear`](https://gitworkshop.dev/npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx/git.sovit.xyz/nutflix-pear), on Nostr (NIP-34). Issues are taken there and on GitHub; pull requests are on GitHub, where CI runs. Both carry the same `main`.
 
 [![CI](https://github.com/SovereignTechnology/nutflix-pear/actions/workflows/ci.yml/badge.svg)](https://github.com/SovereignTechnology/nutflix-pear/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/SovereignTechnology/nutflix-pear)](https://github.com/SovereignTechnology/nutflix-pear/releases/latest)
@@ -16,7 +16,8 @@ Play.
 
 This repository, `nutflix-pear`, is the JavaScript implementation: an Electron desktop app with a
 [Bare](https://github.com/holepunchto/bare) worker, plus the seeder and gateway daemons. A Rust
-implementation built on iroh lives in [nfx](https://github.com/SovereignTechnology/nfx).
+implementation built on iroh lives in [nutflix](https://github.com/SovereignTechnology/nutflix)
+(formerly nfx).
 
 > **Status: experimental.** Desktop 0.1.4 for Linux x86_64 was released on 2026-11-26. It is a
 > demo, not a product you should trust with money you cannot afford to lose. Read
@@ -84,9 +85,10 @@ Settings › NFX network.
    unpaid window of blocks ahead of the other, which bounds what a cheat can gain.
 
 That is the protocol the app speaks for paid videos. For free videos it also speaks
-[NFX](https://github.com/SovereignTechnology/nfx), the protocol suite nfx speaks, so the two share
-one network ([ADR 0020](docs/decisions/0020-speak-nfx.md)): over iroh through the bundled helper
-with nfxd and other apps ([ADR 0021](docs/decisions/0021-speak-iroh-through-a-helper.md)), over
+[NFX](https://github.com/SovereignTechnology/nutflix), the protocol suite nutflix speaks, so the
+two share one network ([ADR 0020](docs/decisions/0020-speak-nfx.md)): over iroh through the
+bundled helper with nutflixd (`nfxd` before its 0.1.5, and at the commits this repository's CI
+pins) and other apps ([ADR 0021](docs/decisions/0021-speak-iroh-through-a-helper.md)), over
 HyperDHT between Nutflix apps, and over WebRTC with web browsers, signaled over Nostr
 ([ADR 0023](docs/decisions/0023-webrtc-in-the-helper.md)). The protocol above stays as it is.
 
@@ -101,7 +103,7 @@ These are the things you would otherwise find out by trying them. Release 0.1.4:
   default, on `nfx:testnet:1`'s public scoped relay `wss://relay.nutflix.xyz` (where videos are
   listed and seeders announce themselves) and its iroh relay `https://iroh.nutflix.xyz/` (which
   connects peers behind home routers; its operator, limits and what it can see are in
-  [nfx's testnet page](https://github.com/SovereignTechnology/nfx/blob/main/docs/nfx/testnet.md)).
+  [nutflix's testnet page](https://github.com/SovereignTechnology/nutflix/blob/main/docs/nfx/testnet.md)).
   Both see your IP address. Switch NFX off, or replace or remove either relay, in Settings › NFX
   network; a list you saved is never overwritten, and a setting this version cannot read turns NFX
   off rather than on. A play waits for a seeder's next beacon, up to a minute, when the Watch page
@@ -116,16 +118,17 @@ These are the things you would otherwise find out by trying them. Release 0.1.4:
 - **Not independently audited.** The security review was done in-house with AI assistance. The
   repository has an adversary test suite and a [fuzz workflow](.github/workflows/fuzz.yml), but no
   outside party has reviewed it.
-- **Some screens are unfinished.** The "Your tags" tab on Home is always empty, the Zap button does
-  nothing, and nobody's NIP-05 name is ever looked up, so there are no "verified" badges. A creator
-  who is not the seeder is paid with a Nostr nutzap, and the app has no code to find and redeem
-  incoming ones.
+- **Some screens are unfinished.** The "Your tags" tab on Home is always empty, the Nutzap button
+  opens its sheet but every send is refused, and nobody's NIP-05 name is ever looked up, so there
+  are no "verified" badges. A creator who is not the seeder is paid with a Nostr nutzap, and the
+  app has no code to find and redeem incoming ones.
 - **Linux x86_64 only.** There is no Windows, macOS or arm64 build, no automatic update, and no
   operating-system code signing. You verify downloads yourself ([below](#verify-a-download)).
 - **The web client plays free NFX videos only.** `packages/app-web` is the client at
   https://web.nutflix.xyz/ ([ADR 0022](docs/decisions/0022-a-web-client-for-nfx.md)); paid videos,
-  the wallet and Studio are in the desktop app alone. The web portal of the early plans, with
-  Hypercore in the page, is not part of this repository.
+  the wallet and Studio are in the desktop app alone. The site is built and tested here, and its
+  deployment lives outside this repository. The web portal of the early plans, with Hypercore in
+  the page, is not part of this repository.
 
 ## Install
 
@@ -156,7 +159,7 @@ integrity rests on two things published with every release:
   `release-event.json` and signed by the SovTech key
   `npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx`.
 
-To check the signature, use a checkout of this repository (Node 22.18 or newer; see
+To check the signature, use a checkout of this repository (Node 22.22.2 or newer; see
 [Run from source](#run-from-source)):
 
 ```sh
@@ -215,7 +218,7 @@ the AGPL's section 13 applies: users who interact with a modified version are en
 | `packages/gateway`     | `@sovit/gateway`     | Seeder plus a WebSocket bridge and Blossom HTTP                                    |
 | `packages/ui`          | `@sovit/ui`          | React design system and screens; talks only to the `NetworkAdapter` contract       |
 | `packages/app-desktop` | `@sovit/app-desktop` | The Electron app: main process, host process, Bare worker, packaging               |
-| `packages/app-web`     | `@sovit/app-web`     | Web client for NFX videos (ADR 0022); in progress, not shipped                     |
+| `packages/app-web`     | `@sovit/app-web`     | Web client for NFX videos (ADR 0022), deployed at web.nutflix.xyz                  |
 
 The packages are internal to this workspace and are not published to npm. "Nutflix" is the brand
 name. The package scope is `@sovit/*` and the wire protocol is `pay/1`, but a few persisted

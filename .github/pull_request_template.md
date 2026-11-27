@@ -4,7 +4,7 @@
 
 ## Checklist
 
-- [ ] CI is green (`verify`, `test`, `e2e`, `package`).
+- [ ] CI is green (`verify`, `iroh-helper`, `rust-advisories`, `rust-forward`, `test`, `e2e`, `package`).
 - [ ] Behaviour changes come with a test (write the failing test first in the locked directories).
 - [ ] If this touches the locked directories (see SECURITY.md): nothing logs, and imports stay on the allow-list (`npm run check:locked`).
 - [ ] If this touches `packages/core/src/contracts/`: `CONTRACTS_VERSION` is bumped and an ADR explains why.

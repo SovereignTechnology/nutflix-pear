@@ -27,8 +27,9 @@ libraries (`npm run check:locked`, [SECURITY.md](../../SECURITY.md#locked-direct
 `@sovit/core/nfx` (ADR 0022) are the relay data layer and the NFX wire formats alone, for a page
 that must not carry the wallet (the web client); `@sovit/core/media/node` is the Node ffmpeg
 runner. The package declares `"sideEffects": false`: no module does anything when imported.
-`nfx/` still reaches Cashu's library for one curve-point check (`nfx/manifest.ts`) and
-`sodium-universal` for NFX-12's `bind` signature (`nfx/beacon.ts`).
+`nfx/` takes its curve and hash work from `@noble/curves` and `@noble/hashes` directly
+(`nfx/manifest.ts`, `nfx/beacon.ts`, `nfx/util.ts`), so neither Cashu's library nor sodium reaches
+a page.
 
 Build with `npm run build` at the repository root. Tests sit in `__tests__` directories and run
 with `npm test`.

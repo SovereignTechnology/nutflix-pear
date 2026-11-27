@@ -4,7 +4,7 @@ Produced by a read-only design pass over the repo, `node_modules` and the dev la
 and accepted by the orchestrator. **(v)** = verified against code or by running something.
 Binding inputs: ADR 0003 (Electron + `pear-runtime` Bare worker, not `pear-electron`), contracts
 v4 (ADR 0007), `docs/archive/reviews/2026-09-23-pre-push-l5-v4.md` SE-1…SE-5, the "Shell contract the
-screens expect" section of `docs/status.md`.
+screens expect" section of `docs/status.md` (now in `docs/archive/status-2026-10-04.md`).
 
 ## Orchestrator decisions
 

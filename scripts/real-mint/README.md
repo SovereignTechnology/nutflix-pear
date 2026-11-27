@@ -25,6 +25,11 @@ for m in 3399 3397; do
 done
 ```
 
+Six more suites read `NUTFLIX_REAL_MINT_URL`: the wallet journal and NUT-13 suites in
+`packages/core/src/wallet/__tests__/`, the recovery, top-up and owed suites in
+`packages/app-desktop/src/host/__tests__/`, and
+`packages/seeder/src/__tests__/owed.integration.test.ts`.
+
 What they cover: the `pay1` NUT-10 tag (accepted, lock still enforced); DLEQ on real signatures;
 the whole pay/1 money path with real fees; three seeders and a viewer over real replication; a
 creator set re-used at another seeder (refused by the binding); a replayed PAY (double-spend,

@@ -6,7 +6,9 @@ sessions. It is not an independent audit.**
 
 **Current state, as of desktop 0.1.0 (tag `desktop-v0.1.0`, 2026-10-05).** Each finding is fixed,
 verified against a real mint implementation, or recorded as an accepted residual; section 0 and
-its sub-sections 0a to 0d are the current status of every one. Read those first.
+its sub-sections 0a to 0d are the current status of every one. Read those first. Nothing added
+after 0.1.0 (NFX, the iroh helper, WebRTC, the NFX web client in `packages/app-web`) is covered
+here.
 
 **How the sections relate.** Sections 1 to 3 and 5 are the original review of 2026-09-23, kept as
 written: where one of them describes a finding in the present tense and section 0 says it is
@@ -45,9 +47,9 @@ where noted.
 | F7 | **Fixed** | `studio.upload` asks with a native dialog naming the file main resolved from the token |
 | F8 | **Fixed** | The money gate is a native dialog (`dialog.showMessageBox`, Cancel default) built from guarded args; `seeder.melt` cross-checks the invoice amount; settings patches that add mints or turn on auto top-up are asked about too |
 | F9 | **Fixed** | The seeder records each `PRICE` boundary per session × core and verifies a PAY at the price in force for its blocks; `setCorePolicy` now announces per-core `PRICE` |
-| F10 | **Fixed (seeder daemon)** (`stage-3/seeder-runtime`) | F12's `restorePending` puts the unflushed secrets back in the seen set; the daemon appends every accepted secret to `wallet/seen.jsonl` and restores the newest 250 000 at start (ADR 0011 §3). Gateway and desktop: with their runtimes |
+| F10 | **Fixed (seeder daemon)** (`stage-3/seeder-runtime`) | F12's `restorePending` puts the unflushed secrets back in the seen set; the daemon appends every accepted secret to `wallet/seen.jsonl` and restores the newest 250 000 at start (ADR 0011 §3). The gateway uses the same runtime; the desktop worker persists its own (§6) |
 | F11 | **Fixed (engine)**; wired in the seeder daemon | `checkSpent` dep: a spent creator set is a double-spend (ban, no nutzap) — checked once, before the first nutzap; `CashuWallet.checkSpent` provides it |
-| F12 | **Fixed (seeder daemon)** (`stage-3/seeder-runtime`) | `persistPending` (synchronous, before the ACK) + `restorePending`; the daemon writes `wallet/pending.json` synchronously and atomically (fsync) and a new runtime redeems it — integration-tested with a crash before the flush. Gateway and desktop: with their runtimes |
+| F12 | **Fixed (seeder daemon)** (`stage-3/seeder-runtime`) | `persistPending` (synchronous, before the ACK) + `restorePending`; the daemon appends every accepted PAY to `wallet/pending.jsonl` (fsynced before the ACK; an older `pending.json` is migrated at start) and a new runtime redeems it — integration-tested with a crash before the flush. The gateway uses the same runtime; the desktop worker has its own journal (§6) |
 | F13 | **Fixed** | Peer identifiers in log fields become a per-process alias (`peer#17`) |
 | F14 | **Fixed** | `trustProxy` reads the rightmost `X-Forwarded-For` entry |
 | F15 | **Fixed** | Uploads over 8 MiB must send `X-SHA-256` (no unauthenticated spooling of large bodies); default MIME allowlist (F3); a per-pubkey byte quota (`blossom.maxBytesPerPubkey`, default 2 GiB since 2026-09-25, `null` = none) on upload, mirror and authenticated `HEAD`, checked before a declared body is spooled, with in-flight bytes held (`stage-3/upload-quota`). Open: whether uploads should default to allow-list-only (decision) |
@@ -82,7 +84,7 @@ seeders, a viewer and real `pay/1` over Hypercore (`packages/gateway/src/__tests
 real-mint-swarm.integration.test.ts`). Both real-mint suites are opt-in
 (`NUTFLIX_REAL_MINT_URL`); `scripts/real-mint/nutshell.sh` starts the mint.
 
-- **F33 — Medium — open: duplicate deliveries cost the viewer more than the price shown.**
+- **F33 — Medium — open at the time (since fixed: see the F33 row in §0): duplicate deliveries cost the viewer more than the price shown.**
   Hypercore can fetch one block from two seeders (a raced request); each seeder counts what it
   sent, and the payer pays each for it (not paying would window-cut the seeder). Measured: 29
   deliveries paid for a 24-block video when three seeders raced unpaced. The desktop credit pool
@@ -594,7 +596,7 @@ hash-addressed images).
 | | Status |
 |---|---|
 | SE-1 | **Fixed** by file tokens (L6-A); residual F7 |
-| SE-2 | **Fixed**: `renderer/coordinator.ts` owns every session; host backstop ≤ 1 unpaused per webContents; `wc-gone` closes all; e2e asserts one open session after Watch→Watch |
+| SE-2 | **Fixed**: `ui/src/shell/coordinator.ts` owns every session; host backstop ≤ 1 unpaused per webContents; `wc-gone` closes all; e2e asserts one open session after Watch→Watch |
 | SE-3 | **Fixed**: Shorts `onPlaybackStart` wired to the coordinator |
 | SE-4 | **Fixed** (`autoTopUpDue` false for `belowSats <= 0`, tested; v5 normative). Since issue #2 top-ups execute with the real wallet (F4); with `--dev-mocks` still only logged |
 | SE-5 | **Fixed**: `unreact` publishes a kind-5 naming only the viewer's own kind-7 ids, never `-` (tested) |
@@ -639,13 +641,13 @@ The follow-ups the review produced. All are done; this is the record of what eac
 
 | Issue title |
 |---|
-| [Done] F33: one seeder per block, credit per seeder window (`stage-3/f33-one-peer`, ADR 0018); restart debts via pay/1 `OWED` (F45); F54 and F57 fixed, tests pending CI |
+| [Done] F33: one seeder per block, credit per seeder window (`stage-3/f33-one-peer`, ADR 0018); restart debts via pay/1 `OWED` (F45); F54 and F57 fixed (CI green 2026-10-02) |
 | [Done] F5: DLEQ off the event loop (Node, and the desktop's Bare worker since `stage-3/residuals`) and batching on per-seeder credit (ADR 0011 §10–§11, ADR 0018) |
 | [Done] Seeder: an append-only pending-PAY journal and a cap that stops serving at `maxPendingPays` (daemon + gateway, ADR 0011 §12; the desktop worker too, cap 1024, `stage-3/worker-journal`) |
 | [Done] F37: the gateway's upstream fetches are paced (ADR 0011 §11) |
 | [Done] F10/F11/F12/F31 hooks in the desktop runtime — the worker's seeder engine persists seen secrets and pending PAYs and asks the host for `checkSpent` / `spentByUs` (ADR 0012) |
 | [Done] F31: a lost mint answer is restored (write-ahead journal + NUT-09, ADR 0014); the desktop journal is sealed and durable, melt change journaled (`stage-3/residuals`) |
-| [Done] NUT-13 seed backup (ADR 0016): a phrase per device, sealed + relay copy, reissue once, `@scure/bip39` in the locked `seed.ts`; restore follows core's resume; end to end on Nutshell and cdk (`stage-3/nut13-core`, `stage-3/nut13-desktop`, integration); F55/F56 fixed, tests pending CI |
+| [Done] NUT-13 seed backup (ADR 0016): a phrase per device, sealed + relay copy, reissue once, `@scure/bip39` in the locked `seed.ts`; restore follows core's resume; end to end on Nutshell and cdk (`stage-3/nut13-core`, `stage-3/nut13-desktop`, integration); F55/F56 fixed (CI green 2026-10-02) |
 | [Done] Pear only (the maintainer, 2026-09-24/25): Studio's third-party Blossom mirroring removed, our manifests name no Blossom server (contracts v6); the gateway's Blossom endpoints stay as a Nostr-signed HTTP face over its Pear seeder; per-pubkey quota default 2 GiB (`stage-3/pear-only`) |
 | [Done] F18: images hash-addressed only by default; thumbnails and avatars in the creator's profile core over Pear (ADR 0015); image reads ask only seeders that said `PRICE { free: true }` (F43) |
 | [Done] F15: per-pubkey upload quota (`blossom.maxBytesPerPubkey`) |

@@ -94,12 +94,13 @@ systemd-creds decrypt --name=seeder-key-passphrase /etc/credstore.encrypted/nutf
 What the daemon keeps under `<dataDir>/wallet/` (0700; every file 0600):
 
 - `proofs.json` — the seeder's ecash, NIP-44 encrypted to the node's key (it opens only with the key file and its passphrase). Inside it is bearer money: let payout move it off the server rather than copying the file around.
-- `pending.json` — PAYs accepted but not yet redeemed or nutzapped (a restart finishes them); its proofs are still locked to the seeder's or the creator's key.
+- `pending.jsonl` — PAYs accepted but not yet redeemed or nutzapped, as an append-only journal (a restart finishes them; an older `pending.json` is migrated at start); its proofs are still locked to the seeder's or the creator's key.
+  **A PAY is only as durable as its journal write.** If a write to this file fails (a full or failing disk), the daemon logs `pending-PAY write failed: accepted payments are in memory only` and keeps serving. That PAY is still acknowledged and is redeemed if the daemon stays up, but it is not in the journal until a compaction next rewrites the file, so a restart before then loses it. A failed write can also leave part of a line behind; the next record is then appended to that fragment, and at the next start the daemon refuses to open the journal (`… is unreadable — refusing to start rather than drop accepted payments`) until the line is repaired by hand: it holds the fragment followed by one whole record. Both are #169. Treat the log line as an alarm: free the disk, and expect to check `pending.jsonl` before the next restart.
 - `payouts.jsonl` — every payout's proofs (locked to your wallet key) and whether a relay took it; one no relay accepted is published again.
 - `seen.jsonl` (+ `.1`) — accepted proof secrets, a replay cache, rotated.
 - `lock` — one daemon per data directory.
 
-A `proofs.json` or `pending.json` that does not open stops the daemon instead of being overwritten: recover what it holds before moving it aside.
+A `proofs.json` or `pending.jsonl` that does not open stops the daemon instead of being overwritten: recover what it holds before moving it aside.
 
 ### Payout
 
@@ -113,10 +114,10 @@ Precedence, per value: **`NUTFLIX_SEEDER_*` env > file > `STATE_DIRECTORY` (fill
 
 ### Gateway configuration the unit does NOT set (operator must)
 
-- **Public URL.** Blossom blob descriptors (`PUT /upload` → `url`, `GET /list/<pubkey>`) are built from `blossom.publicUrl`. With the default it points at `http://127.0.0.1:<port>`, which is useless to any client behind the reverse proxy. Set it to the proxy's public origin either in `/etc/nutflix/gateway.json` (`"blossom": { "publicUrl": "https://cdn.example" }`) or in the unit via `Environment=NUTFLIX_GATEWAY_PUBLIC_URL=https://cdn.example` (env always wins). It is not a secret, so `Environment=` is acceptable here.
+- **Public URL.** Blossom blob descriptors (`PUT /upload` → `url`, `GET /list/<pubkey>`) are built from `blossom.publicUrl`. With the default it points at `http://127.0.0.1` (no port), which is useless to any client behind the reverse proxy. Set it to the proxy's public origin either in `/etc/nutflix/gateway.json` (`"blossom": { "publicUrl": "https://cdn.example" }`) or in the unit via `Environment=NUTFLIX_GATEWAY_PUBLIC_URL=https://cdn.example` (env always wins). It is not a secret, so `Environment=` is acceptable here.
 - **`http.trustProxy`.** Default `false`. Set `"http": { "trustProxy": true }` in the JSON **only when the listener is reachable solely through the reverse proxy** (loopback bind, or a firewall that admits only the proxy). With it on, the gateway takes the client address for rate-limit buckets from the LAST `X-Forwarded-For` entry — the one the proxy appends; the earlier entries are whatever the client sent (security review F14). This assumes exactly one proxy that appends (nginx `proxy_add_x_forwarded_for`; Caddy replaces the header, which also works). If anything other than the proxy can reach the port, a client can choose its own bucket by sending that header. The gateway never reads `X-Forwarded-Proto` (descriptor URLs come from `publicUrl` above).
 - **Proxy requirements** (from L3): forward `/`-rooted paths unchanged (Blossom endpoints must live at the root, BUD-01); pass `Upgrade`/`Connection` for `ws.path` (default `/ws`); disable request buffering and raise the proxy body limit to ≥ `http.maxUploadBytes` for `PUT /upload`; forward `Range` untouched.
-- **Paths**: state in `/var/lib/nutflix-<svc>` (`$STATE_DIRECTORY`), runtime sockets in `/run/nutflix-<svc>` (`$RUNTIME_DIRECTORY`), config in `/etc/nutflix` (`$CONFIGURATION_DIRECTORY`, read-only). The daemons should read those environment variables rather than hard-code paths.
+- **Paths**: state in `/var/lib/nutflix-<svc>` (`$STATE_DIRECTORY`), a runtime directory at `/run/nutflix-<svc>` (`$RUNTIME_DIRECTORY`, unused today), config in `/etc/nutflix` (`$CONFIGURATION_DIRECTORY`, read-only). The daemons should read those environment variables rather than hard-code paths.
 - **Key at rest** (§7: argon2id-derived passphrase key, never env vars): both daemons use an encrypted key file under the state directory with its passphrase as a systemd credential — `seeder-key-passphrase` / `gateway-key-passphrase`. `Environment=` is deliberately not used for anything secret.
 - **TLS**: the gateway binds an unprivileged port on loopback/LAN and a reverse proxy terminates TLS. The proxy is where `_headers.txt` from `scripts/csp-sri.mjs` goes.
 
@@ -139,7 +140,7 @@ systemd-creds decrypt --name=gateway-key-passphrase /etc/credstore.encrypted/nut
 
 New keys in `gateway.json` (same rules as the seeder's): `relays` ★ (1–8, `wss://`), `policy.creatorPubkey` ★, `identity.keyFile` (default `<dataDir>/identity.key`), `payout`, `videoEvents`.
 
-**Upstream fetching (security review F37):** the gateway serves the blobs it holds (uploads, mirrors); nothing in it fetches from upstream seeders on its own yet. The `Gateway.openUpstreamCore` API does, but does not yet pace its requests to the seeders' unpaid window, so a fast reader through it gets the gateway cut and banned upstream. Pacing lands before any upstream fetching is wired into the gateway.
+**Upstream fetching (security review F37):** the gateway serves the blobs it holds (uploads, mirrors); nothing in it fetches from upstream seeders on its own yet. An embedder that fetches upstream must read through `Gateway.readUpstreamBlob`, which paces its requests to the seeders' unpaid window (credit settled by ACKs); a plain `core.get()` loop on a core from `Gateway.openUpstreamCore` is not paced and gets the gateway cut and banned upstream.
 
 ## Directive-by-directive
 
@@ -149,11 +150,11 @@ Both units share the same block; the gateway differs only in resource caps.
 
 | Directive | Why |
 |-----------|-----|
-| `User=`/`Group=nutflix-<svc>` | §7 "dedicated user". Separate accounts per daemon so a compromised gateway cannot read seeder state. Created by `nutflix.sysusers.conf`, `nologin` shell, no home. |
+| `User=`/`Group=nutflix-<svc>` | §7 "dedicated user". Separate accounts per daemon so a compromised gateway cannot read seeder state. Created by `nutflix.sysusers.conf`, `nologin` shell, home set to its state directory. |
 | `WorkingDirectory=/opt/nutflix` | The read-only application tree. |
 | `StateDirectory=` + `StateDirectoryMode=0700` | The **only** persistent writable location: corestore, key-at-rest blob, ban list. systemd creates it, chowns it, and adds it to the read-write set under `ProtectSystem=strict`. |
-| `RuntimeDirectory=` (0700) | `/run/nutflix-<svc>` for a control socket; wiped on stop. |
-| `LoadCredentialEncrypted=seeder-key-passphrase:…` (seeder) | The key file's passphrase (§7 "never env vars"). PID 1 decrypts it before exec — TPM2 and/or the host key — into `$CREDENTIALS_DIRECTORY`, a private ramfs no other unit sees, so the sandbox directives below do not need to allow TPM or credstore access. A missing credential fails the start. The gateway gets the same line when its runtime lands. |
+| `RuntimeDirectory=` (0700) | `/run/nutflix-<svc>`; wiped on stop. Unused today: no daemon code reads `$RUNTIME_DIRECTORY` or opens a control socket. |
+| `LoadCredentialEncrypted=seeder-key-passphrase:…` (seeder) | The key file's passphrase (§7 "never env vars"). PID 1 decrypts it before exec — TPM2 and/or the host key — into `$CREDENTIALS_DIRECTORY`, a private ramfs no other unit sees, so the sandbox directives below do not need to allow TPM or credstore access. A missing credential fails the start. The gateway unit has the same line for `gateway-key-passphrase`. |
 | `ConfigurationDirectory=nutflix` | `/etc/nutflix` exists and is readable; it is **not** added to `ReadWritePaths`, so config stays read-only to the daemon. |
 | `UMask=0077` | Anything the daemon creates (corestore files, key blobs) is private by default. Verified the process sees `077`. |
 | `ProtectSystem=strict` | §7. Entire filesystem read-only except the directories systemd carved out above. A compromised process cannot modify its own code, `/etc`, or `/usr`. |

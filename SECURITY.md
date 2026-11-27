@@ -53,7 +53,10 @@ What is enforced for every change, in CI on GitHub Actions:
 GitHub does not currently require a second reviewer on a pull request, including one that touches
 the locked directories.
 
-## What 0.1.0 does not protect against
+<!-- This section's old anchor, kept because the 0.1.4 changelog entry links to it. -->
+<a name="what-010-does-not-protect-against"></a>
+
+## What the desktop app does not protect against
 
 These are known limits of the released app, not bugs awaiting a report:
 
@@ -135,7 +138,7 @@ original build plan (`docs/plan/build-plan.md`, now a historical document) and i
 Two rows describe the original plan more than the released app:
 
 - **T13** is about a web portal. No web shell ships in 0.1.0, and the row applies again to the
-  NFX web client being built in `packages/app-web` for web.nutflix.xyz
+  NFX web client in `packages/app-web`, deployed at web.nutflix.xyz
   ([ADR 0022](docs/decisions/0022-a-web-client-for-nfx.md)). Whoever serves that page can change
   it. The controls are the row's: open source with a link to the exact source in the page, SRI on
   every script and on the wasm, a CSP with nothing inline, a reproducible build and its hash in a
@@ -169,10 +172,11 @@ Specified in `docs/plan/build-plan.md` §1–§3 and enforced by the adversary t
 8. **No browser persistence of proofs or keys.** The web shell holds NIP-60 state in memory
    only.
 
-Invariant 8 applies to the NFX web client (ADR 0022), which is not released yet. Its first version
-has no wallet and no signer, so it holds no proof and no key at all. Browser storage holds its
-settings and nothing else; NIP-60 state, when a later version has a wallet, stays in memory; and
-with NIP-07 sign-in the key stays in the browser extension.
+Invariant 8 applies to the NFX web client (ADR 0022), which is deployed at web.nutflix.xyz (the
+deployment lives outside this repository). Its first version has no wallet and no signer, so it
+holds no proof and no key at all. Browser storage holds its settings and nothing else; NIP-60
+state, when a later version has a wallet, stays in memory; and with NIP-07 sign-in the key stays
+in the browser extension.
 
 ## Locked directories
 
@@ -194,9 +198,9 @@ packages/gateway/src/auth/
 ```
 
 `packages/core/src/signer/mesh-key.ts` (ADR 0023) holds the session keys of WebRTC signaling
-(NFX-10 §6): random, in secure memory, never an identity key. It signs only the four `nfx-mesh/1`
-events it builds itself and encrypts only an SDP; it offers no general signing or encryption
-call.
+(NFX-10 §6): random, never an identity key, and in ordinary process memory inside the desktop app
+like its other keys (see above). It signs only the four `nfx-mesh/1` events it builds itself and
+encrypts only an SDP; it offers no general signing or encryption call.
 
 ## No model writes crypto
 

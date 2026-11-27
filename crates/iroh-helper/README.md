@@ -1,10 +1,11 @@
 # nutflix-iroh-helper
 
 The thin iroh process the desktop worker spawns ([ADR 0021](../../docs/decisions/0021-speak-iroh-through-a-helper.md),
-nfx [ADR 0103](https://github.com/SovereignTechnology/nfx/blob/main/docs/decisions/0103-meet-over-iroh.md) §2).
-It is how this app meets nfx peers over NFX-06: iroh connections and iroh-blobs, from n0's own
+nutflix (formerly nfx)
+[ADR 0103](https://github.com/SovereignTechnology/nutflix/blob/main/docs/decisions/0103-meet-over-iroh.md) §2).
+It is how this app meets nutflix peers over NFX-06: iroh connections and iroh-blobs, from n0's own
 crates at the series NFX-11 §4 pins (iroh 1.x, iroh-blobs 0.103.x, locked here at the versions
-nfx builds).
+nutflix builds).
 
 **It moves bytes and decides nothing.** It dials and accepts iroh connections, imports files,
 forms HashSeqs from hashes it is given, and fetches blobs capped at the size it is given. Which
@@ -20,19 +21,23 @@ It does not signal: offers and answers come and go through the worker.
 
 Status: from **spike S-D** (`docs/spikes/S-D-iroh-helper.md`). Since slice 5e-3 the worker runs
 one to serve its NFX videos (`packages/app-desktop/src/worker/nfx/iroh.ts` and `iroh-seeding.ts`);
-fetching through it is slice 5e-4. Since slice 5e-5 a packaged app ships one, built for its
-target by the release job (`.github/workflows/release.yml`) and staged as
-`app.asar.unpacked/iroh/nutflix-iroh-helper` (`packaging/stage.ts` checks it is an executable
-for the target); the worker then never reads `NUTFLIX_IROH_HELPER`. Built and tested only in CI.
+since slice 5e-4 it runs a second one to fetch (`iroh-fetcher.ts`). Since slice 5e-5 a packaged
+app ships one, built for its target by the release job (`.github/workflows/release.yml`) and
+staged as `app.asar.unpacked/iroh/nutflix-iroh-helper` (`packaging/stage.ts` checks it is an
+executable for the target); the worker then never reads `NUTFLIX_IROH_HELPER`. Built and tested
+only in CI.
 
-## How the worker uses it (slice 5e-3)
+## How the worker uses it (slices 5e-3 and 5e-4)
 
-- **One process per worker,** spawned while NFX seeding is on and a stored video is to be served,
-  `--state <storage>/tmp/nfx-iroh` (a cache, emptied at every worker start and every stop).
-- **`init`:** the network's iroh relays (`Settings.nfx.irohRelays`), and as `secret` the Ed25519
-  seed of a key the worker derives from its Corestore primary key (`nfx:<namespace>:iroh`), so
-  the node id is the same at every start. The worker checks that the `node` it reports is that
-  key's public half.
+- **Two iroh nodes, each its own process, never one for both jobs.** The serving one is spawned
+  while NFX seeding is on and a stored video is to be served, `--state <storage>/tmp/nfx-iroh`.
+  Watching dials from a second one, `--state <storage>/tmp/nfx-iroh-watch`, whose `init` carries
+  no `secret`, so its node id is fresh at every start. Both stores are caches, emptied at every
+  worker start and every stop. The WebRTC side (below) runs in a third process of its own.
+- **`init`:** the network's iroh relays (`Settings.nfx.irohRelays`), and for the serving node, as
+  `secret`, the Ed25519 seed of a key the worker derives from its Corestore primary key
+  (`nfx:<namespace>:iroh`), so its node id is the same at every start. The worker checks that the
+  `node` it reports is that key's public half.
 - **Serving:** `import` of each file by its path in the NFX store, then one `seq` per NFX-06 §2
   collection, tagged `nfx/<root>/meta` and `nfx/<root>/r<n>`. Each ticket is decoded once with
   `ticket` and must name this node and that collection. `untag` when a video is no longer stored;
@@ -43,7 +48,7 @@ for the target); the worker then never reads `NUTFLIX_IROH_HELPER`. Built and te
 1. **No "verified" flag, anywhere.** A reply states facts: a hash, a size, an address. iroh-blobs
    checks BLAKE3 on the wire, which proves only that the bytes match the *seeder's* HashSeq. The
    anchor is the hash list's sha256 (NFX-05 §4), and the worker checks it. Nothing this process
-   says can stand in for that check (nfx ADR 0103, sharp edge 1).
+   says can stand in for that check (nutflix ADR 0103, sharp edge 1).
 2. **Bounded frames.** A frame is at most `4 + 65541` bytes; a longer length prefix is refused
    before a byte of its body is read, and a bad frame is fatal on both sides (sharp edge 2).
 3. **An untrusted pipe.** The worker treats everything this process sends as untrusted input:
@@ -115,12 +120,13 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 | `stats` | | `rss_hwm_kib`, `store_bytes` |
 
 - `init` waits up to 10 s for the home relay when relays are given. Without `secret` the node has
-  a fresh key, so its id changes at every start (as nfxd's does). Empty `relays` means no relay
-  at all, never n0's. The portmapper (UPnP, PCP, NAT-PMP) is off unless `portmapper` is true. A
-  malformed `init` is answered "malformed init" and nothing more, so no field's value (the secret)
-  comes back in an error. `relay_cas` adds trust anchors for the relays' TLS beside iroh's
-  embedded (Mozilla) roots, for a network whose relays use a private CA; iroh never uses them for
-  its own connections, which the endpoint keys authenticate.
+  a fresh key, so its id changes at every start, as nutflixd's does (`nfxd` before its 0.1.5, and
+  at the commits this repository's CI pins). Empty `relays` means no relay at all, never n0's. The
+  portmapper (UPnP, PCP, NAT-PMP) is off unless `portmapper` is true. A malformed `init` is
+  answered "malformed init" and nothing more, so no field's value (the secret) comes back in an
+  error. `relay_cas` adds trust anchors for the relays' TLS beside iroh's embedded (Mozilla)
+  roots, for a network whose relays use a private CA; iroh never uses them for its own
+  connections, which the endpoint keys authenticate.
 - `dial` keeps the given direct addresses (none with `relay_only`) and only the relays in its own
   map; with nothing left it fails `dial-failed`. Connections time out after 15 s.
 - `get` makes one ranged request for at most `ceil(max / 1024)` chunks, as nfx-node does: a blob
@@ -138,7 +144,7 @@ run concurrently (at most 16; one more gets `busy`), except `init`, which runs a
 ## WebRTC with browsers (ADR 0023)
 
 One UDP socket, full ICE ([str0m](https://github.com/algesten/str0m) 0.24.1, the version and
-crypto backend nfx's bridge builds), one data channel per connection carrying p2p-media-loader
+crypto backend nutflix's bridge builds), one data channel per connection carrying p2p-media-loader
 4.0.0's binary commands (`src/rtc/p2pml.rs`, written from the library's source). A connection
 belongs to one swarm, the NFX-10 §2 stream swarm id the worker gives. The `rtc-*` requests need no
 `init`; they need `rtc-init` first.
@@ -206,7 +212,8 @@ failed.
 ## Building
 
 CI only (`.github/workflows/spike-iroh.yml`): Rust 1.98.0 (`rust-toolchain.toml`),
-`cargo build --release --locked`, `cargo clippy --locked -- -D warnings`, `cargo test --locked`,
-`cargo deny check` (`deny.toml`). `.github/workflows/ci.yml` builds the release binary on every
-run (job `iroh-helper`, same toolchain, `--locked`) for the worker's tests, which find it in
+`cargo build --release --locked`, `cargo fmt --check`,
+`cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`, `cargo deny check`
+(`deny.toml`). `.github/workflows/ci.yml` builds the release binary on every run (job
+`iroh-helper`, same toolchain, `--locked`) for the worker's tests, which find it in
 `NUTFLIX_IROH_HELPER`.

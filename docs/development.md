@@ -8,7 +8,9 @@ what does not fit there.
 The suites in `packages/app-desktop/e2e/` launch the real Electron app and drive it with
 Playwright. They are **not** run by `npm test`. The app starts with `--dev-mocks --dev-fixtures`,
 so they run offline: in-memory relays, a loopback DHT, fixture videos and mock sats. CI runs them
-in the `e2e` job, under a virtual display.
+in the `e2e` job, under a virtual display. One suite, `secure-memory.e2e.ts`, opens no window and
+uses no mocks: it runs a child inside the Electron binary. `nfx-exit-app.e2e.ts` is in the same
+directory but is run only by the `nfx-exit` workflow.
 
 Prerequisites:
 
@@ -36,11 +38,12 @@ Prerequisites:
 Run them from the repository root, one run at a time:
 
 ```sh
-xvfb-run -a npm run -w packages/app-desktop test:e2e    # fidelity, stage1 and signer, serially (about 20 s)
+xvfb-run -a npm run -w packages/app-desktop test:e2e    # six suites, serially
 ```
 
-That script sets `NUTFLIX_E2E=1`; without it the suites skip. To run one file, set the variable
-yourself: `NUTFLIX_E2E=1 node --test packages/app-desktop/e2e/stage1.e2e.ts`.
+That script runs six files (`fidelity`, `stage1`, `signer`, `secure-memory`, `proxy-abort` and
+`nfx-playback`) and sets `NUTFLIX_E2E=1`; without it the suites skip. To run one file, set the
+variable yourself: `NUTFLIX_E2E=1 node --test packages/app-desktop/e2e/stage1.e2e.ts`.
 
 | Variable                           | Effect                                                                                  |
 | ---------------------------------- | --------------------------------------------------------------------------------------- |

@@ -14,7 +14,7 @@ These files are **not signed by an operating-system vendor**: your system may wa
 - `SHA256SUMS`: check a download with `sha256sum -c SHA256SUMS --ignore-missing`. This shows a file is intact; it does not show who made it.
 - `release-event.json`: a Nostr release notice (kind 30071, `d` = `nutflix-desktop`) signed by the SovTech key `npub1s0vtechh66tx7vrwdud8zfyheu9zca7swwfrzd4qu2a4f93mxs6qvn9adx`. The same notice is published to Nostr relays.
 
-To check the signature you need a checkout of this repository and Node 22.18 or newer:
+To check the signature you need a checkout of this repository and Node 22.22.2 or newer:
 
 ```sh
 git clone https://github.com/SovereignTechnology/nutflix-pear.git && cd nutflix-pear
