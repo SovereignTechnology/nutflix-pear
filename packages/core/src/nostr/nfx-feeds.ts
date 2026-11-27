@@ -21,8 +21,9 @@ import { parseATag } from '../nfx/beacon.js';
 import { listNfxVideos } from '../nfx/catalog.js';
 import { KIND_DELETION, KIND_MANIFEST } from '../nfx/event.js';
 import type { NostrClient } from './client.js';
-import { applyTimeCursor, decodeTimeCursor, encodeTimeCursor } from './cursor.js';
+import { applyTimeCursor, decodeTimeCursor, nextTimeCursor } from './cursor.js';
 import { DEFAULT_PAGE, MAX_PAGE, type FeedOptions } from './feeds.js';
+import { mergeNfxPages } from './nfx-merge.js';
 
 const clampLimit = (n: number | undefined): number =>
   Math.min(MAX_PAGE, Math.max(1, n ?? DEFAULT_PAGE));
@@ -63,6 +64,36 @@ function addressOf(event: NostrEvent, namespace: string): string | undefined {
   return `${KIND_MANIFEST}:${event.pubkey}:${d}`;
 }
 
+/**
+ * The event ids among `videos` that a deletion on `relays` withdraws (NFX-02 §6; `undefined`:
+ * the read relays), by one query for their addresses. A page read from one relay set was checked
+ * against that set's deletions only; a merge of two sets checks each side's videos on the other
+ * (ADR 0026).
+ */
+export async function nfxWithdrawn(
+  client: NostrClient,
+  namespace: string,
+  videos: readonly NfxVideo[],
+  relays: readonly RelayUrl[] | undefined,
+): Promise<Set<string>> {
+  if (videos.length === 0) return new Set();
+  const deletions = await deletionsFor(
+    client,
+    videos.map((v) => ({ event: v.event, address: v.id })),
+    relays,
+  );
+  if (deletions.length === 0) return new Set();
+  const live = new Set(
+    listNfxVideos(
+      namespace,
+      videos.map((v) => v.event),
+      deletions,
+      client.now(),
+    ).map((v) => v.eventId),
+  );
+  return new Set(videos.filter((v) => !live.has(v.eventId)).map((v) => v.eventId));
+}
+
 /** Events → the listed videos, after one deletion query for their addresses. */
 async function listed(
   client: NostrClient,
@@ -92,14 +123,27 @@ export async function nfxVideoPage(
 ): Promise<Page<NfxVideo>> {
   const limit = clampLimit(opts.limit);
   const cursor = decodeTimeCursor(opts.cursor);
+  // The cursor's own ids at its second come back from the relay and are dropped here, so they
+  // are asked for on top: a batch of only those would read as the end.
   const applied = applyTimeCursor(
-    { ...base, kinds: [KIND_MANIFEST], '#n': [namespace], limit: limit + 5 },
+    {
+      ...base,
+      kinds: [KIND_MANIFEST],
+      '#n': [namespace],
+      limit: limit + 5 + (cursor?.seen.length ?? 0),
+    },
     cursor,
   );
   const events = (await client.query(applied.filter, opts.relays)).filter(applied.keep);
   const videos = (await listed(client, namespace, events, opts.relays)).filter(keep);
   const items = videos.slice(0, limit);
-  const next = items.length === limit ? encodeTimeCursor(items.map((v) => v.event)) : undefined;
+  const next =
+    items.length === limit
+      ? nextTimeCursor(
+          items.map((v) => v.event),
+          cursor,
+        )
+      : undefined;
   return next === undefined ? { items } : { items, next };
 }
 
@@ -201,9 +245,12 @@ export async function scanNfxVideos(
   const q = text.trim();
   if (q === '') return { items: [] };
   const limit = clampLimit(opts.limit);
+  const cursor = decodeTimeCursor(opts.cursor);
+  // As in `nfxVideoPage`: the cursor's own ids are asked for on top of a full scan page.
+  const want = NFX_SCAN_PAGE + (cursor?.seen.length ?? 0);
   const applied = applyTimeCursor(
-    { ...searchBase(filters), kinds: [KIND_MANIFEST], '#n': [namespace], limit: NFX_SCAN_PAGE },
-    decodeTimeCursor(opts.cursor),
+    { ...searchBase(filters), kinds: [KIND_MANIFEST], '#n': [namespace], limit: want },
+    cursor,
   );
   const read = await client.query(applied.filter, opts.relays);
   const events = read.filter(applied.keep);
@@ -214,9 +261,14 @@ export async function scanNfxVideos(
   const items = videos.slice(0, limit);
   const next =
     items.length === limit
-      ? encodeTimeCursor(items.map((v) => v.event))
-      : read.length >= NFX_SCAN_PAGE
-        ? encodeTimeCursor(events)
+      ? nextTimeCursor(
+          items.map((v) => v.event),
+          cursor,
+        )
+      : // A full scan page, compared with the page size and not with `want`: a relay that caps
+        // its answers at `NFX_SCAN_PAGE` still has more to read.
+        read.length >= NFX_SCAN_PAGE
+        ? nextTimeCursor(events, cursor)
         : undefined;
   return next === undefined ? { items } : { items, next };
 }
@@ -224,7 +276,8 @@ export async function scanNfxVideos(
 /**
  * Search routed by what each relay supports (ADR 0022): `search` goes only to the relays whose
  * NIP-11 document lists NIP-50 (`supports`), the others are read with `scanNfxVideos`, and the
- * two are merged by address, the newest revision winning. It fails only when every relay set
+ * two are merged by address, the newest revision winning (`mergeNfxPages`: the cursor never
+ * passes either group's unread manifests). It fails only when every relay set
  * does. `opts.relays` absent means the client's read relays.
  */
 export async function searchNfxVideosRouted(
@@ -252,18 +305,9 @@ export async function searchNfxVideosRouted(
   const pages = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
   const failed = settled.find((s) => s.status === 'rejected');
   if (pages.length === 0 && failed !== undefined) throw failed.reason;
-  const newest = new Map<string, NfxVideo>();
-  for (const v of pages.flatMap((p) => p.items)) {
-    const seen = newest.get(v.id);
-    if (seen === undefined || v.event.created_at > seen.event.created_at) newest.set(v.id, v);
-  }
-  const items = [...newest.values()]
-    .sort((a, b) => b.event.created_at - a.event.created_at)
-    .slice(0, clampLimit(opts.limit));
-  const more = pages.map((p) => p.next).filter((n): n is string => n !== undefined);
-  const next =
-    more.length === 0 ? undefined : (encodeTimeCursor(items.map((v) => v.event)) ?? more[0]);
-  return next === undefined ? { items } : { items, next };
+  // One page as `NfxCatalog` merges relay sets: the cursor never passes either group's unread
+  // manifests (a scan that matched nothing still has read only down to its own cursor).
+  return mergeNfxPages(pages, clampLimit(opts.limit), new Set(), opts.cursor).page;
 }
 
 /** The most NIP-71 events one `nfxTwinsOf` call asks about (a page's worth). */

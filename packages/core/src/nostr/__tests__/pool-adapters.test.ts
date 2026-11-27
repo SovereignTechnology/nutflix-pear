@@ -6,10 +6,63 @@ import type { Event as WireEvent } from 'nostr-tools/core';
 import type { NostrEvent, RelayUrl } from '../../contracts/index.js';
 import { FakeRelayPool } from '../fake-relay.js';
 import type { PoolBackend } from '../simple-pool-adapter.js';
-import { SimplePoolAdapter, toWireFilter } from '../simple-pool-adapter.js';
+import {
+  RELAY_SKIP_MAX_MS,
+  RELAY_SKIP_MS,
+  RelayHealth,
+  SimplePoolAdapter,
+  toWireFilter,
+} from '../simple-pool-adapter.js';
 import { RELAY_A, RELAY_B, T0, TestSigner, sign } from './helpers.js';
 
+describe('RelayHealth (ADR 0026)', () => {
+  it('skips a relay that failed to connect, doubling per failure, until it connects again', () => {
+    const clock = { now: 1_000_000 };
+    const h = new RelayHealth(() => clock.now);
+    const url = 'wss://down.example';
+    expect(h.skip(url)).toBe(false);
+    expect(h.down(url)).toBe(false);
+    h.failed(url);
+    // Normalized like nostr-tools: the trailing slash is the same relay.
+    expect(h.skip(`${url}/`)).toBe(true);
+    expect(h.down(url)).toBe(true);
+    clock.now += RELAY_SKIP_MS;
+    expect(h.skip(url)).toBe(false); // one real attempt
+    expect(h.down(url)).toBe(true); // still reported down until it connects
+    h.failed(url);
+    clock.now += RELAY_SKIP_MS;
+    expect(h.skip(url)).toBe(true);
+    clock.now += RELAY_SKIP_MS;
+    expect(h.skip(url)).toBe(false);
+    for (let i = 0; i < 10; i++) h.failed(url);
+    clock.now += RELAY_SKIP_MAX_MS - 1;
+    expect(h.skip(url)).toBe(true);
+    clock.now += 1;
+    expect(h.skip(url)).toBe(false);
+    h.connected(url);
+    expect(h.down(url)).toBe(false);
+    h.failed(url);
+    clock.now += RELAY_SKIP_MS;
+    expect(h.skip(url)).toBe(false); // back to the first wait
+  });
+
+  it('the adapter reports the relays its health marks down', () => {
+    const h = new RelayHealth();
+    const a = new SimplePoolAdapter(undefined, h);
+    expect(a.unreachable([RELAY_A, RELAY_B])).toEqual([]);
+    h.failed(RELAY_B);
+    expect(a.unreachable([RELAY_A, RELAY_B])).toEqual([RELAY_B]);
+    a.close();
+  });
+});
+
 describe('SimplePoolAdapter', () => {
+  it('constructs its own tracked SimplePool without touching the network', () => {
+    const a = new SimplePoolAdapter();
+    expect(a.unreachable([RELAY_A])).toEqual([]);
+    a.close();
+  });
+
   it('constructs over a real SimplePool without touching the network', () => {
     const real = new SimplePool();
     const adapter = new SimplePoolAdapter(real);
