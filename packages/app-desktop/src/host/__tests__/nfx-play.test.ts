@@ -369,15 +369,15 @@ describe('openNfxSession (contracts v11)', () => {
     expect(open.peers.map((p) => p.peer)).toEqual([peer]);
   });
 
-  it('without scoped relays, or with NFX off, nothing opens', async () => {
+  it('without scoped relays the read relays carry the beacons (ADR 0026); with NFX off nothing opens', async () => {
     r = await rig({ nfx: { ...NFX_ON, scopedRelays: [] } });
     await r.ready();
     const creator = new kit.TestSigner();
     await manifest(creator, 'free-video-3');
     await beacon(new kit.TestSigner(), creator.pubkey, 'free-video-3');
-    await expect(
-      r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-3')),
-    ).rejects.toThrow(/^no-seeders/);
+    const s = await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-3'));
+    expect(s.videoId).toBe(addrOf(creator.pubkey, 'free-video-3'));
+    await r.host.adapter.closeNfxOwner(7);
     await r.host.adapter.updateSettings({ nfx: { ...NFX_ON, enabled: false } });
     await expect(
       r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-3')),

@@ -735,7 +735,7 @@ export function Home({
         <EmptyState
           preset="no-videos"
           title="No videos on the network yet"
-          description="Nothing has been published to this NFX network's relays yet, or the relays could not be reached. Check Settings, NFX network."
+          description="Nothing has been published to this NFX network's relays yet. If you expected videos here, check the relays in Settings, NFX network."
         />
       );
     }

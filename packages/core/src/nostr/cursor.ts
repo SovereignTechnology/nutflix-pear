@@ -17,7 +17,28 @@ export function encodeTimeCursor(page: readonly NostrEvent[]): string | undefine
   const last = page[page.length - 1];
   if (!last) return undefined;
   const seen = page.filter((e) => e.created_at === last.created_at).map((e) => e.id);
-  return `t:${last.created_at}:${seen.join(',')}`;
+  return timeCursor(last.created_at, seen);
+}
+
+/**
+ * The cursor after `page`, read from `incoming`: as `encodeTimeCursor`, and when the page ends in
+ * the second `incoming` ended in, it skips `incoming`'s ids there too. Without that, more videos in
+ * one second than a page holds would send the cursor round between them for good.
+ */
+export function nextTimeCursor(
+  page: readonly NostrEvent[],
+  incoming: TimeCursor | undefined,
+): string | undefined {
+  const last = page[page.length - 1];
+  if (!last) return undefined;
+  const seen = new Set(incoming?.until === last.created_at ? incoming.seen : []);
+  for (const e of page) if (e.created_at === last.created_at) seen.add(e.id);
+  return timeCursor(last.created_at, seen);
+}
+
+/** A time cursor from its parts: read on from `until`, skipping `seen` at that second. */
+export function timeCursor(until: number, seen: Iterable<string>): string {
+  return `t:${until}:${[...seen].join(',')}`;
 }
 
 export function decodeTimeCursor(cursor: string | undefined): TimeCursor | undefined {
