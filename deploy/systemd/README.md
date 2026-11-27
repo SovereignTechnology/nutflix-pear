@@ -95,6 +95,7 @@ What the daemon keeps under `<dataDir>/wallet/` (0700; every file 0600):
 
 - `proofs.json` — the seeder's ecash, NIP-44 encrypted to the node's key (it opens only with the key file and its passphrase). Inside it is bearer money: let payout move it off the server rather than copying the file around.
 - `pending.jsonl` — PAYs accepted but not yet redeemed or nutzapped, as an append-only journal (a restart finishes them; an older `pending.json` is migrated at start); its proofs are still locked to the seeder's or the creator's key.
+  **A PAY is only as durable as its journal write.** If a write to this file fails (a full or failing disk), the daemon logs `pending-PAY write failed: accepted payments are in memory only` and keeps serving: that PAY is still acknowledged and is redeemed if the daemon stays up, but it is not in the journal, and a later write does not add it, so a restart before it is redeemed loses it. Treat that log line as an alarm: free the disk and let the queue drain before restarting.
 - `payouts.jsonl` — every payout's proofs (locked to your wallet key) and whether a relay took it; one no relay accepted is published again.
 - `seen.jsonl` (+ `.1`) — accepted proof secrets, a replay cache, rotated.
 - `lock` — one daemon per data directory.
