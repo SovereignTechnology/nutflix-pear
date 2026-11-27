@@ -74,6 +74,28 @@ describe('nfxVideoPage', () => {
     expect(seen).toEqual([...events].reverse().map((e) => e.id));
   });
 
+  it('more videos in one second than a page: each comes once, and paging neither loops nor stops early (CodeRabbit, pear #157)', async () => {
+    const r = rig();
+    const creator = new TestSigner();
+    const ids: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const ev = await sign(creator, manifestDraft(`second-${i}00`, T0 - 100));
+      r.pool.store(ev);
+      ids.push(ev.id);
+    }
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await nfxTagsFeed(r.client, NS, ['space'], { limit: 1, cursor });
+      seen.push(...page.items.map((v) => v.eventId));
+      cursor = page.next;
+      pages += 1;
+    } while (cursor !== undefined && pages < 20);
+    expect(pages).toBeLessThanOrEqual(8);
+    expect([...seen].sort()).toEqual([...ids].sort());
+  });
+
   it('asks for deletions of exactly the page’s addresses, and honours them', async () => {
     const { r, creator } = await seeded(3);
     const gone = addr(creator.pubkey, 'video-001');

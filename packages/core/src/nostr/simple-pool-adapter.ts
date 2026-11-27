@@ -9,6 +9,7 @@
 import type { Event as WireEvent } from 'nostr-tools/core';
 import type { Filter } from 'nostr-tools/filter';
 import { SimplePool } from 'nostr-tools/pool';
+import { normalizeURL } from 'nostr-tools/utils';
 
 import type { NostrEvent, NostrFilter, RelayUrl } from '../contracts/index.js';
 import { toWire } from './event.js';
@@ -49,11 +50,79 @@ export function toWireFilter(f: NostrFilter): Filter {
   return out;
 }
 
+/** A relay whose connection failed is skipped this long, doubling per failure in a row. */
+export const RELAY_SKIP_MS = 30_000;
+export const RELAY_SKIP_MAX_MS = 5 * 60_000;
+
+/**
+ * Which relays failed to connect (ADR 0026, 2026-11-26). A relay that cannot be reached costs a
+ * read its whole connect timeout (about 7 s at the web client's 8 s wait); skipping it for a while
+ * after a failure means it costs that once per `RELAY_SKIP_MS`, doubling to `RELAY_SKIP_MAX_MS`,
+ * not once per read. The first connection after the skip is a real attempt, so a relay that comes
+ * back is used again within one skip.
+ */
+export class RelayHealth {
+  readonly #now: () => number;
+  readonly #down = new Map<string, { readonly until: number; readonly failures: number }>();
+
+  constructor(now: () => number = Date.now) {
+    this.#now = now;
+  }
+
+  failed(url: string): void {
+    const key = normalizeURL(url);
+    const failures = (this.#down.get(key)?.failures ?? 0) + 1;
+    const wait = Math.min(RELAY_SKIP_MAX_MS, RELAY_SKIP_MS * 2 ** (failures - 1));
+    this.#down.set(key, { failures, until: this.#now() + wait });
+  }
+
+  connected(url: string): void {
+    this.#down.delete(normalizeURL(url));
+  }
+
+  /** Whether to skip connecting now: it failed, and its skip has not run out. */
+  skip(url: string): boolean {
+    const d = this.#down.get(normalizeURL(url));
+    return d !== undefined && this.#now() < d.until;
+  }
+
+  /** Whether its last connection attempt failed (skipped or not). */
+  down(url: string): boolean {
+    return this.#down.has(normalizeURL(url));
+  }
+}
+
+/**
+ * The production backend: pings each relay so a silently dead socket closes (and a subscription
+ * on it can be reopened), and skips a relay `health` says is down.
+ */
+function trackedPool(health: RelayHealth): SimplePool {
+  const pool = new SimplePool({ enablePing: true });
+  pool.onRelayConnectionFailure = (url) => {
+    health.failed(url);
+  };
+  pool.onRelayConnectionSuccess = (url) => {
+    health.connected(url);
+  };
+  pool.allowConnectingToRelay = (url) => !health.skip(url);
+  return pool;
+}
+
 export class SimplePoolAdapter implements PoolLike {
   readonly #backend: PoolBackend;
+  readonly #health: RelayHealth;
 
-  constructor(backend: PoolBackend = new SimplePool()) {
-    this.#backend = backend;
+  /**
+   * Without a `backend`, a `SimplePool` that tracks `health` (a fresh one unless given). An
+   * injected backend (tests) reports nothing to it, so every relay counts as reachable.
+   */
+  constructor(backend?: PoolBackend, health: RelayHealth = new RelayHealth()) {
+    this.#health = health;
+    this.#backend = backend ?? trackedPool(health);
+  }
+
+  unreachable(relays: readonly RelayUrl[]): readonly RelayUrl[] {
+    return relays.filter((r) => this.#health.down(r));
   }
 
   async query(

@@ -238,30 +238,27 @@ describe('feeds through core’s catalogue', () => {
     expect(new Set(r.relays.asked.map((q) => q.relay))).toEqual(new Set([READ_A, SCOPED]));
   });
 
-  it('author and tag feeds read the scoped relay first; the read relays only when it has nothing or a short page (ADR 0020, 2026-11-19)', async () => {
+  it('author and tag feeds read the scoped and the read relays at once, merged (ADR 0026, 2026-11-26)', async () => {
     const r = make({ read: [READ_A], scoped: [SCOPED] });
     const c = new Key();
     put(r.relays, [SCOPED], manifest(c, 'only-scoped', { tags: ['space'], createdAt: T - 60 }));
-    // A full page on the scoped relay: the read relays are not asked.
+    // A full page on the scoped relay: the read relays are asked all the same.
     const full = await r.adapter.feed({
       source: 'author',
       author: c.pubkey as NostrPubkey,
       limit: 1,
     });
     expect(full.items.map((v) => v.title)).toEqual(['only-scoped']);
-    expect(r.relays.asked.map((q) => q.relay)).toEqual([SCOPED, SCOPED]); // manifests, deletions
+    expect(new Set(r.relays.asked.map((q) => q.relay))).toEqual(new Set([SCOPED, READ_A]));
     // Nothing there (a restarted in-memory relay): the read relays' page.
     const other = new Key();
     put(r.relays, [READ_A], manifest(other, 'only-read', { tags: ['space'] }));
-    r.relays.asked.length = 0;
     const fallback = await r.adapter.feed({
       source: 'author',
       author: other.pubkey as NostrPubkey,
     });
     expect(fallback.items.map((v) => v.title)).toEqual(['only-read']);
-    expect(r.relays.asked[0]?.relay).toBe(SCOPED);
-    expect(r.relays.asked.some((q) => q.relay === READ_A)).toBe(true);
-    // A short page there: merged with the read relays', newest first.
+    // Both merged, newest first.
     const tags = await r.adapter.feed({ source: 'tags', tags: ['space'] });
     expect(tags.items.map((v) => v.title)).toEqual(['only-scoped', 'only-read']);
   });
@@ -668,19 +665,41 @@ describe('playNfx: beacons → endpoints → nfx’s player', () => {
     expect(r.player.last.options.origins).toEqual([WEB_FALLBACK_ORIGIN]);
   });
 
-  it('beacons stay on the scoped relay, also for a video only the read relays listed (ADR 0020, 2026-11-19)', async () => {
+  it('beacons are read from the scoped and the read relays, one subscription each (ADR 0026, 2026-11-26)', async () => {
     const r = make({ beaconWaitMs: 50 });
     const subscribe = vi.spyOn(r.relays.pool, 'subscribe');
     const { addr } = await playable(r); // the manifest is on the read relay only
-    put(r.relays, [SCOPED], beacon(new Key(), addr, [https('https://seed.example/o')]));
+    // The scoped relay is down: the seeder's beacon on a read relay is found all the same.
+    put(r.relays, [READ_A], beacon(new Key(), addr, [https('https://seed.example/o')]));
     const session = await r.adapter.playNfx(addr);
     expect(session.videoId).toBe(addr);
     const beaconSubs = subscribe.mock.calls.filter(([, filters]) =>
       filters.some((f) => f.kinds?.includes(20464) === true),
     );
-    expect(beaconSubs.length).toBeGreaterThan(0);
-    for (const [relays] of beaconSubs) expect(relays).toEqual([SCOPED]);
+    expect(beaconSubs.map(([relays]) => [...relays])).toEqual(
+      expect.arrayContaining([[SCOPED], [READ_A]]),
+    );
+    for (const [relays] of beaconSubs) expect(relays).toHaveLength(1);
     await session.close();
+  });
+
+  it('an empty feed with every relay unreachable is relay-down, not an empty network', async () => {
+    const r = make({ read: [READ_A], scoped: [SCOPED] });
+    const down = new Set<RelayUrl>([READ_A, SCOPED]);
+    const pool = r.relays.pool as typeof r.relays.pool & {
+      unreachable?: (rs: readonly RelayUrl[]) => readonly RelayUrl[];
+    };
+    pool.unreachable = (rs) => rs.filter((x) => down.has(x));
+    const creator = new Key();
+    const q = { source: 'author' as const, author: creator.pubkey as NostrPubkey };
+    expect((await rejection(r.adapter.feed(q))).code).toBe('relay-down');
+    // One relay reached: an empty page is an empty network.
+    down.delete(READ_A);
+    expect((await r.adapter.feed(q)).items).toEqual([]);
+    // Unreachable, but a relay still answered with videos: they are shown.
+    down.add(READ_A);
+    put(r.relays, [SCOPED], manifest(creator, 'kept-video'));
+    expect((await r.adapter.feed(q)).items.map((v) => v.title)).toEqual(['kept-video']);
   });
 
   it('beacons are read from the read relays when there is no scoped relay', async () => {
