@@ -111,6 +111,10 @@ enum Op {
         root: Option<String>,
     },
     RtcStop,
+    /// The STUN servers named over Nostr (NFX-10 §1), `ip:port` literals, beside `rtc-init`'s.
+    RtcStun {
+        stun: Vec<String>,
+    },
     RtcServe {
         swarm: String,
         segments: Vec<RtcSegment>,
@@ -355,6 +359,14 @@ impl Shared {
                     h.stop().await;
                 }
                 Ok(fields(json!({"stopped": stopped})))
+            }
+            Op::RtcStun { stun } => {
+                if stun.len() > rtc::MAX_STUN {
+                    return Err(err("bad-request", "at most 4 STUN servers in all"));
+                }
+                let named = socket_addrs(&stun)?;
+                let n = self.rtc().await?.set_named(named).await.map_err(rtc_err)?;
+                Ok(fields(json!({"servers": n})))
             }
             Op::RtcServe {
                 swarm,
@@ -644,6 +656,7 @@ impl Shared {
             // The WebRTC side needs no iroh `init`: it is its own socket (ADR 0023).
             op @ (Op::RtcInit { .. }
             | Op::RtcStop
+            | Op::RtcStun { .. }
             | Op::RtcServe { .. }
             | Op::RtcUnserve { .. }
             | Op::RtcAnswer { .. }
@@ -855,6 +868,10 @@ mod tests {
         parse(json!({"id": 4, "op": "rtc-answer", "swarm": "s", "offer": "v=0"}));
         parse(json!({"id": 4, "op": "rtc-offer", "swarm": "s"}));
         parse(json!({"id": 4, "op": "rtc-unserve", "swarm": "s"}));
+        let op = parse(json!({"id": 5, "op": "rtc-stun", "stun": ["1.2.3.4:3478"]}));
+        assert!(matches!(op, Op::RtcStun { stun } if stun == ["1.2.3.4:3478"]));
+        // `stun` is not optional: an empty list says "none", a missing one is a mistake.
+        assert!(serde_json::from_value::<Op>(json!({"id": 5, "op": "rtc-stun"})).is_err());
         parse(json!({"id": 4, "op": "rtc-path", "peer": 1}));
     }
 

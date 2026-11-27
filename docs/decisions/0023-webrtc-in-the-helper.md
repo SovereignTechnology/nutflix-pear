@@ -108,3 +108,68 @@ trickle candidates), and both directions.
   this side's own offers still go out. Settings says so beside the switch.
 - Same-LAN peers do not see each other's LAN address, so they connect through the router's public
   mapping (hairpin) or not at all, unless a test or LAN run sets `allow_private`.
+
+## Note, 2026-11-19: STUN servers named over Nostr (the maintainer; its selection superseded by the note of 2026-11-24)
+
+The maintainer's plan for decentralized STUN (2026-11-19, step 5): the app also asks the STUN
+servers that seeders name over Nostr, as the nfx web library already does. Only the beacon half is
+built here. The second source, a signed STUN announcement, waits for nfx to assign its kind.
+
+- **Source.** The `stun` endpoints (NFX-10 §1) of the live beacons of each video the app plays,
+  each named by the beacon's signer, newest beacon per seeder (core's `nfx.beaconStunClaims`). A
+  play's servers are used while it is open. An announcement will name a server by its operator's
+  key, and its claims go into the same ranking.
+- **Selection** (core's `nfx.selectStunServers`). These are the rules of the nfx STUN draft
+  (branch `stun/decentralized`, 1ae4068, pending), the same for every NFX client:
+  - the configured `stunServers` come first, each once, and are never dropped;
+  - then the named servers that are global unicast, ranked by the number of distinct keys that
+    name each;
+  - a server named by one key only when the client has none of its own and no named server has
+    two keys;
+  - at most 4 in all.
+
+  "Global unicast" is the helper's own rule for ICE candidates (§5): IP literals only, never a
+  name. Documentation blocks are refused, as the nfx draft will refuse them. Since WebRTC needs a
+  configured server, a lone key never adds one: in practice two seeders must name the same server.
+- **An empty `stunServers` stays "none".** It leaves WebRTC off, as before, so Nostr never hands a
+  STUN server to a user who listed none.
+- **How it reaches the helper: a new request, `rtc-stun`, not a restart.** `rtc-init` fixes the
+  configured servers for the helper's life, and restarting it would drop every connection at each
+  play. So `rtc-stun` replaces the named servers on the running side and touches no connection.
+  The worker sends it again after every `rtc-init`; the host sends `nfx.rtc.stun` when its pick
+  changes.
+  - The helper checks each named server itself: global unicast, a port, at most 4 servers with the
+    configured ones.
+  - It sends to a named server only where it may send an ICE check (§5).
+  - It keeps each named server's mapping apart. The configured servers' mapping stays the
+    mapping, offered first. A named server's is offered only as one more server-reflexive
+    candidate, and only if global unicast. So a lying server costs at most one candidate that
+    fails. It can never replace the configured mapping, or make peers check a private address.
+- **Privacy.** Each named server learns the user's IP address and when they watch, as the
+  configured one does. Keys are free to make, so "two keys" is a stranger's to fake; the bound
+  that holds whatever Nostr says is at most 4 STUN servers in all, never a non-public address.
+
+## Note, 2026-11-24: the creator's STUN servers, or the fallback (the maintainer)
+
+The maintainer decided on 2026-11-24 that counting keys proves nothing, since keys are free: two
+fresh keys could make every client ask a server of their choice. nfx ADR 0107 amends NFX-10 §1 in
+place, and `stun-select.json` (vendored at nfx PR #117's head, 2389fc4) pins the new rules. This
+replaces the 2026-11-19 note's **Source** and **Selection**. Everything about `rtc-stun` and how
+the helper keeps a named mapping apart stands.
+
+- **Selection** (core's `nfx.selectStunServers(own, creator)`, nfx-proto's `stun::select`): the
+  configured servers first, each once, on any port; then the servers in the `stun` endpoint of the
+  creator's own live beacon for each open play (`nfx.creatorStunServers`: a beacon whose signer is
+  the creator its `a` tag names), in the order heard, each once, global unicast, port 1024 or above,
+  not one of the configured; at most 4 in all. No key counting, and no lone-key rule. The creator
+  signs the manifest, so the user already trusts that key with what they play.
+- **The port floor.** The worker (`isAskableStunAddr`) and the helper (`rtc-stun`,
+  `MIN_NAMED_STUN_PORT`) each refuse a named server below port 1024, so a beacon cannot aim the
+  app at a well-known service.
+- **Announcements (kind 33478) are a directory.** The app never subscribes to them and never uses
+  one by itself. The 2026-11-19 note's plan to feed them into the ranking is dropped.
+- **Any other seeder's server only through NFX-10 §1's fallback**: when no server the app asks
+  returned a mapping, for one peer it already signals with whose SDP names that server's IP, one
+  per seeder, port 1024 or above, 4 in all. Not built yet: it needs the helper to ask a server for
+  one connection only, and comes as its own change.
+- **Before it ships:** re-vendor the vectors at #117's merge commit.

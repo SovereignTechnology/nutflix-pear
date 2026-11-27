@@ -147,6 +147,7 @@ belongs to one swarm, the NFX-10 §2 stream swarm id the worker gives. The `rtc-
 |---|---|---|
 | `rtc-init` | `bind?` (`ip:port`), `stun` (≤ 4 `host:port`), `root?` (absolute dir), `allow_private?` | `local`, `mapped` (the public address STUN saw, or null) |
 | `rtc-stop` | | `stopped` |
+| `rtc-stun` | `stun` (`ip:port` literals; with `rtc-init`'s, ≤ 4) | `servers` (how many it asks) |
 | `rtc-serve` | `swarm`, `segments` (`[{id, path, size}]`), `append?` | `segments` (how many the swarm serves now) |
 | `rtc-unserve` | `swarm` | `removed` |
 | `rtc-answer` | `swarm`, `offer` (SDP, ≤ 16 KiB) | `peer`, `sdp`, `candidates` |
@@ -163,6 +164,18 @@ belongs to one swarm, the NFX-10 §2 stream swarm id the worker gives. The `rtc-
   the first STUN server leaves from (found without sending anything). It sends one Binding request
   to each STUN server from that socket and waits up to 3 s for an answer; the mapping is refreshed
   every 25 s (every 3 s while unknown). A STUN name that does not resolve in 3 s is skipped.
+- **`rtc-stun`** (NFX-10 §1) replaces the STUN servers named over Nostr, which the side asks beside
+  `rtc-init`'s own. It needs no restart and touches no connection, and `[]` drops them all.
+  - Every one must be an IP literal at a global unicast address, on port 1024 or above
+    (`MIN_NAMED_STUN_PORT`: a beacon must not aim the app at a well-known service), or nothing
+    changes.
+    With `rtc-init`'s they are at most 4 (`bad-request` otherwise).
+  - Named servers of the other address family, or ones already among its own, are not asked. A
+    named server is asked only where an ICE check may go (rule 7 above), and a new one at once.
+  - Its own servers' mapping stays `mapped` and is offered first. A named server's mapping is kept
+    apart and offered only as one more server-reflexive candidate, and only if global unicast.
+    So a lying server adds at most a candidate that fails; it never replaces the mapping, and
+    never shows a peer a private address.
   `rtc-stop` closes every connection at once; requests still in flight then fail `not-ready`.
 - **Serving.** `rtc-serve` names, per segment id (its position after `#EXTINF` in the rendition
   playlist, NFX-10 §2), the file that holds it and its size; page a long table with `append`

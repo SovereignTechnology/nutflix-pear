@@ -84,6 +84,13 @@ export interface HelperRtcInit {
   readonly bind?: string;
   /** Private and loopback addresses count as reachable: tests and same-LAN runs only. */
   readonly allowPrivate?: boolean;
+  /**
+   * NFX-10 §1: STUN servers named over Nostr, asked beside `stun` (`rtc-stun`, sent right after
+   * `rtc-init`); `rtcStun` replaces them. Canonical global unicast `ip:port`; with `stun`, at
+   * most 4. The helper offers what one reports only as an extra server-reflexive candidate, and
+   * only if it is global unicast: never in place of what `stun` reports.
+   */
+  readonly named?: readonly string[];
 }
 
 /** Where the WebRTC side's socket is, and the public mapping STUN reported (if any). */
@@ -265,6 +272,19 @@ const HEX64 = /^[0-9a-f]{64}$/;
 /** The shortest restart backoff: a helper that dies at once must not spin. */
 const MIN_RESTART_MS = 50;
 
+/**
+ * NFX-10 §1: named STUN servers the helper may be handed beside `own` configured ones: `ip:port`
+ * literals (an IPv4 address, or a bracketed IPv6 one), unique, at most 4 STUN servers in all. The
+ * helper checks each is global unicast itself.
+ */
+function namedFits(named: readonly string[], own: number): boolean {
+  return (
+    own + named.length <= 4 &&
+    new Set(named).size === named.length &&
+    named.every((s) => /^(?:[0-9.]{7,15}|\[[0-9a-f:]{2,39}\]):[1-9][0-9]{0,4}$/.test(s))
+  );
+}
+
 function positive(v: number | undefined, fallback: number, what: string): number {
   const n = v ?? fallback;
   if (!Number.isSafeInteger(n) || n < 1) throw new RangeError(`${what} must be a positive integer`);
@@ -407,6 +427,8 @@ export class IrohHelper {
   readonly #secret: string | undefined;
   /** Set for a helper that runs only its WebRTC side. */
   private readonly rtcInit: HelperRtcInit | null;
+  /** NFX-10 §1: the STUN servers named over Nostr (`rtc-stun`), sent again after every `rtc-init`. */
+  private rtcNamed: readonly string[] = [];
   private readonly maxInflight: number;
   private readonly maxGetBytes: number;
   private readonly timeoutMs: number;
@@ -436,8 +458,11 @@ export class IrohHelper {
         throw new RangeError('init.rtc.stun must be at most 4 host:port');
       if (rtc.root.length < 1 || rtc.root.length > 4096)
         throw new RangeError('init.rtc.root must be a path');
+      if (!namedFits(rtc.named ?? [], rtc.stun.length))
+        throw new RangeError('init.rtc.named must be ip:port, at most 4 STUN servers in all');
       this.#secret = undefined;
       this.rtcInit = { ...rtc, stun: [...rtc.stun] };
+      this.rtcNamed = [...(rtc.named ?? [])];
       this.o = options;
     } else {
       const { secret, ...init } = options.init;
@@ -771,6 +796,23 @@ export class IrohHelper {
     });
   }
 
+  /**
+   * NFX-10 §1: replace the STUN servers named over Nostr (`HelperRtcInit.named`). The running
+   * helper takes them at once and keeps its connections; they are kept, and sent again after a
+   * restart. Resolves to how many it asks (those of its socket's family that are not already its
+   * own). Fails `bad-request` over the cap, and as any request while no helper runs: the list is
+   * kept for the next start all the same.
+   */
+  async rtcStun(named: readonly string[]): Promise<number> {
+    const rtc = this.rtcInit;
+    if (rtc === null) throw new HelperError('bad-request', 'not a WebRTC helper');
+    if (!namedFits(named, rtc.stun.length))
+      throw new HelperError('bad-request', 'named must be ip:port, at most 4 STUN servers in all');
+    this.rtcNamed = [...named];
+    const m = await this.request({ op: 'rtc-stun', stun: [...named] });
+    return this.believe(() => uint(m['servers'], 'servers'));
+  }
+
   /** End the helper's stdin (it exits 0), then kill it if it has not within 5 s. */
   async close(): Promise<void> {
     this.closing = true;
@@ -842,6 +884,7 @@ export class IrohHelper {
         if (rtc.allowPrivate === true) init['allow_private'] = true;
         const m = await this.send(run, init, null);
         launched = { reach: null, rtc: this.believe(() => rtcReachOf(m)) };
+        await this.sendNamed(run);
       }
     } catch (e) {
       // A helper that cannot init is of no use: it goes, and a restart (if any) tries again.
@@ -851,6 +894,19 @@ export class IrohHelper {
     this.ready = true;
     if (launched.reach !== null) this.lastReach = launched.reach;
     return launched;
+  }
+
+  /**
+   * NFX-10 §1: the named STUN servers, right after a (re)start's `rtc-init`. A refusal leaves this
+   * run with its own servers only, and the start stands; an exit fails it, as any other.
+   */
+  private async sendNamed(run: Run): Promise<void> {
+    if (this.rtcNamed.length === 0) return;
+    try {
+      await this.send(run, { op: 'rtc-stun', stun: [...this.rtcNamed] }, null);
+    } catch (e) {
+      if (!(e instanceof HelperError) || ['gone', 'violation', 'closed'].includes(e.code)) throw e;
+    }
   }
 
   private irohInit(): Record<string, unknown> {

@@ -34,7 +34,7 @@ import type {
   UploadProgress,
   VideoManifest,
 } from '@sovit/core';
-import { MAX_IMAGE_BYTES, manifest, media } from '@sovit/core';
+import { MAX_IMAGE_BYTES, manifest, media, nfx } from '@sovit/core';
 import type { LogLevel, Logger, SeedCore } from '@sovit/seeder';
 import { NFX_STORE_DIR, Seeder, fromHex, toHex } from '@sovit/seeder';
 
@@ -395,6 +395,10 @@ export class WorkerHost {
         return undefined;
       case 'nfx.rtc.swarms':
         return { swarms: this.nfxRtcSeeding?.allSwarms() ?? [] };
+      case 'nfx.rtc.stun':
+        // NFX-10 §1: the host's pick; checked again here, as the helper checks it once more.
+        await this.nfxRtc?.setNamed(req.a.named.filter((s) => nfx.isAskableStunAddr(s)));
+        return undefined;
       case 'studio.ffmpeg':
         return this.probe(req.a.recheck, req.a.path);
       case 'studio.upload':

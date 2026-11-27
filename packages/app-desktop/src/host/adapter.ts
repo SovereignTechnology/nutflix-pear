@@ -232,6 +232,11 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   private readonly seeded: SeededVideos | null;
   /** Slice 5d: the free NFX play sessions, by sid (each with its owner). */
   private readonly nfxSessions = new Map<string, NfxHostSession>();
+  /** NFX-10 §1: the STUN servers each open NFX play's creator named, by sid (`namedStun`). */
+  private readonly nfxStunCreator = new Map<string, readonly string[]>();
+  /** What the worker last took (`nfx.rtc.stun`), so an unchanged pick is not sent again. */
+  private nfxStunPushed = '';
+  private nfxStunQueue: Promise<void> = Promise.resolve();
   /** Live beacons: a scoped relay never stores them, so they are read by subscription. */
   private readonly beaconWatch: NfxBeaconWatch;
   /** Slice 5c: the beacon publisher (with `nfxDir`). */
@@ -391,6 +396,39 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   /** `nfxWorkerArgs` for this host (whether its worker can run a WebRTC side at all). */
   private workerArgs(s: Settings): NfxConfigureArgs {
     return nfxWorkerArgs(s, this.o.webrtc === true);
+  }
+
+  /**
+   * NFX-10 §1 ("the creator's, or the fallback", nfx ADR 0107): the STUN servers the creators of
+   * the open NFX plays name in their own beacons, as core's `nfx.selectStunServers` picks them
+   * after the settings' own: global unicast, port 1024 or above, 4 in all. No other key's beacon
+   * adds one, however many keys name it, and no announcement ever does. None while the worker has
+   * no WebRTC side, which an empty `stunServers` turns off too: a user who lists no STUN server is
+   * never handed one by Nostr.
+   */
+  private namedStun(s: Settings): string[] {
+    const rtc = this.workerArgs(s).rtc;
+    if (rtc === null || rtc === undefined) return [];
+    const creator = [...this.nfxStunCreator.values()].flat();
+    return [...nfx.selectStunServers(rtc.stun, creator).named];
+  }
+
+  /** `namedStun` to the worker's WebRTC side when it changed; one at a time, never throws. */
+  private pushNamedStun(): Promise<void> {
+    const push = async (): Promise<void> => {
+      const named = this.namedStun(this.o.settings.get());
+      const key = named.join(' ');
+      if (key === this.nfxStunPushed) return;
+      try {
+        await this.o.worker('nfx.rtc.stun', { named });
+        this.nfxStunPushed = key;
+        this.log.info('nfx: STUN servers named over Nostr', { named: named.length });
+      } catch {
+        this.log.warn('named STUN servers not pushed to the worker (none until the next play)');
+      }
+    };
+    this.nfxStunQueue = this.nfxStunQueue.then(push, push);
+    return this.nfxStunQueue;
   }
 
   /** #89: signal while the worker's WebRTC side is on; a fresh session key at each start. */
@@ -894,6 +932,9 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
       addresses: async (x) => (await this.o.worker('nfx.play.addresses', { sid: x.sid })).addresses,
     });
     this.nfxSessions.set(sid, s);
+    // NFX-10 §1: the STUN servers its creator's beacon names, beside the settings' own, while it plays.
+    this.nfxStunCreator.set(sid, nfx.creatorStunServers(video, events, this.now()));
+    void this.pushNamedStun();
     // #89: meet the rendition's web swarm too (browsers and other peers holding its segments).
     const at = nfx.VideoAddr.parse(d);
     if (at.ok) this.mesh.play(sid, at.value.webStreamSwarmId(res.rendition));
@@ -916,6 +957,7 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
 
   private async endNfxSession(s: NfxHostSession, viaWorker: boolean): Promise<void> {
     this.nfxSessions.delete(s.sid);
+    if (this.nfxStunCreator.delete(s.sid)) void this.pushNamedStun();
     this.mesh.unplay(s.sid);
     this.o.mediaLink(s.linkToken, null);
     if (viaWorker) await this.o.worker('nfx.play.close', { sid: s.sid }).catch(() => undefined);
@@ -1325,6 +1367,8 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
     }
     // #89: signaling follows WebRTC on or off (a change of relays is read at the next tick).
     this.applyMesh();
+    // NFX-10 §1: the named STUN servers follow the settings' own (and none while WebRTC is off).
+    await this.pushNamedStun();
     return next;
   }
 
@@ -1420,6 +1464,9 @@ export class DesktopNetworkAdapter implements NetworkAdapter {
   /** The worker died: its sessions died with it (links revoked, nothing asked of it). */
   onWorkerDown(): void {
     this.mesh.reset();
+    // NFX-10 §1: the next worker starts with no named STUN server, and the plays end below.
+    this.nfxStunCreator.clear();
+    this.nfxStunPushed = '';
     this.sessions.dropAll();
     // Slice 5d: the worker's NFX sessions died with it; revoke their links.
     for (const s of [...this.nfxSessions.values()]) void this.endNfxSession(s, false);

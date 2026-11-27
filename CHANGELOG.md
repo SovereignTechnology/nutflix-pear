@@ -14,6 +14,24 @@ videos found through the network's own relay first, and new default relays.
 
 ### Added
 
+- **WebRTC also uses the STUN servers a video's creator names** (the maintainer's decisions of
+  2026-11-19 and 2026-11-24; ADR 0023, notes of those days; NFX-10 §1 as nfx ADR 0107 amends it).
+  This matches the nfx web library. The creator's own beacon for a video you play can name STUN
+  servers. The app now asks those too, after the ones in Settings › NFX network, for as long as
+  the video plays. The rules are the same for every NFX client:
+  - only the beacon the video's creator signed: no other key's server, however many keys name it;
+  - global unicast addresses only, on port 1024 or above;
+  - at most 4 STUN servers in all, yours first and never dropped.
+
+  Each such server learns your IP address and when you watch (SECURITY.md). An empty STUN list
+  still switches WebRTC off, and with it every STUN server. Signed STUN announcements (kind
+  33478) are a directory for choosing servers to configure; the app never uses one by itself.
+  - **The iroh helper gets an `rtc-stun` request.** It replaces the named servers on the running
+    WebRTC side without a restart, so live connections stay up.
+  - What a named server reports is offered only as an extra candidate, and only if global unicast.
+    It never replaces the configured server's mapping.
+  - NFX-10 §1's fallback (a seeder's server, for one peer it already signals with, when your own
+    STUN gave no mapping) follows in a later change.
 - **Stats for nerds in the video player** (#123, ADR 0024). Right-click the video, use its menu or
   press `n` to see where the video is coming from, source by source. Peers show by short ID.
   Their addresses appear only behind a "Show addresses" switch, which is off every time the panel

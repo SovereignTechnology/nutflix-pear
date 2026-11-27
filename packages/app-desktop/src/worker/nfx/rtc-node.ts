@@ -6,6 +6,10 @@
  *   long poll holds none of their request slots. It has no iroh endpoint and no key.
  * - **Off until the host turns it on** (`set(config)`, with the network's STUN servers); `set(null)`
  *   stops it. Nothing here signals: the host carries offers and answers (over Nostr, nfx #71).
+ * - **STUN servers named over Nostr** (NFX-10 §1): `setNamed`, the host's pick from the creators'
+ *   own beacons of what it plays, asked after the configured ones. Changing them never restarts the helper (its
+ *   connections live on): a running one takes them with `rtc-stun`, a new one right after
+ *   `rtc-init`. They fill only the room the configured ones leave (4 in all).
  * - **It serves only from the NFX store.** `rtc-init` names the store as `root`, so the helper
  *   refuses any file outside it, whatever `./rtc-seeding.ts` names.
  * - **Generations**, as `NfxIrohNode`'s: every start, restart and stop bumps `generation`; what the
@@ -18,7 +22,7 @@
 import type { Logger } from '@sovit/seeder';
 
 import type { HelperEvent, HelperRtcEvent, HelperRtcRanges, HelperSpawn } from '../iroh/helper.js';
-import { IrohHelper } from '../iroh/helper.js';
+import { HelperError, IrohHelper } from '../iroh/helper.js';
 
 /** Under `<storage>/tmp` (wiped at every worker start): the helper's `--state` (unused by WebRTC). */
 export const NFX_RTC_DIR = 'nfx-rtc';
@@ -27,6 +31,8 @@ export const RTC_START_RETRY_MS = 60_000;
 export const RTC_POLL_WAIT_MS = 25_000;
 /** The helper holds at most 32 connections; this table never holds more than twice that. */
 const MAX_TABLE = 64;
+/** STUN servers the helper asks in all, configured and named (its `MAX_STUN`). */
+const MAX_STUN = 4;
 
 /** What the host turns WebRTC on with. */
 export interface NfxRtcConfig {
@@ -95,6 +101,8 @@ export class NfxRtcNode {
   private readonly d: NfxRtcNodeDeps;
   private helper: IrohHelper | null = null;
   private config: NfxRtcConfig | null = null;
+  /** NFX-10 §1: the STUN servers named over Nostr, as the host last picked them. */
+  private named: readonly string[] = [];
   private failedAt: number | null = null;
   private closed = false;
   private queue: Promise<unknown> = Promise.resolve();
@@ -142,6 +150,31 @@ export class NfxRtcNode {
       this.config = config === null ? null : { ...config, stun: [...config.stun] };
       this.failedAt = null;
       await this.doStop();
+    });
+  }
+
+  /**
+   * NFX-10 §1: the STUN servers named over Nostr that the WebRTC side asks too, after the
+   * configured ones (canonical global unicast `ip:port` on port 1024 or above, the host's pick;
+   * `[]`: none). Kept while
+   * WebRTC is off. Never restarts the helper, and never throws: a refusal is logged, and the
+   * configured servers go on alone.
+   */
+  setNamed(named: readonly string[]): Promise<void> {
+    return this.serial(async () => {
+      if (this.closed) return;
+      this.named = [...named];
+      const helper = this.helper;
+      if (helper === null || this.config === null) return;
+      try {
+        await helper.rtcStun(this.namedFor(this.config));
+      } catch (err) {
+        // Restarting: the new run takes them after its `rtc-init`.
+        if (err instanceof HelperError && err.code === 'not-ready') return;
+        this.d.logger.warn('nfx: the WebRTC side did not take the named STUN servers', {
+          error: err,
+        });
+      }
     });
   }
 
@@ -196,6 +229,7 @@ export class NfxRtcNode {
           rtc: {
             stun: config.stun,
             root: this.d.root,
+            named: this.namedFor(config),
             ...(config.bind === undefined ? {} : { bind: config.bind }),
             ...(config.allowPrivate === true ? { allowPrivate: true } : {}),
           },
@@ -211,6 +245,7 @@ export class NfxRtcNode {
       void this.pump(helper);
       this.d.logger.info('nfx: the WebRTC side is up', {
         stun: config.stun.length,
+        named: this.namedFor(config).length,
         mapped: reach.mapped !== null,
       });
       return helper;
@@ -219,6 +254,12 @@ export class NfxRtcNode {
       this.d.logger.error('nfx: the WebRTC side did not start; WebRTC is off', { error: err });
       return null;
     }
+  }
+
+  /** The named servers that fit beside `config`'s own, each once and none of its own. */
+  private namedFor(config: NfxRtcConfig): string[] {
+    const fresh = [...new Set(this.named)].filter((s) => !config.stun.includes(s));
+    return fresh.slice(0, Math.max(0, MAX_STUN - config.stun.length));
   }
 
   private async doStop(): Promise<void> {

@@ -2,6 +2,8 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -491,4 +493,316 @@ async fn only_files_under_root_are_served() {
         .is_err()
     );
     h.stop().await;
+}
+
+// ---- STUN servers named over Nostr (`rtc-stun`, NFX-10 §1) ----
+
+/// A STUN server on loopback that answers Binding requests with `public`, at most `answers` of
+/// them (then it only counts). Returns its address and how many requests it got.
+async fn fake_stun(
+    public: SocketAddr,
+    answers: usize,
+) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let at = server.local_addr().unwrap();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let count = asked.clone();
+    let task = tokio::spawn(async move {
+        let mut buf = [0u8; 512];
+        loop {
+            let Ok((n, from)) = server.recv_from(&mut buf).await else {
+                return;
+            };
+            if n >= 20 && buf[0..2] == [0, 1] {
+                let seen = count.fetch_add(1, AtomicOrdering::SeqCst);
+                if seen < answers {
+                    let tx: stun::TxId = buf[8..20].try_into().unwrap();
+                    let r = stun::tests::response(&tx, public, None);
+                    let _ = server.send_to(&r, from).await;
+                }
+            }
+        }
+    });
+    (at, asked, task)
+}
+
+/// An offer's SDP once `want` holds for it (a fresh offer every 50 ms, each hung up; at most
+/// 10 s), in a swarm of its own so the probes never crowd a real one.
+async fn offer_until(h: &RtcHandle, what: &str, want: impl Fn(&str) -> bool) -> String {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let o = h.offer("nfx/1/web/probe:x/r".into()).await.unwrap();
+        h.hangup(o.peer).await.unwrap();
+        if want(&o.sdp) {
+            return o.sdp;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no offer {what} in 10 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Waits (at most 10 s) until `n` has been asked at least `at_least` times.
+async fn asked_at_least(n: &AtomicUsize, at_least: usize) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while n.load(AtomicOrdering::SeqCst) < at_least {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the STUN server was not asked"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn srflx(m: SocketAddr) -> String {
+    format!("{} {} typ srflx", m.ip(), m.port())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_named_server_never_replaces_the_own_mapping() {
+    let own_public: SocketAddr = "1.2.3.4:40000".parse().unwrap();
+    let named_public: SocketAddr = "5.6.7.8:40001".parse().unwrap();
+    // The own server answers only the start's request; later rounds hear the named one alone,
+    // as when a named server answers last.
+    let (own, own_asked, own_task) = fake_stun(own_public, 1).await;
+    let (named, named_asked, named_task) = fake_stun(named_public, usize::MAX).await;
+    let h = RtcHandle::start(Config {
+        bind: Some("127.0.0.1:0".parse().unwrap()),
+        stun: vec![own.to_string()],
+        allow_private: true,
+        root: None,
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.mapped, Some(own_public));
+    assert_eq!(h.set_named(vec![named]).await.unwrap(), 1);
+
+    // Asked at once (and the own server again, in the same round), and its mapping offered
+    // beside the own one, after it.
+    let sdp = offer_until(&h, "with the named mapping", |s| {
+        s.contains(&srflx(named_public))
+    })
+    .await;
+    asked_at_least(&named_asked, 1).await;
+    asked_at_least(&own_asked, 2).await;
+    let (at_own, at_named) = (
+        sdp.find(&srflx(own_public)).unwrap(),
+        sdp.find(&srflx(named_public)).unwrap(),
+    );
+    assert!(at_own < at_named, "the own mapping first");
+    // The mapping is still the own server's: a named one never replaces it.
+    assert_eq!(h.status().await.unwrap()["mapped"], own_public.to_string());
+
+    h.stop().await;
+    own_task.abort();
+    named_task.abort();
+}
+
+#[test]
+fn a_named_mapping_is_offered_only_if_global() {
+    let local: SocketAddr = "192.168.1.10:5000".parse().unwrap();
+    let ok = |m: &str| named_mapping_ok(m.parse().unwrap(), local, false);
+    assert!(ok("1.2.3.4:40000"));
+    assert!(ok("185.147.157.180:3478"));
+    for m in [
+        "10.0.0.1:1",
+        "100.64.0.3:1",
+        "127.0.0.1:1",
+        "169.254.169.254:80",
+        "172.16.0.1:1",
+        "192.168.1.1:1",
+        "192.0.2.1:1",
+        "198.51.100.7:1",
+        "203.0.113.5:1",
+        "224.0.0.1:1",
+        "255.255.255.255:1",
+        "0.0.0.0:1",
+        // No port, and the wrong family for the socket.
+        "1.2.3.4:0",
+        "[2a01:4f8::1]:1",
+    ] {
+        assert!(!ok(m), "{m}");
+    }
+    let v6: SocketAddr = "[2a01:4f8::2]:5000".parse().unwrap();
+    let ok6 = |m: &str| named_mapping_ok(m.parse().unwrap(), v6, false);
+    assert!(ok6("[2a01:4f8::1]:1"));
+    for m in [
+        "[::1]:1",
+        "[fe80::1]:1",
+        "[fd00::1]:1",
+        "[ff02::1]:1",
+        "[2001:db8::1]:1",
+        "[::ffff:10.0.0.1]:1",
+    ] {
+        assert!(!ok6(m), "{m}");
+    }
+    // `allow_private` (tests, same-LAN runs) lifts the rule, never for multicast.
+    assert!(named_mapping_ok("10.0.0.1:1".parse().unwrap(), local, true));
+    assert!(!named_mapping_ok(
+        "224.0.0.1:1".parse().unwrap(),
+        local,
+        true
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_named_mapping_that_is_not_allowed_is_never_offered() {
+    // Multicast is refused even with `allow_private`, which loopback servers need.
+    let (bad, bad_asked, bad_task) = fake_stun("224.0.0.1:4000".parse().unwrap(), usize::MAX).await;
+    let good_public: SocketAddr = "5.6.7.8:40001".parse().unwrap();
+    let (good, _, good_task) = fake_stun(good_public, usize::MAX).await;
+    let h = RtcHandle::start(loopback()).await.unwrap();
+    assert_eq!(h.set_named(vec![bad]).await.unwrap(), 1);
+    asked_at_least(&bad_asked, 1).await;
+    // A new server is asked at once: by the time its answer shows, the bad one's (sent
+    // earlier, on the same socket) was read too.
+    assert_eq!(h.set_named(vec![bad, good]).await.unwrap(), 2);
+    let sdp = offer_until(&h, "with the good mapping", |s| {
+        s.contains(&srflx(good_public))
+    })
+    .await;
+    assert!(
+        !sdp.contains("224.0.0.1"),
+        "a multicast mapping was offered"
+    );
+    assert_eq!(sdp.matches("typ srflx").count(), 1);
+    h.stop().await;
+    bad_task.abort();
+    good_task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn named_servers_are_replaced_without_touching_connections() {
+    let dir = Dir::new("named");
+    let seeder = RtcHandle::start(loopback()).await.unwrap();
+    let viewer = RtcHandle::start(loopback()).await.unwrap();
+    let swarm = "nfx/1/web/nfx:testnet:1:named/720p";
+    let mut s0 = dir.file("s0", b"segment zero");
+    s0.id = 0;
+    seeder.serve(swarm.into(), vec![s0], false).await.unwrap();
+    let (v_peer, s_peer) = connect(&viewer, &seeder, swarm).await;
+    let mut v_events = Feed::new(&viewer);
+    let mut s_events = Feed::new(&seeder);
+    v_events.wait_for("open", is("open", v_peer)).await;
+    v_events.wait_for("have", is("have", v_peer)).await;
+    s_events.wait_for("open", is("open", s_peer)).await;
+
+    let one: SocketAddr = "5.6.7.8:40001".parse().unwrap();
+    let two: SocketAddr = "9.9.9.10:40002".parse().unwrap();
+    let (n1, _, t1) = fake_stun(one, usize::MAX).await;
+    let (n2, _, t2) = fake_stun(two, usize::MAX).await;
+    assert_eq!(seeder.set_named(vec![n1]).await.unwrap(), 1);
+    offer_until(&seeder, "with the first", |s| s.contains(&srflx(one))).await;
+    // The next list replaces it: its server's mapping goes with it.
+    assert_eq!(seeder.set_named(vec![n2]).await.unwrap(), 1);
+    let sdp = offer_until(&seeder, "with the second", |s| s.contains(&srflx(two))).await;
+    assert!(!sdp.contains(&srflx(one)));
+    // None: no named mapping is offered.
+    assert_eq!(seeder.set_named(Vec::new()).await.unwrap(), 0);
+    let sdp = offer_until(&seeder, "with none", |s| !s.contains("typ srflx")).await;
+    assert!(!sdp.contains(&srflx(two)));
+
+    // The connection lived through all of it: still open, and it still fetches.
+    let live = seeder.status().await.unwrap();
+    let peers = live["peers"].as_array().unwrap();
+    assert!(
+        peers
+            .iter()
+            .any(|p| p["peer"] == s_peer && p["open"] == true),
+        "the connection was closed: {live}"
+    );
+    assert_eq!(viewer.get(v_peer, 0, 1024).await.unwrap(), b"segment zero");
+    let (events, _) = viewer
+        .poll(Duration::from_millis(200), 60_000)
+        .await
+        .unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| e["t"] == "closed" && e["peer"] == v_peer),
+        "the viewer saw its connection close"
+    );
+
+    viewer.stop().await;
+    seeder.stop().await;
+    t1.abort();
+    t2.abort();
+}
+
+#[tokio::test]
+async fn named_servers_are_checked_and_capped() {
+    let addr = |s: &str| -> SocketAddr { s.parse().unwrap() };
+    let global = |i: u8| addr(&format!("1.2.3.{i}:3478"));
+    // Two own servers (on loopback; nobody answers): two named ones fit beside them, three do not.
+    let h = RtcHandle::start(Config {
+        stun: vec!["127.0.0.1:9".into(), "127.0.0.1:10".into()],
+        allow_private: false,
+        ..loopback()
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.set_named(vec![global(1), global(2)]).await.unwrap(), 2);
+    let err = h
+        .set_named(vec![global(1), global(2), global(3)])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "bad-request");
+    // Not global unicast, no port, or a well-known port: refused whole, and the last list stays.
+    for bad in [
+        "127.0.0.1:3478",
+        "10.0.0.1:3478",
+        "100.64.0.1:3478",
+        "192.0.2.1:3478",
+        "1.2.3.4:0",
+        "1.2.3.4:53",
+        "1.2.3.4:1023",
+    ] {
+        let err = h.set_named(vec![global(1), addr(bad)]).await.unwrap_err();
+        assert_eq!(err.code, "bad-request", "{bad}");
+    }
+    // Port 1024 is the lowest a named server may use.
+    assert_eq!(h.set_named(vec![addr("1.2.3.4:1024")]).await.unwrap(), 1);
+    // A repeat, an own server and the other family are not asked twice, or at all.
+    assert_eq!(h.set_named(vec![global(1), global(1)]).await.unwrap(), 1);
+    assert_eq!(
+        h.set_named(vec![addr("[2a01:4f8::1]:3478")]).await.unwrap(),
+        0
+    );
+    assert_eq!(h.set_named(Vec::new()).await.unwrap(), 0);
+    h.stop().await;
+
+    // Four own servers leave no room at all; none at all leave room for four, never five.
+    let full = RtcHandle::start(Config {
+        stun: (9..13).map(|p| format!("127.0.0.1:{p}")).collect(),
+        allow_private: false,
+        ..loopback()
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        full.set_named(vec![global(1)]).await.unwrap_err().code,
+        "bad-request"
+    );
+    assert_eq!(full.set_named(Vec::new()).await.unwrap(), 0);
+    full.stop().await;
+    let none = RtcHandle::start(Config {
+        allow_private: false,
+        ..loopback()
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        none.set_named((1..5).map(global).collect()).await.unwrap(),
+        4
+    );
+    assert_eq!(
+        none.set_named((1..6).map(global).collect())
+            .await
+            .unwrap_err()
+            .code,
+        "bad-request"
+    );
+    none.stop().await;
 }

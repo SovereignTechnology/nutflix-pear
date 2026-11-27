@@ -273,6 +273,9 @@ export class FakeWorker extends EventEmitter implements WorkerProcess {
         return Promise.reject(new IpcError('backend-down', 'backend-down: WebRTC is off'));
       case 'nfx.rtc.swarms':
         return Promise.resolve({ swarms: [] });
+      // NFX-10 §1: taken (and kept) as a worker with WebRTC off keeps it.
+      case 'nfx.rtc.stun':
+        return Promise.resolve(undefined);
       case 'play.open': {
         const args = a as PlayOpenArgs;
         this.sessions.set(args.sid, args);

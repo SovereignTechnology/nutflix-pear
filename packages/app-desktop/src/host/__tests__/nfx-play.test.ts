@@ -1,7 +1,8 @@
 /**
  * Slice 5d-3 (contracts v11): free NFX play on the host. The seeders come from the video's live,
  * verified, free beacons on the scoped relays only; no money is involved; closing revokes the link
- * and closes the worker's session, and a gone webContents closes its sessions.
+ * and closes the worker's session, and a gone webContents closes its sessions. NFX-10 §1: the STUN
+ * servers those beacons name reach the worker's WebRTC side (`nfx.rtc.stun`), by core's rules.
  */
 import { generateKeyPairSync } from 'node:crypto';
 
@@ -11,6 +12,7 @@ import type {
   NostrEvent,
   PlaySourceAddress,
   RelayUrl,
+  StunServer,
 } from '@sovit/core';
 import { mocks, nfx } from '@sovit/core';
 import { hyperdhtEndpoint } from '@sovit/seeder';
@@ -468,6 +470,145 @@ describe('#89: a play joins its rendition’s signaling room', () => {
     await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'free-video-10'));
     await pause();
     expect(mesh()).toEqual([]);
+  });
+});
+
+describe('NFX-10 §1: the STUN servers a play’s creator names reach the worker', () => {
+  const HELPER = '/nonexistent/iroh-helper';
+  const stunCalls = (): unknown[] => r!.worker().calls('nfx.rtc.stun');
+  const pause = (): Promise<void> => new Promise((done) => setTimeout(done, 60));
+  /** Global unicast, as the creator names it; another named by two strangers; a LAN address and a well-known port. */
+  const CREATORS = '185.147.157.180:3478';
+  const STRANGERS = '8.8.8.8:3478';
+  const LAN = '192.168.1.2:3478';
+  const DNS = '1.1.1.1:53';
+  const withStun =
+    (...addrs: string[]) =>
+    (hyperdht: nfx.Endpoint): nfx.Endpoint[] => [hyperdht, { t: 'stun', addrs }];
+
+  /**
+   * A video its creator beacons, naming `named` (and a LAN address and a well-known port), and two
+   * strangers beacon, both naming `STRANGERS`; returns its address.
+   */
+  async function seeded(videoId: string, named = CREATORS): Promise<NfxAddress> {
+    const creator = new kit.TestSigner();
+    await manifest(creator, videoId);
+    await beacon(creator, creator.pubkey, videoId, { endpoints: withStun(LAN, DNS, named) });
+    for (let i = 0; i < 2; i++)
+      await beacon(new kit.TestSigner(), creator.pubkey, videoId, {
+        endpoints: withStun(STRANGERS),
+      });
+    return addrOf(creator.pubkey, videoId);
+  }
+
+  it('adds the creator’s server, after the settings’ own; drops it with the play', async () => {
+    r = await rig({ nfx: NFX_ON, irohHelper: HELPER });
+    await r.ready();
+    const a = r.host.adapter;
+    const s = await a.openNfxSession(7, await seeded('stun-video-1'));
+    const [first] = await eventually(
+      () => (stunCalls().length > 0 ? stunCalls() : null),
+      'nfx.rtc.stun',
+    );
+    // Not the strangers' server (two keys prove nothing), never the LAN address or port 53.
+    expect(first).toEqual({ named: [CREATORS] });
+    expect(validateWorkerArgs['nfx.rtc.stun'](first)).toBe(true);
+    // The settings' own still reach the worker unchanged: the named ones never replace them.
+    expect(r.worker().calls('nfx.configure').at(-1)).toMatchObject({
+      rtc: { stun: ['relay.nutflix.xyz:3478'] },
+    });
+
+    // WebRTC off: none. On again, while the play is open: back.
+    await a.updateSettings({ nfx: { ...NFX_ON, webrtc: false } });
+    expect(stunCalls().at(-1)).toEqual({ named: [] });
+    await a.updateSettings({ nfx: NFX_ON });
+    expect(stunCalls().at(-1)).toEqual({ named: [CREATORS] });
+    // Four of the user's own leave no room.
+    const four = ['a.test:1', 'b.test:1', 'c.test:1', 'd.test:1'] as StunServer[];
+    await a.updateSettings({ nfx: { ...NFX_ON, stunServers: four } });
+    expect(stunCalls().at(-1)).toEqual({ named: [] });
+    await a.updateSettings({ nfx: NFX_ON });
+    expect(stunCalls()).toHaveLength(5);
+    expect(stunCalls().at(-1)).toEqual({ named: [CREATORS] });
+    // Settings that change nothing here send nothing.
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls()).toHaveLength(5);
+
+    await a.closeNfxSession(7, s.sid);
+    await eventually(() => stunCalls().length === 6, 'nfx.rtc.stun after the close');
+    expect(stunCalls().at(-1)).toEqual({ named: [] });
+  });
+
+  it('keeps a shared creator’s server until the last play closes, without redundant pushes', async () => {
+    r = await rig({ nfx: NFX_ON, irohHelper: HELPER });
+    await r.ready();
+    const a = r.host.adapter;
+    const address = await seeded('stun-shared-1');
+    const first = await a.openNfxSession(7, address);
+    await eventually(() => stunCalls().length === 1, 'the first STUN pick');
+    const second = await a.openNfxSession(8, address);
+    // updateSettings waits for the queued STUN selection to finish.
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls()).toEqual([{ named: [CREATORS] }]);
+    await a.closeNfxSession(7, first.sid);
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls()).toEqual([{ named: [CREATORS] }]);
+    await a.closeNfxSession(8, second.sid);
+    await eventually(() => stunCalls().length === 2, 'the last play clearing STUN');
+    expect(stunCalls()).toEqual([{ named: [CREATORS] }, { named: [] }]);
+  });
+
+  it('takes each open play’s creator’s server, and drops one when its play closes', async () => {
+    const OTHER = '9.9.9.9:3478';
+    r = await rig({ nfx: NFX_ON, irohHelper: HELPER });
+    await r.ready();
+    const a = r.host.adapter;
+    const first = await a.openNfxSession(7, await seeded('stun-two-1'));
+    await eventually(() => stunCalls().length === 1, 'the first STUN pick');
+    const second = await a.openNfxSession(8, await seeded('stun-two-2', OTHER));
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls()).toEqual([{ named: [CREATORS] }, { named: [CREATORS, OTHER] }]);
+    await a.closeNfxSession(7, first.sid);
+    await a.updateSettings({ prefetchSeconds: 20 });
+    expect(stunCalls().at(-1)).toEqual({ named: [OTHER] });
+    await a.closeNfxSession(8, second.sid);
+    await eventually(() => stunCalls().length === 4, 'the last play clearing STUN');
+    expect(stunCalls().at(-1)).toEqual({ named: [] });
+  });
+
+  it('names none when only strangers name a server, however many', async () => {
+    r = await rig({ nfx: NFX_ON, irohHelper: HELPER });
+    await r.ready();
+    const creator = new kit.TestSigner();
+    await manifest(creator, 'stun-strangers-1');
+    for (let i = 0; i < 3; i++)
+      await beacon(new kit.TestSigner(), creator.pubkey, 'stun-strangers-1', {
+        endpoints: withStun(STRANGERS),
+      });
+    const s = await r.host.adapter.openNfxSession(7, addrOf(creator.pubkey, 'stun-strangers-1'));
+    await pause();
+    expect(stunCalls()).toEqual([]);
+    await r.host.adapter.closeNfxSession(7, s.sid);
+  });
+
+  it('names none while there is no WebRTC side: no helper, switched off, or no STUN server of the user’s own', async () => {
+    for (const o of [
+      { nfx: NFX_ON },
+      { nfx: { ...NFX_ON, webrtc: false }, irohHelper: HELPER },
+      // An empty list is "none" (WebRTC off), never "whatever Nostr names".
+      { nfx: { ...NFX_ON, stunServers: [] }, irohHelper: HELPER },
+    ]) {
+      r = await rig(o);
+      await r.ready();
+      const s = await r.host.adapter.openNfxSession(7, await seeded('stun-video-2'));
+      await pause();
+      expect(stunCalls(), JSON.stringify(o.nfx)).toEqual([]);
+      await r.host.adapter.closeNfxSession(7, s.sid);
+      await pause();
+      expect(stunCalls()).toEqual([]);
+      await r.close();
+      r = undefined;
+    }
   });
 });
 
