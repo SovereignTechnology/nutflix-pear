@@ -50,6 +50,10 @@
  *  8. The unseeded video's Play ends in "No seeders online".
  *  9. Settings shows the line about IP addresses, and the link to source.json, whose hashes are
  *     the files served.
+ * 9b. ADR 0026: the scoped relay never answers (a TCP tarpit, its host unreachable). The Network
+ *     feed still lists the videos, from strfry, and the lead video still finds its seeder and
+ *     plays: nfxd A announces on strfry too (`--relay`, NFX-03 §7 as amended), and the page reads
+ *     beacons from the read relays as well as the scoped ones.
  * 10. No `securitypolicyviolation` event and no uncaught error, on any page, all along.
  *
  * Usage (from packages/app-web, after the site build): node e2e/web.e2e.ts
@@ -81,7 +85,12 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import { connect as tcpConnect, createServer as createTcpServer, type AddressInfo } from 'node:net';
+import {
+  connect as tcpConnect,
+  createServer as createTcpServer,
+  type AddressInfo,
+  type Socket,
+} from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
 import { createServer as createTlsServer, type Server as TlsServer } from 'node:tls';
@@ -192,6 +201,36 @@ function freePort(): Promise<number> {
       });
     });
   });
+}
+
+/**
+ * A TCP server that accepts and never answers: a relay whose host is unreachable in the way that
+ * costs a client most, a hang until the client's own timeout (ADR 0026).
+ */
+async function tarpitServer(): Promise<{
+  readonly port: number;
+  readonly connections: () => number;
+  readonly close: () => void;
+}> {
+  const held: Socket[] = [];
+  const s = createTcpServer((sock) => {
+    sock.on('error', () => undefined);
+    held.push(sock);
+  });
+  await new Promise<void>((ok, fail) => {
+    s.once('error', fail);
+    s.listen(0, '127.0.0.1', () => {
+      ok();
+    });
+  });
+  return {
+    port: (s.address() as AddressInfo).port,
+    connections: () => held.length,
+    close: () => {
+      for (const sock of held) sock.destroy();
+      s.close();
+    },
+  };
 }
 
 /** Until something accepts a TCP connection on `port`. */
@@ -321,10 +360,11 @@ function proxy(
 
 const SEGMENT = /\/([0-9a-f]{64})\.m4s$/;
 
-/** The honest origin behind a switch: once blocked, every segment is refused. Records what it served. */
+/** The honest origin behind a switch: while blocked, every segment is refused. Records what it served. */
 async function gate(upstream: string): Promise<{
   port: number;
   block: () => void;
+  unblock: () => void;
   served: Set<string>;
   refused: () => number;
 }> {
@@ -349,6 +389,9 @@ async function gate(upstream: string): Promise<{
     port,
     block: () => {
       blocked = true;
+    },
+    unblock: () => {
+      blocked = false;
     },
     served,
     refused: () => refused,
@@ -771,6 +814,10 @@ async function main(): Promise<void> {
       addr(lead),
       '--embed-relay',
       '127.0.0.1:0',
+      // Beacons and manifests to strfry too, a general relay (NFX-03 §7 as amended), as nfxd on
+      // the test network does: a page whose scoped relay is down still finds this seeder (9b).
+      '--relay',
+      strfryWs,
       '--origin',
       '127.0.0.1:0',
       // The mesh endpoint signals through strfry alone (nfxd may use `ws:` to this machine).
@@ -1248,6 +1295,36 @@ async function main(): Promise<void> {
         throw new Error(`source.json: ${f.path} differs`);
     }
     results['settings'] = { ipNotice: true, source: href };
+
+    // 9b. ADR 0026: the scoped relay never answers. The feed and a play go on through strfry.
+    // The origin serves again (step 4 blocked it): the start of a play comes over HTTPS until
+    // peers can start one (nfx #126), and this step is about relays, not delivery.
+    g.unblock();
+    const tarpit = await tarpitServer();
+    try {
+      const dead = `wss://dead.e2e.test:${String(tarpit.port)}`;
+      await offApp(page, site, [stock], [dead]);
+      const listing = Date.now();
+      await page.goto(`${site}/#/`);
+      await page.getByText('Lighthouse web e2e').first().waitFor({ timeout: 30_000 });
+      const listedMs = Date.now() - listing;
+      await go(page, `#/watch/${addr(lead)}`);
+      await page.locator('.nf-nfxwatch__start button').click({ timeout: 60_000 });
+      // Up to one beacon interval: strfry forwards beacons live and keeps none.
+      await waitTime(page, 3, 180_000);
+      if ((await page.locator('.nf-nfxwatch__problem--stopped').count()) > 0)
+        throw new Error(
+          `the play stopped with the scoped relay down: ${await text(page, '.nf-nfxwatch__problems')}`,
+        );
+      results['scoped_down'] = {
+        listedMs,
+        playedTo: await videoTime(page),
+        tarpitConnections: tarpit.connections(),
+      };
+      if (tarpit.connections() === 0) throw new Error('the page never tried the dead scoped relay');
+    } finally {
+      tarpit.close();
+    }
 
     // 10. Nothing the CSP refused, nothing thrown.
     results['csp_violations'] = w.csp;

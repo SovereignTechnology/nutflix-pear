@@ -11,6 +11,8 @@ import {
   MAX_BEACONS_PER_VIDEO,
   MAX_BEACON_VIDEOS,
   NFX_BEACON_KEEP_S,
+  NFX_BEACON_RETRY_MAX_MS,
+  NFX_BEACON_RETRY_MS,
   NFX_BEACON_WAIT_MS,
   NfxBeaconWatch,
 } from '../nfx-beacon-watch.js';
@@ -35,6 +37,8 @@ interface Sub {
   readonly filter: NostrFilter;
   readonly relays: readonly RelayUrl[];
   readonly push: (e: NostrEvent) => void;
+  /** The relay closing it (down, unreachable, the socket dropped). */
+  readonly drop: (reason: string) => void;
   closed: boolean;
 }
 
@@ -50,8 +54,14 @@ function rigged(): {
   const timers: { at: number; fn: () => void; dead: boolean }[] = [];
   let ms = 0;
   const w = new NfxBeaconWatch({
-    subscribe: (filter, relays, onEvent) => {
-      const s: Sub = { filter, relays, push: onEvent, closed: false };
+    subscribe: (filter, relays, onEvent, onClose) => {
+      const s: Sub = {
+        filter,
+        relays,
+        push: onEvent,
+        drop: (reason) => onClose?.(reason),
+        closed: false,
+      };
       subs.push(s);
       return () => {
         s.closed = true;
@@ -227,6 +237,99 @@ describe('NfxBeaconWatch', () => {
     // The oldest idle video was dropped and its subscription closed.
     expect(w.seen(v)).toEqual([]);
     expect(subs[0]?.closed).toBe(true);
+  });
+
+  it('one subscription per relay (ADR 0026)', () => {
+    const { w, subs, clock } = rigged();
+    const v = video(9);
+    w.watch(v, [R1, R2, R1]);
+    expect(subs.map((x) => x.relays)).toEqual([[R1], [R2]]);
+    const a = ev(clock.now);
+    const b = ev(clock.now);
+    subs[0]?.push(a);
+    subs[1]?.push(b);
+    expect(new Set(w.seen(v))).toEqual(new Set([a, b]));
+  });
+
+  it('a relay that closes the subscription is asked again, backing off; the others stay open', () => {
+    const { w, subs, clock, advance } = rigged();
+    const v = video(10);
+    w.watch(v, [R1, R2], NFX_BEACON_WAIT_MS * 10);
+    const r1 = (): Sub[] => subs.filter((x) => x.relays[0] === R1);
+    subs[0]?.drop('connection failed');
+    advance(NFX_BEACON_RETRY_MS - 1);
+    expect(r1()).toHaveLength(1);
+    advance(1);
+    expect(r1()).toHaveLength(2);
+    // Down again before it sent anything: twice the wait.
+    r1()[1]?.drop('connection failed');
+    advance(NFX_BEACON_RETRY_MS * 2 - 1);
+    expect(r1()).toHaveLength(2);
+    advance(1);
+    expect(r1()).toHaveLength(3);
+    // The wait stops doubling at the cap.
+    for (let i = 0; i < 10; i++) {
+      r1().at(-1)?.drop('connection failed');
+      advance(NFX_BEACON_RETRY_MAX_MS);
+    }
+    expect(r1()).toHaveLength(13);
+    // A relay that sent a beacon and then dropped is asked again after the first wait.
+    const b = ev(clock.now);
+    r1().at(-1)?.push(b);
+    r1().at(-1)?.drop('socket closed');
+    advance(NFX_BEACON_RETRY_MS);
+    expect(r1()).toHaveLength(14);
+    expect(w.seen(v)).toContainEqual(b);
+    // R2 was never touched.
+    expect(subs.filter((x) => x.relays[0] === R2)).toHaveLength(1);
+    expect(subs.find((x) => x.relays[0] === R2)?.closed).toBe(false);
+  });
+
+  it('no reopen once the watch ends or the watcher closes; a late close report is ignored', () => {
+    const { w, subs, advance } = rigged();
+    const v = video(11);
+    w.watch(v, [R1], 1_000);
+    subs[0]?.drop('connection failed');
+    advance(1_000); // the reopen and the end of the watch fall due together
+    const after = subs.length;
+    advance(NFX_BEACON_RETRY_MAX_MS * 4);
+    expect(subs.length).toBeLessThanOrEqual(after);
+    expect(subs.every((x) => x.closed)).toBe(true);
+    // After close(): a relay closing it now opens nothing.
+    const u = rigged();
+    u.w.watch(v, [R1]);
+    u.w.close();
+    u.subs[0]?.drop('closed by us');
+    u.advance(NFX_BEACON_RETRY_MAX_MS * 2);
+    expect(u.subs).toHaveLength(1);
+  });
+
+  it('a subscription that reports its close before it returns is not kept', () => {
+    const subs: { closed: boolean }[] = [];
+    const timers: (() => void)[] = [];
+    const w = new NfxBeaconWatch({
+      subscribe: (_f, _r, _on, onClose) => {
+        const s = { closed: false };
+        subs.push(s);
+        if (subs.length === 1) onClose?.('no relay could be reached');
+        return () => {
+          s.closed = true;
+        };
+      },
+      now: () => 1_800_000_000,
+      timers: {
+        setTimeout: (fn) => {
+          timers.push(fn);
+          return fn;
+        },
+        clearTimeout: () => undefined,
+      },
+    });
+    w.watch(video(12), [R1]);
+    expect(subs[0]?.closed).toBe(true);
+    // The reopen is pending, the second is not called yet.
+    expect(subs).toHaveLength(1);
+    w.close();
   });
 
   it('close: every wait answers with what it has, every subscription closes', async () => {

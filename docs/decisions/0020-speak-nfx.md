@@ -12,7 +12,9 @@ Amended 2026-10-29 by [ADR 0021](0021-speak-iroh-through-a-helper.md): the app a
 event with an `e` tag; the beacon publisher and its seeder key live in the host. Amended 2026-10-31
 (Phase 1 slice 4b): how NFX videos are listed, below. Amended 2026-11-09 by
 [ADR 0022](0022-a-web-client-for-nfx.md): the web-portal ruling this record kept from ADR 0019 no
-longer covers an NFX-only web client, which `packages/app-web` now holds.
+longer covers an NFX-only web client, which `packages/app-web` now holds. Amended 2026-11-26 by
+[ADR 0026](0026-no-single-relay.md): catalog reads ask the scoped and the read relays at once, and
+beacons are read from both (the 2026-11-19 amendment below is replaced).
 
 ## Context
 
@@ -361,6 +363,9 @@ and had to find and type both relays.
   end encrypted). Seeding stays off by default, so a fresh install announces nothing.
 
 ## Amendment 2026-11-19: catalog reads go to the network's own relay first
+
+*(Replaced 2026-11-26 by [ADR 0026](0026-no-single-relay.md): both relay sets are read at once and
+merged, and beacons are read from both. Kept for the record.)*
 
 Decided by the maintainer, 2026-11-19: a deliberate deviation from NFX-04 §4's SHOULD ("Catalog
 reads SHOULD go to public relays first, scoped relays as fallback"). NFX-04 is frozen and nfx keeps
